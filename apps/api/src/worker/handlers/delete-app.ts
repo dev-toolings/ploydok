@@ -3,7 +3,7 @@
  * Delete-app cascade handler — Coolify-style.
  *
  * Steps performed (each one best-effort, all errors collected and surfaced):
- *  1. Stop both blue/green containers + remove their Docker objects.
+ *  1. Stop the Swarm service (if any) then leftover blue/green containers.
  *  2. Wipe registry images (manifests with keepPerRepo=0) + reclaim blobs.
  *  3. Remove Caddy upstream/route for the app.
  *  4. Delete on-disk build workspaces (~/.ploydok-dev/builds/<appId>/).
@@ -203,14 +203,25 @@ export async function handleDeleteApp(
       .where(eq(app_delete_jobs.id, jobId))
   }
 
-  // 1. Stop + remove containers (blue/green).
+  // 1. Stop + remove Swarm services and leftover blue/green containers.
   try {
     if (dockerCleanup) {
+      try {
+        const { stopSwarmApp } = await import("../swarm-runner.js")
+        await stopSwarmApp(appId, db)
+      } catch (err) {
+        result.steps.containers = { ok: false, error: errToString(err) }
+        log.warn({ appId, err }, "swarm service cleanup failed (continuing)")
+      }
       try {
         const { stopApp } = await import("../runner.js")
         await stopApp(appId, db, {})
       } catch (err) {
-        result.steps.containers = { ok: false, error: errToString(err) }
+        const previous = result.steps.containers.error
+        result.steps.containers = {
+          ok: false,
+          error: [previous, errToString(err)].filter(Boolean).join("; "),
+        }
         log.warn({ appId, err }, "container cleanup failed (continuing)")
       }
     }

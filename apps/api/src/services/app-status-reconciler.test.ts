@@ -271,6 +271,42 @@ describe("reconcileAppStatusFromIndex", () => {
     const out = await reconcileAppStatusFromIndex(fakeDb, row, idx)
     expect(out).toBe(row)
   })
+
+  it("does not persist container_id for Swarm apps", async () => {
+    const updateCalls: Array<unknown> = []
+    const fakeDb = {
+      update: () => ({
+        set: (patch: unknown) => {
+          updateCalls.push(patch)
+          return { where: () => Promise.resolve() }
+        },
+      }),
+    } as unknown as Db
+
+    const idx = await buildIndex([
+      snap({
+        id: "task-1",
+        appId: "app-swarm",
+        status: "running",
+        name: "ploydok-app-demo-abc.1.task",
+      }),
+    ])
+
+    const out = await reconcileAppStatusFromIndex(
+      fakeDb,
+      {
+        id: "app-swarm",
+        status: "running",
+        container_id: null,
+        runtime_mode: "swarm",
+        updated_at: FRESH_UPDATED_AT,
+      },
+      idx
+    )
+
+    expect(out.container_id).toBeNull()
+    expect(updateCalls).toHaveLength(0)
+  })
 })
 
 describe("loadAppContainerIndex", () => {

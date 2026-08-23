@@ -27,6 +27,7 @@ type ReconcilableApp = {
   status: string | null
   container_id: string | null
   updated_at: Date | null
+  runtime_mode?: string | null
 }
 
 type ContainerLite = {
@@ -179,9 +180,15 @@ export async function reconcileAppStatusFromIndex<T extends ReconcilableApp>(
 ): Promise<T> {
   let mutated: T = app
   const live = resolveLiveContainer(app, index)
-  if (live && live.name !== app.container_id && live.id !== app.container_id) {
+  if (
+    app.runtime_mode !== "swarm" &&
+    live &&
+    live.name !== app.container_id &&
+    live.id !== app.container_id
+  ) {
     // Container was recreated (blue/green swap, restart, etc.) — refresh the
-    // canonical reference so the UI strict match keeps working.
+    // canonical reference so the UI strict match keeps working. Swarm apps keep
+    // `swarm_service_name` as the source of truth and leave container_id null.
     await persistContainerId(db, app.id, live.name, app.container_id)
     mutated = { ...mutated, container_id: live.name }
   }
