@@ -36,7 +36,17 @@ export async function pruneBuildCache(): Promise<DiskPruneResult> {
   return DiskPruneResultSchema.parse(data)
 }
 
+export async function cleanupDocker(): Promise<DiskPruneResult> {
+  const data = await apiFetch<unknown>("/disk/cleanup", { method: "POST" })
+  return DiskPruneResultSchema.parse(data)
+}
+
 export async function getDiskJob(jobId: string): Promise<DiskJobStatus> {
   const data = await apiFetch<unknown>(`/disk/jobs/${jobId}`)
   return DiskJobStatusSchema.parse(data)
+}
+
+export async function getDiskJobs(): Promise<DiskJobStatus[]> {
+  const data = await apiFetch<unknown>("/disk/jobs")
+  return DiskJobStatusSchema.array().parse(data)
 }

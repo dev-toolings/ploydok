@@ -20,6 +20,7 @@ export const deployQueue = new Queue("deploy", {
 export const gcQueue = new Queue("gc.registry", { connection })
 export const gcImagesQueue = new Queue("gc.images", { connection })
 export const gcBuildCacheQueue = new Queue("gc.buildcache", { connection })
+export const dockerCleanupQueue = new Queue("gc.docker", { connection })
 export const imageScanQueue = new Queue("scan.image", {
   connection,
   defaultJobOptions: {
@@ -100,6 +101,7 @@ export const transactionalOutboxQueues = [
   gcQueue,
   gcImagesQueue,
   gcBuildCacheQueue,
+  dockerCleanupQueue,
   appDeleteQueue,
 ] as const
 
@@ -111,6 +113,7 @@ export type QueueName =
   | "gc.registry"
   | "gc.images"
   | "gc.buildcache"
+  | "gc.docker"
   | "cleanup.build"
   | "app.delete"
   | "domain.verify"

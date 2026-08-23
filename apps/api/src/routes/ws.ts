@@ -4,10 +4,13 @@
 //
 // Endpoints:
 //   GET /ws/apps/:id/build/:buildId  — stream build logs (channel: build:{buildId})
-//   GET /ws/apps/:id/logs            — stream runtime logs (channel: runtime:{appId})
+//   GET /ws/apps/:id/logs            — stream runtime logs
+//   GET /ws/databases/:id/logs       — stream database container logs
+//   GET /ws/services/:id/logs        — stream service container logs
 //
 // Auth: cookie ploydok_access verified before upgrade.
-// Ownership: user must own the project that contains the app.
+// Apps: user must own the project that contains the app.
+// Databases/services: any accepted member of the parent project.
 //
 // Message format (server → client): { t: number, line: string }
 // Heartbeat: server pings every 30 s; client must respond with pong or
@@ -23,7 +26,8 @@
 import { Hono } from "hono"
 import { createBunWebSocket } from "hono/bun"
 import { eq, and, isNotNull } from "drizzle-orm"
-import { createDb, apps, projects, memberships } from "@ploydok/db"
+import { createDb, apps, projects, memberships, databases } from "@ploydok/db"
+import { getServiceForUser } from "@ploydok/db/queries"
 import { verifyAccessToken, ACCESS_COOKIE } from "../auth/jwt"
 import { logBus } from "../worker/log-bus"
 import { env } from "../env"
@@ -189,7 +193,16 @@ function createLogStreamHandler(
   })
 }
 
-function createRuntimeLogStreamHandler() {
+type ContainerLogResolve =
+  | { status: "unauthorized" }
+  | { status: "missing" }
+  | { status: "ok"; containerId: string }
+
+type WsContext = Parameters<typeof upgradeWebSocket>[0]
+
+function createContainerLogStreamHandler(
+  resolve: (c: WsContext, userId: string) => Promise<ContainerLogResolve>
+) {
   return upgradeWebSocket((c) => {
     let pingTimer: ReturnType<typeof setInterval> | null = null
     let missedPings = 0
@@ -198,39 +211,19 @@ function createRuntimeLogStreamHandler() {
 
     return {
       async onOpen(_evt, ws) {
-        const appId = c.req.param("id") ?? ""
-        if (!appId) {
-          ws.close(4000, "missing app id")
-          return
-        }
-
         const userId = await getUserIdFromRequest(c.req.raw)
         if (!userId) {
           ws.close(4001, "unauthorized")
           return
         }
 
-        const ownedRows = await db
-          .select({ id: apps.id, container_id: apps.container_id })
-          .from(apps)
-          .innerJoin(projects, eq(apps.project_id, projects.id))
-          .where(eq(apps.id, appId))
-          .limit(1)
-
-        const app = ownedRows[0]
-        const ownsApp = await userOwnsApp(appId, userId)
-        if (!app || !ownsApp) {
+        const resolved = await resolve(c, userId)
+        if (resolved.status === "unauthorized") {
           ws.close(4001, "unauthorized")
           return
         }
 
-        const agent = getSharedAgent()
-        const container = await resolveRuntimeContainer(agent, {
-          appId,
-          preferredContainerRef: app.container_id,
-        })
-
-        if (!container) {
+        if (resolved.status === "missing") {
           ws.send(JSON.stringify({ type: "runtime.missing", t: Date.now() }))
           ws.close(1000, "no runtime container")
           return
@@ -245,9 +238,9 @@ function createRuntimeLogStreamHandler() {
           ws.send(JSON.stringify({ type: "ping", t: Date.now() }))
         }, HEARTBEAT_INTERVAL_MS)
 
-        const iterator = agent
+        const iterator = getSharedAgent()
           .containerLogs({
-            containerId: container.id,
+            containerId: resolved.containerId,
             follow: true,
             sinceUnix: 0,
             tail: REPLAY_LIMIT,
@@ -312,6 +305,80 @@ function createRuntimeLogStreamHandler() {
   })
 }
 
+async function resolveAppRuntimeContainer(
+  c: WsContext,
+  userId: string
+): Promise<ContainerLogResolve> {
+  const appId = c.req.param("id") ?? ""
+  if (!appId) return { status: "unauthorized" }
+
+  const ownedRows = await db
+    .select({ id: apps.id, container_id: apps.container_id })
+    .from(apps)
+    .innerJoin(projects, eq(apps.project_id, projects.id))
+    .where(eq(apps.id, appId))
+    .limit(1)
+
+  const app = ownedRows[0]
+  const ownsApp = await userOwnsApp(appId, userId)
+  if (!app || !ownsApp) return { status: "unauthorized" }
+
+  const container = await resolveRuntimeContainer(getSharedAgent(), {
+    appId,
+    preferredContainerRef: app.container_id,
+  })
+  if (!container) return { status: "missing" }
+  return { status: "ok", containerId: container.id }
+}
+
+async function resolveDatabaseContainer(
+  c: WsContext,
+  userId: string
+): Promise<ContainerLogResolve> {
+  const databaseId = c.req.param("id") ?? ""
+  if (!databaseId) return { status: "unauthorized" }
+
+  const rows = await db
+    .select({
+      id: databases.id,
+      container_id: databases.container_id,
+    })
+    .from(databases)
+    .innerJoin(projects, eq(databases.project_id, projects.id))
+    .innerJoin(
+      memberships,
+      and(
+        eq(memberships.org_id, projects.id),
+        eq(memberships.user_id, userId),
+        isNotNull(memberships.accepted_at)
+      )
+    )
+    .where(eq(databases.id, databaseId))
+    .limit(1)
+
+  const row = rows[0]
+  if (!row) return { status: "unauthorized" }
+  if (!row.container_id) return { status: "missing" }
+  return { status: "ok", containerId: row.container_id }
+}
+
+async function resolveServiceContainer(
+  c: WsContext,
+  userId: string
+): Promise<ContainerLogResolve> {
+  const serviceId = c.req.param("id") ?? ""
+  if (!serviceId) return { status: "unauthorized" }
+
+  const svc = await getServiceForUser(db, serviceId, userId)
+  if (!svc) return { status: "unauthorized" }
+
+  const idxRaw = Number(c.req.query("container") ?? 0)
+  const idx = Number.isFinite(idxRaw) ? Math.max(0, Math.floor(idxRaw)) : 0
+  const containerId = svc.container_ids?.[idx]
+  if (!containerId) return { status: "missing" }
+  return { status: "ok", containerId }
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -338,4 +405,19 @@ wsRouter.get(
 )
 
 // GET /ws/apps/:id/logs — runtime log stream
-wsRouter.get("/apps/:id/logs", createRuntimeLogStreamHandler())
+wsRouter.get(
+  "/apps/:id/logs",
+  createContainerLogStreamHandler(resolveAppRuntimeContainer)
+)
+
+// GET /ws/databases/:id/logs — database container log stream
+wsRouter.get(
+  "/databases/:id/logs",
+  createContainerLogStreamHandler(resolveDatabaseContainer)
+)
+
+// GET /ws/services/:id/logs — service container log stream
+wsRouter.get(
+  "/services/:id/logs",
+  createContainerLogStreamHandler(resolveServiceContainer)
+)

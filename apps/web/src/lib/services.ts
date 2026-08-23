@@ -12,18 +12,11 @@ import type {
 export type { ServiceSummary, ServiceDetail }
 export type { ServiceStatus } from "@ploydok/shared"
 
-export interface ServiceLogLine {
-  t: number
-  line: string
-  stream?: "stdout" | "stderr"
-}
-
 export const servicesKeys = {
   all: ["services"] as const,
   list: (projectId?: string) =>
     ["services", "list", projectId ?? "all"] as const,
   detail: (id: string) => ["services", "detail", id] as const,
-  logs: (id: string) => ["services", "logs", id] as const,
 }
 
 export function useServices(projectId?: string) {
@@ -112,17 +105,5 @@ export function useDeleteService() {
     onError: (err: Error) => {
       toast.error(err.message)
     },
-  })
-}
-
-export function useServiceLogs(id: string | undefined, tail = 200) {
-  return useQuery({
-    queryKey: servicesKeys.logs(id ?? ""),
-    queryFn: async () =>
-      apiFetch<{ lines: Array<ServiceLogLine> }>(
-        `/services/${id}/logs?tail=${tail}`
-      ),
-    enabled: Boolean(id),
-    refetchInterval: 5_000,
   })
 }

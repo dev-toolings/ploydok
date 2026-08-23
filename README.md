@@ -218,6 +218,29 @@ The disaster-recovery candidate is documented in [OPERATIONS.md](./OPERATIONS.md
 signed and encrypted off-host backups, checksum verification, 30-day retention
 and a mandatory fresh-host restore drill before production approval.
 
+### Host requirements
+
+The installer requires at least 2 GB of RAM and 10 GB of free disk space. These
+values are installation floors for evaluation only: it also warns below 4 GB
+of RAM or 20 GB of free disk space.
+
+For a useful single-node installation, size the host for both the Ploydok
+control plane and the workloads it will run:
+
+| Usage                                | CPU    | RAM   | Fast local storage |
+| ------------------------------------ | ------ | ----- | ------------------ |
+| Evaluation only                      | 2 vCPU | 2 GB  | 20 GB              |
+| Small installation, light workloads  | 2 vCPU | 4 GB  | 40-60 GB           |
+| Recommended starting point           | 4 vCPU | 8 GB  | 100 GB NVMe        |
+| Several applications or frequent builds | 8 vCPU | 16 GB | 200 GB+ NVMe    |
+
+The recommended starting point leaves headroom for BuildKit image builds,
+Docker image and registry growth, Prometheus retention, and temporary overlap
+during start-first or blue/green deployments. Application containers and
+managed databases consume resources in addition to the control plane. A 4 GB
+swap file can absorb short peaks on an 8 GB host, but it is not a substitute
+for RAM under sustained load.
+
 ### Install Modes
 
 | Mode             | Use when                                                                        |

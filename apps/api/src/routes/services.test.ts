@@ -175,6 +175,30 @@ describe("GET /services", () => {
 // GET /services/:id
 // ---------------------------------------------------------------------------
 
+describe("GET /services/:id/logs", () => {
+  it("returns 404 when the service is missing", async () => {
+    mockGetServiceForUser.mockResolvedValueOnce(null)
+    const app = makeApp(makeDb())
+    const res = await app.request("/services/svc-unknown/logs")
+    expect(res.status).toBe(404)
+    const body = await json(res)
+    expect(body.error.code).toBe("NOT_FOUND")
+  })
+
+  it("returns an empty snapshot when the service has no containers", async () => {
+    mockGetServiceForUser.mockResolvedValueOnce({
+      id: "svc-1",
+      container_ids: [],
+    })
+    const app = makeApp(makeDb())
+    const res = await app.request("/services/svc-1/logs")
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.containerFound).toBe(false)
+    expect(body.lines).toEqual([])
+  })
+})
+
 describe("GET /services/:id", () => {
   it("returns 404 when service not found", async () => {
     mockGetServiceForUser.mockResolvedValueOnce(null)

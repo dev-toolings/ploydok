@@ -68,7 +68,7 @@
     "started": "Service démarré",
     "stopped": "Service arrêté"
   },
-  "logsHint": "Dernières 200 lignes — rafraîchissement automatique toutes les 5 s.",
+  "logsHint": "Sortie live du conteneur — recherche, filtre, copie et téléchargement.",
   "composeHint": "Fichier docker-compose.yml utilisé pour ce service.",
   "generatedHint": "Variables d'environnement auto-générées à l'installation (lecture seule).",
   "noGenerated": "Aucune variable générée.",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
 import { nanoid } from "nanoid"
-import { and, eq, inArray } from "drizzle-orm"
+import { and, desc, eq, inArray } from "drizzle-orm"
 import { system_jobs } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import {
@@ -15,7 +15,11 @@ import { requireInstanceAdmin } from "../auth/instance-admin"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
 import { enqueueWithDbRow } from "../worker/queue-enqueue"
-import { gcBuildCacheQueue, gcImagesQueue } from "../worker/queues"
+import {
+  dockerCleanupQueue,
+  gcBuildCacheQueue,
+  gcImagesQueue,
+} from "../worker/queues"
 
 type AppEnv = { Variables: { user?: AuthUser } }
 
@@ -161,7 +165,7 @@ export function createDiskRouter(db: Db): Hono<AppEnv> {
       .where(
         and(
           eq(system_jobs.id, c.req.param("jobId")!),
-          inArray(system_jobs.kind, ["gc.images", "gc.buildcache"])
+          inArray(system_jobs.kind, ["gc.images", "gc.buildcache", "gc.docker"])
         )
       )
       .limit(1)
@@ -185,6 +189,21 @@ export function createDiskRouter(db: Db): Hono<AppEnv> {
         finishedAt: job.finished_at?.toISOString() ?? null,
       })
     )
+  })
+
+  router.get("/jobs", instanceAdmin, async (c) => {
+    const rows = await db
+      .select()
+      .from(system_jobs)
+      .where(inArray(system_jobs.kind, ["gc.images", "gc.buildcache", "gc.docker"]))
+      .orderBy(desc(system_jobs.queued_at))
+      .limit(20)
+    return c.json(rows.map((job) => DiskJobStatusSchema.parse({
+      jobId: job.id, kind: job.kind, status: job.status, result: job.result ?? null,
+      errorMessage: job.error_message, queuedAt: job.queued_at.toISOString(),
+      startedAt: job.claimed_at?.toISOString() ?? null,
+      finishedAt: job.finished_at?.toISOString() ?? null,
+    })))
   })
 
   // POST /disk/prune/images — dangling-only image prune (all: false, safe default).
@@ -242,6 +261,36 @@ export function createDiskRouter(db: Db): Hono<AppEnv> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: "PRUNE_FAILED", message } }, 500)
+    }
+  })
+
+  // POST /disk/cleanup — full fixed Docker cleanup, including tagged unused
+  // images. The agent owns the policy and never receives arbitrary commands.
+  router.post("/cleanup", instanceAdmin, async (c) => {
+    const user = getUser(c)
+    try {
+      const { row } = await enqueueWithDbRow({
+        db,
+        queue: dockerCleanupQueue,
+        jobName: "gc.docker.requested",
+        insertRow: (tx) =>
+          tx
+            .insert(system_jobs)
+            .values({
+              id: nanoid(),
+              kind: "gc.docker",
+              requested_by_user_id: user.id,
+              source: "api",
+              options: {},
+            })
+            .returning()
+            .then((r: (typeof system_jobs.$inferSelect)[]) => r[0]!),
+        buildPayload: (row) => ({ jobId: row.id }),
+      })
+      return c.json(DiskPruneResultSchema.parse({ jobId: row.id }))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: "CLEANUP_FAILED", message } }, 500)
     }
   })
 

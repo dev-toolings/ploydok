@@ -27,10 +27,10 @@ import { ServiceStatusBadge } from "../../../../../components/services/ServiceSt
 import {
   useDeleteService,
   useService,
-  useServiceLogs,
   useStartService,
   useStopService,
 } from "../../../../../lib/services"
+import { LogViewer } from "../../../../../components/apps/BuildLogViewer"
 import { useTranslation } from "react-i18next"
 import { useCurrentOrganization } from "../../../../../lib/organizations"
 
@@ -47,12 +47,11 @@ function ServiceDetailPage(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <ShellPage title={t("title")} eyebrow={organization?.name ?? t("workspace:eyebrow")}>
-        <div
-          className="space-y-4"
-          aria-busy="true"
-          aria-label={t("loading")}
-        >
+      <ShellPage
+        title={t("title")}
+        eyebrow={organization?.name ?? t("workspace:eyebrow")}
+      >
+        <div className="space-y-4" aria-busy="true" aria-label={t("loading")}>
           <div className="h-8 w-48 skeleton-surface rounded" />
           <div className="h-40 skeleton-surface rounded-lg" />
         </div>
@@ -62,7 +61,10 @@ function ServiceDetailPage(): React.JSX.Element {
 
   if (error || !service) {
     return (
-      <ShellPage title={t("title")} eyebrow={organization?.name ?? t("workspace:eyebrow")}>
+      <ShellPage
+        title={t("title")}
+        eyebrow={organization?.name ?? t("workspace:eyebrow")}
+      >
         <p
           role="alert"
           className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
@@ -99,7 +101,7 @@ function ServiceDetailPage(): React.JSX.Element {
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <div className="space-y-4">
           <ServiceHeaderPanel service={service} />
-          <LogsPanel id={id} />
+          <LogsPanel id={id} name={service.name} />
           <ComposePanel compose={service.compose_raw} />
         </div>
         <GeneratedEnvPanel env={service.generated_env} />
@@ -205,31 +207,22 @@ function Row({
   )
 }
 
-function LogsPanel({ id }: { id: string }): React.JSX.Element {
+function LogsPanel({
+  id,
+  name,
+}: {
+  id: string
+  name: string
+}): React.JSX.Element {
   const { t } = useTranslation("services")
-  const { data, isLoading } = useServiceLogs(id)
-  const lines = data?.lines ?? []
 
   return (
-    <ShellPanel
-      title={t("logs")}
-      description={t("logsHint")}
-    >
-      {isLoading ? (
-        <div className="h-40 skeleton-surface rounded-md" />
-      ) : lines.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {t("noLogs")}
-        </p>
-      ) : (
-        <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-[11px] leading-relaxed text-muted-foreground">
-          {lines.map((l, i) => (
-            <span key={i} className="block">
-              {l.line}
-            </span>
-          ))}
-        </pre>
-      )}
+    <ShellPanel title={t("logs")} description={t("logsHint")}>
+      <LogViewer
+        source={{ kind: "service", resourceId: id }}
+        resourceName={name}
+        className="h-[min(60vh,480px)] min-h-[240px]"
+      />
     </ShellPanel>
   )
 }
@@ -237,10 +230,7 @@ function LogsPanel({ id }: { id: string }): React.JSX.Element {
 function ComposePanel({ compose }: { compose: string }): React.JSX.Element {
   const { t } = useTranslation("services")
   return (
-    <ShellPanel
-      title={t("compose")}
-      description={t("composeHint")}
-    >
+    <ShellPanel title={t("compose")} description={t("composeHint")}>
       <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-[11px] leading-relaxed text-muted-foreground">
         <code>{compose}</code>
       </pre>
@@ -278,14 +268,9 @@ function GeneratedEnvPanel({
   }
 
   return (
-    <ShellPanel
-      title={t("generatedVars")}
-      description={t("generatedHint")}
-    >
+    <ShellPanel title={t("generatedVars")} description={t("generatedHint")}>
       {entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {t("noGenerated")}
-        </p>
+        <p className="text-xs text-muted-foreground">{t("noGenerated")}</p>
       ) : (
         <div className="space-y-2">
           {entries.map(([key, value]) => {
@@ -324,7 +309,9 @@ function GeneratedEnvPanel({
                   <RiFileCopyLine className="size-4" />
                 </button>
                 {copied === key ? (
-                  <span className="text-[10px] text-green-600">{t("copied")}</span>
+                  <span className="text-[10px] text-green-600">
+                    {t("copied")}
+                  </span>
                 ) : null}
               </div>
             )
@@ -367,9 +354,7 @@ function DeleteDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("deleteTitle", { name: serviceName })}</DialogTitle>
-          <DialogDescription>
-            {t("deleteBody", { expected })}
-          </DialogDescription>
+          <DialogDescription>{t("deleteBody", { expected })}</DialogDescription>
         </DialogHeader>
         <Input
           value={confirm}

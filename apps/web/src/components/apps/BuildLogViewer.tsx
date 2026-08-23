@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { RiArrowDownLine } from "@remixicon/react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
 import {
   detectLevel,
@@ -8,6 +9,7 @@ import {
   filterBySearch,
   useLogStream,
 } from "../../lib/hooks/use-log-stream"
+import type { LogSource } from "../../lib/hooks/use-log-stream"
 import { LogFilters, useLogFilters } from "./LogFilters"
 import { LogLine } from "./LogLine"
 import type { LogLine as LogLineData } from "../../lib/hooks/use-log-stream"
@@ -16,6 +18,13 @@ import type { LogFiltersState } from "./LogFilters"
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export interface LogViewerProps {
+  source: LogSource
+  /** Optional resource name for the download filename and title bar */
+  resourceName?: string
+  className?: string
+}
 
 interface BuildLogViewerProps {
   appId: string
@@ -45,6 +54,7 @@ function TitleBar({
   errorCount: number
   warnCount: number
 }): React.JSX.Element {
+  const { t } = useTranslation("apps")
   return (
     <div className="flex h-8 shrink-0 items-center gap-2 border-b border-white/10 bg-white/5 px-4">
       <span
@@ -58,22 +68,22 @@ function TitleBar({
         {title}
       </span>
       <span className="shrink-0 text-xs text-white/40">
-        {isLive ? "Live" : "Disconnected"}
+        {isLive ? t("logs.live") : t("logs.disconnected")}
       </span>
       <div className="flex-1" />
       {errorCount > 0 && (
         <span className="shrink-0 text-xs text-red-400 tabular-nums">
-          {errorCount.toLocaleString()} err
+          {errorCount.toLocaleString()} {t("logs.err")}
         </span>
       )}
       {warnCount > 0 && (
         <span className="shrink-0 text-xs text-amber-400 tabular-nums">
-          {warnCount.toLocaleString()} warn
+          {warnCount.toLocaleString()} {t("logs.warnShort")}
         </span>
       )}
       {lineCount > 0 && (
         <span className="shrink-0 text-xs text-white/50 tabular-nums">
-          {lineCount.toLocaleString()} lines
+          {t("logs.linesCount", { count: lineCount.toLocaleString() })}
         </span>
       )}
     </div>
@@ -93,16 +103,17 @@ function FollowButton({
   newCount: number
   onClick: () => void
 }): React.JSX.Element | null {
+  const { t } = useTranslation("apps")
   if (!visible) return null
   return (
     <button
       type="button"
       onClick={onClick}
       className="absolute right-4 bottom-4 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
-      title="Resume tailing (F)"
+      title={t("logs.resumeTail")}
     >
       <RiArrowDownLine className="size-3.5" aria-hidden="true" />
-      Follow latest
+      {t("logs.followLatest")}
       {newCount > 0 && (
         <span className="rounded-full bg-primary-foreground/20 px-1.5 py-0.5 text-xs">
           {newCount}
@@ -122,20 +133,23 @@ function EmptyState({
   filters,
   connected,
   hasError,
+  waitingHint,
 }: {
   filtered: number
   total: number
   filters: LogFiltersState
   connected: boolean
   hasError: boolean
+  waitingHint: string
 }): React.JSX.Element {
+  const { t } = useTranslation("apps")
   const hasFilter = filters.search.length > 0 || filters.level !== "all"
   if (filtered === 0 && total > 0 && hasFilter) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-white/50">
-        <span>No lines match the current filters.</span>
+        <span>{t("logs.noMatch")}</span>
         <span className="text-xs text-white/40">
-          {total.toLocaleString()} total. Try clearing the search or the level.
+          {t("logs.noMatchHint", { total: total.toLocaleString() })}
         </span>
       </div>
     )
@@ -144,19 +158,17 @@ function EmptyState({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-white/50">
         {hasError ? (
-          <span className="text-red-400">Stream error, see the banner above.</span>
+          <span className="text-red-400">{t("logs.streamError")}</span>
         ) : connected ? (
           <>
             <span className="inline-flex items-center gap-2">
               <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
-              Connected, waiting for output…
+              {t("logs.connectedWaiting")}
             </span>
-            <span className="text-xs text-white/40">
-              Logs will stream here as the build emits them.
-            </span>
+            <span className="text-xs text-white/40">{waitingHint}</span>
           </>
         ) : (
-          <span>Connecting to log stream…</span>
+          <span>{t("logs.connecting")}</span>
         )}
       </div>
     )
@@ -165,22 +177,19 @@ function EmptyState({
 }
 
 // ---------------------------------------------------------------------------
-// BuildLogViewer
+// LogViewer
 // ---------------------------------------------------------------------------
 
-export function BuildLogViewer({
-  appId,
-  buildId,
-  archiveOnly,
-  appName,
+export function LogViewer({
+  source,
+  resourceName,
   className,
-}: BuildLogViewerProps): React.JSX.Element {
+}: LogViewerProps): React.JSX.Element {
+  const { t } = useTranslation("apps")
   const [filters, setFilters] = useLogFilters()
 
   const { lines, connected, error } = useLogStream({
-    appId,
-    buildId,
-    archiveOnly,
+    source,
     maxLines: filters.volume,
   })
 
@@ -362,12 +371,12 @@ export function BuildLogViewer({
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    const baseName = appName ?? appId
+    const baseName = resourceName ?? source.resourceId
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
     a.download = `${baseName}-${ts}.log`
     a.click()
     URL.revokeObjectURL(url)
-  }, [filtered, appId, appName])
+  }, [filtered, source.resourceId, resourceName])
 
   // ---------------------------------------------------------------------------
   // Keyboard shortcuts: /, p, g, G, n, N, w, t
@@ -458,12 +467,22 @@ export function BuildLogViewer({
   // ---------------------------------------------------------------------------
   // Title
   // ---------------------------------------------------------------------------
-  const title =
-    buildId && buildId !== "latest"
-      ? `Build ${buildId.slice(0, 8)}${appName ? ` · ${appName}` : ""}`
-      : appName
-        ? `Runtime logs · ${appName}`
-        : "Runtime logs"
+  const isBuild =
+    source.kind === "app" &&
+    Boolean(source.buildId) &&
+    source.buildId !== "latest"
+  const buildIdShort =
+    source.kind === "app" && source.buildId ? source.buildId.slice(0, 8) : ""
+  const title = isBuild
+    ? resourceName
+      ? t("logs.buildNamed", { id: buildIdShort, name: resourceName })
+      : t("logs.buildOnly", { id: buildIdShort })
+    : resourceName
+      ? t("logs.runtimeNamed", { name: resourceName })
+      : t("logs.runtimeLogs")
+  const waitingHint = isBuild
+    ? t("logs.waitingHint")
+    : t("logs.waitingHintRuntime")
 
   return (
     <div
@@ -516,6 +535,7 @@ export function BuildLogViewer({
                 filters={filters}
                 connected={connected}
                 hasError={Boolean(error)}
+                waitingHint={waitingHint}
               />
             ) : (
               filtered.map((line) => (
@@ -538,5 +558,21 @@ export function BuildLogViewer({
         />
       </div>
     </div>
+  )
+}
+
+export function BuildLogViewer({
+  appId,
+  buildId,
+  archiveOnly,
+  appName,
+  className,
+}: BuildLogViewerProps): React.JSX.Element {
+  return (
+    <LogViewer
+      source={{ kind: "app", resourceId: appId, buildId, archiveOnly }}
+      resourceName={appName}
+      className={className}
+    />
   )
 }

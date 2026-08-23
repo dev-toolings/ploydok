@@ -25,6 +25,7 @@ export interface CleanupBuildCachesOptions {
   rootDir?: string
   now?: Date
   maxAgeMs?: number
+  activeAppIds?: ReadonlySet<string>
 }
 
 export interface CleanupBuildCachesResult {
@@ -32,6 +33,7 @@ export interface CleanupBuildCachesResult {
   cacheDirsScanned: number
   removedDirs: number
   removedBytes: number
+  skippedActiveApps: number
 }
 
 export interface BuildKitCachePruneResult {
@@ -93,6 +95,7 @@ export async function cleanupBuildCaches(
     cacheDirsScanned: 0,
     removedDirs: 0,
     removedBytes: 0,
+    skippedActiveApps: 0,
   }
 
   const appEntries = await readdir(rootDir, { withFileTypes: true }).catch(
@@ -102,6 +105,10 @@ export async function cleanupBuildCaches(
   for (const appEntry of appEntries) {
     if (!appEntry.isDirectory()) continue
     result.appsScanned += 1
+    if (options.activeAppIds?.has(appEntry.name)) {
+      result.skippedActiveApps += 1
+      continue
+    }
     const appDir = path.join(rootDir, appEntry.name)
 
     for (const cacheName of BUILD_CACHE_DIR_NAMES) {

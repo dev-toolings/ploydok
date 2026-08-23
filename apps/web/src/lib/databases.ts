@@ -10,26 +10,12 @@ import { notifyMutationError } from "./second-factor-toast"
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type DbKind =
-  | "postgres"
-  | "mysql"
-  | "mariadb"
-  | "redis"
-  | "mongo"
-  | "libsql"
+  "postgres" | "mysql" | "mariadb" | "redis" | "mongo" | "libsql"
 export type DbPlan = "small" | "medium" | "large"
 export type DbStatus =
-  | "creating"
-  | "starting"
-  | "running"
-  | "stopped"
-  | "degraded"
-  | "failed"
+  "creating" | "starting" | "running" | "stopped" | "degraded" | "failed"
 export type DbHealthStatus =
-  | "unknown"
-  | "starting"
-  | "healthy"
-  | "degraded"
-  | "unhealthy"
+  "unknown" | "starting" | "healthy" | "degraded" | "unhealthy"
 export type DbExposureMode = "internal" | "direct_port" | "public_proxy"
 export type DbManagementMode = "managed" | "external"
 
@@ -97,12 +83,6 @@ export interface RegisterExternalDatabaseInput {
   projectId: string
   name: string
   connectionString: string
-}
-
-export interface DatabaseLogLine {
-  t: number
-  line: string
-  stream?: "stdout" | "stderr"
 }
 
 export interface DatabaseStats {
@@ -418,17 +398,6 @@ export function useUpdateDatabaseNetwork() {
     onError: (err: Error) => {
       toast.error(err.message)
     },
-  })
-}
-
-export function useDatabaseLogs(id: string, tail = 200) {
-  return useQuery({
-    queryKey: ["databases", "logs", id, tail],
-    queryFn: async () =>
-      apiFetch<{ lines: Array<DatabaseLogLine>; containerFound: boolean }>(
-        `/databases/${id}/logs?tail=${tail}`
-      ),
-    enabled: Boolean(id),
   })
 }
 

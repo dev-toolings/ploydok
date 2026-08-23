@@ -2,6 +2,11 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import { sql } from "drizzle-orm"
 import type { Db } from "@ploydok/db"
+import { createRedis } from "@ploydok/db"
+import { env } from "../env"
+import { acquireGate } from "./build-cleanup-gate"
+
+const dockerCleanupGate = createRedis(env.REDIS_URL)
 
 const DEFAULT_LEASE_MS = 30_000
 const DEFAULT_HEARTBEAT_MS = 10_000
@@ -156,14 +161,19 @@ export async function withAppDeployLease<T>(
   task: () => Promise<T>,
   opts: { leaseMs?: number; heartbeatMs?: number; token?: string } = {}
 ): Promise<T> {
-  const token = opts.token ?? crypto.randomUUID()
-  const leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS
-  const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
-  if (!(await acquire(db, appId, buildId, token, leaseMs))) {
-    throw new DeployLeaseLostError(
-      "another worker owns the app deployment lease"
-    )
-  }
+  // Cleanup takes this gate before its build snapshot. A deployment cannot
+  // enter the lifecycle while that destructive cache/image sweep owns it.
+  const gate = await acquireGate(dockerCleanupGate, "reader")
+  if (!gate) throw new DeployLeaseLostError("Docker cleanup owns the build lifecycle gate")
+  try {
+    const token = opts.token ?? crypto.randomUUID()
+    const leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS
+    const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
+    if (!(await acquire(db, appId, buildId, token, leaseMs))) {
+      throw new DeployLeaseLostError(
+        "another worker owns the app deployment lease"
+      )
+    }
 
   const controller = new AbortController()
   const ctx: LeaseContext = {
@@ -179,7 +189,10 @@ export async function withAppDeployLease<T>(
     if (heartbeatRunning || controller.signal.aborted) return
     heartbeatRunning = true
     leaseContext
-      .run(ctx, fenceDeploySideEffect)
+      .run(ctx, async () => {
+        if (!(await gate.renew())) throw new DeployLeaseLostError("build/cleanup gate lease lost")
+        await fenceDeploySideEffect()
+      })
       .catch((error) => {
         controller.abort(error)
       })
@@ -199,5 +212,10 @@ export async function withAppDeployLease<T>(
       DELETE FROM app_deploy_leases
       WHERE app_id = ${appId} AND lease_token = ${token}
     `)
+    await gate.release()
+  }
+  } catch (error) {
+    await gate.release()
+    throw error
   }
 }

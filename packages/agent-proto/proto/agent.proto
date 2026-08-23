@@ -592,6 +592,18 @@ message BuildCachePruneRequest {
 }
 message BuildCachePruneResponse { int64 space_reclaimed_bytes = 1; }
 
+// A fixed, volume-safe host cleanup policy. There are deliberately no caller
+// supplied filters or shell commands: the agent always prunes only Docker
+// resources which are not referenced by a running workload, and never volumes.
+message DockerCleanupRequest {}
+message DockerCleanupResponse {
+  int32 stopped_containers_deleted = 1;
+  int32 unused_images_deleted = 2;
+  int64 images_space_reclaimed_bytes = 3;
+  int64 builder_cache_space_reclaimed_bytes = 4;
+  int32 unused_networks_deleted = 5;
+}
+
 message RegistryGarbageCollectRequest {
   // Empty selects /etc/docker/registry/config.yml. Non-empty paths must be
   // normalized absolute paths below /etc/docker/registry with no dot segments.
@@ -823,6 +835,7 @@ service Agent {
   rpc ImagePush       (ImagePushRequest)        returns (ImagePushResponse);
   rpc ImageRemove     (ImageRemoveRequest)      returns (ImageRemoveResponse);
   rpc BuildCachePrune (BuildCachePruneRequest)  returns (BuildCachePruneResponse);
+  rpc DockerCleanup  (DockerCleanupRequest)     returns (DockerCleanupResponse);
   rpc RegistryGarbageCollect (RegistryGarbageCollectRequest) returns (RegistryGarbageCollectResponse);
 
   // Registry image digest (auto-update watch)

@@ -12,10 +12,23 @@ import {
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@workspace/ui/components/alert-dialog"
 import { cn } from "@workspace/ui/lib/utils"
 import {
   getDiskJob,
+  getDiskJobs,
   getDiskUsage,
+  cleanupDocker,
   pruneBuildCache,
   pruneImages,
 } from "../../../lib/disk"
@@ -105,6 +118,11 @@ function AdminDiskPage(): React.JSX.Element {
       return status === "pending" || status === "running" ? 1_000 : false
     },
   })
+  const { data: history = [] } = useQuery<DiskJobStatus[], ApiError>({
+    queryKey: ["admin", "disk", "jobs"],
+    queryFn: getDiskJobs,
+    refetchInterval: 10_000,
+  })
 
   React.useEffect(() => {
     if (!activeJob) return
@@ -159,6 +177,16 @@ function AdminDiskPage(): React.JSX.Element {
       notifyMutationError(err, t("adminDisk.pruneFailed")),
   })
 
+  const dockerCleanupMutation = useMutation({
+    mutationFn: cleanupDocker,
+    onSuccess: ({ jobId }: { jobId: string }) => {
+      toast.success(t("adminDisk.cleanupQueued"))
+      setActiveJob({ id: jobId, label: t("adminDisk.cleanupLabel") })
+    },
+    onError: (err: unknown) =>
+      notifyMutationError(err, t("adminDisk.cleanupFailed")),
+  })
+
   return (
     <div className="w-full space-y-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -203,6 +231,35 @@ function AdminDiskPage(): React.JSX.Element {
             <RiEraserLine className="size-4" />
             {t("adminDisk.pruneCache")}
           </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                variant="destructive"
+                className="w-full gap-2 sm:w-auto"
+                loading={dockerCleanupMutation.isPending}
+                disabled={activeJob !== null}
+              >
+                <RiEraserLine className="size-4" />
+                {t("adminDisk.cleanupDocker")}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("adminDisk.cleanupConfirmTitle")}</AlertDialogTitle>
+                <AlertDialogDescription>{t("adminDisk.cleanupConfirmDescription")}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => dockerCleanupMutation.mutate()}
+                >
+                  {t("adminDisk.cleanupDocker")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
@@ -219,6 +276,20 @@ function AdminDiskPage(): React.JSX.Element {
           …
         </p>
       ) : null}
+
+      <section className="rounded-xl border border-border bg-card p-4">
+        <h2 className="text-sm font-medium">{t("adminDisk.history")}</h2>
+        <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+          {history.map((entry) => (
+            <li key={entry.jobId} className="rounded border border-border px-3 py-2">
+              <span className="font-medium text-foreground">{entry.kind}</span>{" "}
+              — {entry.status}
+              {entry.errorMessage ? `: ${entry.errorMessage}` : null}
+              {entry.result ? <pre className="mt-2 overflow-auto text-xs">{JSON.stringify(entry.result, null, 2)}</pre> : null}
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">

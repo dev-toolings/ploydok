@@ -11,6 +11,8 @@ import {
   filterBySearch,
   parseLogEntries,
   parseStructuredLine,
+  resolveLogSource,
+  runtimeSnapshotToFallback,
 } from "../../../lib/hooks/use-log-stream"
 import type { LogLine } from "../../../lib/hooks/use-log-stream"
 
@@ -237,7 +239,9 @@ describe("parseStructuredLine — JSON", () => {
   })
 
   it("stringifies nested object/array values", () => {
-    const parsed = parseStructuredLine('{"message":"x","meta":{"a":1},"tags":[1,2]}')
+    const parsed = parseStructuredLine(
+      '{"message":"x","meta":{"a":1},"tags":[1,2]}'
+    )
     expect(parsed?.message).toBe("x")
     expect(parsed?.fields).toEqual([
       { key: "meta", value: '{"a":1}' },
@@ -287,11 +291,134 @@ describe("detectLevel — structured level fields", () => {
   })
 
   it("prefers the logfmt level over conflicting message keywords", () => {
-    expect(detectLevel('level=info msg="error handler registered"')).toBe("info")
+    expect(detectLevel('level=info msg="error handler registered"')).toBe(
+      "info"
+    )
   })
 
   it("maps fatal/warning synonyms from structured logs", () => {
     expect(detectLevel('level=fatal msg="down" component=db')).toBe("error")
     expect(detectLevel('{"severity":"warning","msg":"slow"}')).toBe("warn")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveLogSource — app / database / service endpoints
+// ---------------------------------------------------------------------------
+
+describe("resolveLogSource", () => {
+  it("maps app runtime to the live WS and runtime-logs snapshot", () => {
+    expect(resolveLogSource({ kind: "app", resourceId: "app-1" })).toEqual({
+      wsPath: "/ws/apps/app-1/logs",
+      snapshot: { type: "runtime", path: "/apps/app-1/runtime-logs" },
+    })
+  })
+
+  it("maps app build to the build WS and archive snapshot", () => {
+    expect(
+      resolveLogSource({
+        kind: "app",
+        resourceId: "app-1",
+        buildId: "build/with/slashes",
+        archiveOnly: true,
+      })
+    ).toEqual({
+      wsPath: "/ws/apps/app-1/build/build/with/slashes",
+      snapshot: {
+        type: "archive",
+        path: "/apps/app-1/logs?buildId=build%2Fwith%2Fslashes",
+      },
+    })
+  })
+
+  it("maps database sources to the database log endpoints", () => {
+    expect(resolveLogSource({ kind: "database", resourceId: "db-9" })).toEqual({
+      wsPath: "/ws/databases/db-9/logs",
+      snapshot: { type: "runtime", path: "/databases/db-9/logs" },
+    })
+  })
+
+  it("maps service sources including the container index", () => {
+    expect(
+      resolveLogSource({
+        kind: "service",
+        resourceId: "svc-3",
+        containerIndex: 2,
+      })
+    ).toEqual({
+      wsPath: "/ws/services/svc-3/logs?container=2",
+      snapshot: { type: "runtime", path: "/services/svc-3/logs?container=2" },
+    })
+  })
+})
+
+function snapshotToFilterableLines(
+  payload: Parameters<typeof runtimeSnapshotToFallback>[0]
+): Array<LogLine> {
+  const fallback = runtimeSnapshotToFallback(payload)
+  if (fallback.kind !== "lines") return []
+  return fallback.lines.flatMap((raw, index) =>
+    parseLogEntries(raw, 0).map((entry, offset) => ({
+      id: index * 100 + offset,
+      text: entry.text,
+      t: entry.t,
+      stream: entry.stream,
+    }))
+  )
+}
+
+describe("runtimeSnapshotToFallback — database and service payloads", () => {
+  it("parses a postgres-style database snapshot into the same filter model", () => {
+    const lines = snapshotToFilterableLines({
+      containerFound: true,
+      lines: [
+        {
+          t: 1_700_000_000_000,
+          line: "[ERROR] FATAL:  database files are incompatible with server",
+          stream: "stderr",
+        },
+        {
+          t: 1_700_000_000_100,
+          line: "LOG:  database system is ready to accept connections",
+          stream: "stdout",
+        },
+      ],
+    })
+
+    expect(lines).toHaveLength(2)
+    expect(filterByLevel(lines, "error")).toHaveLength(1)
+    expect(filterByLevel(lines, "error")[0].text).toContain("FATAL")
+    expect(filterBySearch(lines, "ready")).toHaveLength(1)
+    expect(detectLevel(lines[0].text)).toBe("error")
+  })
+
+  it("parses a compose service snapshot into the same filter model", () => {
+    const lines = snapshotToFilterableLines({
+      containerFound: true,
+      lines: [
+        {
+          t: 1_700_000_001_000,
+          line: '{"level":"info","msg":"pocketbase started","port":8090}',
+          stream: "stdout",
+        },
+        {
+          t: 1_700_000_001_200,
+          line: '{"level":"error","msg":"failed to bind smtp"}',
+          stream: "stderr",
+        },
+      ],
+    })
+
+    expect(lines).toHaveLength(2)
+    expect(filterByLevel(lines, "error")).toHaveLength(1)
+    expect(filterBySearch(lines, "pocketbase")).toHaveLength(1)
+    expect(detectLevel(lines[1].text)).toBe("error")
+    expect(detectLevel(lines[0].text)).toBe("info")
+  })
+
+  it("treats containerFound:false with no lines as empty-runtime", () => {
+    expect(
+      runtimeSnapshotToFallback({ containerFound: false, lines: [] })
+    ).toEqual({ kind: "empty-runtime" })
   })
 })

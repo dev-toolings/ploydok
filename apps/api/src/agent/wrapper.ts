@@ -55,6 +55,8 @@ import type {
   ImageRemoveResponse,
   BuildCachePruneRequest,
   BuildCachePruneResponse,
+  DockerCleanupRequest,
+  DockerCleanupResponse,
   RegistryGarbageCollectRequest,
   RegistryGarbageCollectResponse,
   RegistryImageDigestRequest,
@@ -427,6 +429,17 @@ export class Agent {
 
   buildCachePrune(req: BuildCachePruneRequest, timeoutMs?: number): Promise<BuildCachePruneResponse> {
     return callUnary((r, m, opts, cb) => this.client.buildCachePrune(r, m, opts, cb), req, timeoutMs)
+  }
+
+  dockerCleanup(
+    req: DockerCleanupRequest = {},
+    timeoutMs?: number
+  ): Promise<DockerCleanupResponse> {
+    return callUnary(
+      (r, m, opts, cb) => this.client.dockerCleanup(r, m, opts, cb),
+      req,
+      timeoutMs
+    )
   }
 
   registryGarbageCollect(req: RegistryGarbageCollectRequest, timeoutMs?: number): Promise<RegistryGarbageCollectResponse> {

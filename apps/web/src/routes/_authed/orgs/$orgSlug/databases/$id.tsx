@@ -26,11 +26,11 @@ import {
 import { ShellPage } from "../../../../../components/layout/AppShell"
 import {
   useDatabase,
-  useDatabaseLogs,
   useStartDatabase,
   useStopDatabase,
   useUpdateDatabaseNetwork,
 } from "../../../../../lib/databases"
+import { LogViewer } from "../../../../../components/apps/BuildLogViewer"
 import { RevealConnectionDialog } from "../../../../../components/databases/RevealConnectionDialog"
 import { RestartDatabaseDialog } from "../../../../../components/databases/RestartDatabaseDialog"
 import { RotationPanel } from "../../../../../components/databases/RotationPanel"
@@ -210,7 +210,6 @@ function DatabaseDetailPage(): React.JSX.Element {
   const navigate = useNavigate()
   const currentOrgSlug = useCurrentOrganizationSlug()
   const { data: db, isLoading, error, refetch } = useDatabase(dbId)
-  const { data: logs } = useDatabaseLogs(dbId)
   const [revealOpen, setRevealOpen] = React.useState(false)
   const [adminerOpen, setAdminerOpen] = React.useState(false)
   const [restartOpen, setRestartOpen] = React.useState(false)
@@ -630,15 +629,17 @@ function DatabaseDetailPage(): React.JSX.Element {
           </TabsContent>
 
           <TabsContent value="logs">
-            <div className="max-h-[420px] overflow-auto rounded-lg border bg-muted/20 p-4 font-mono text-xs whitespace-pre-wrap">
-              {isExternal
-                ? t("detail.externalLogs")
-                : logs?.lines?.length
-                  ? logs.lines
-                      .map((line) => `[${line.stream ?? "log"}] ${line.line}`)
-                      .join("\n")
-                  : t("detail.noLogs")}
-            </div>
+            {isExternal ? (
+              <p className="text-sm text-muted-foreground">
+                {t("detail.externalLogs")}
+              </p>
+            ) : (
+              <LogViewer
+                source={{ kind: "database", resourceId: dbId }}
+                resourceName={db.name}
+                className="h-[min(70vh,560px)] min-h-[280px]"
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="advanced">

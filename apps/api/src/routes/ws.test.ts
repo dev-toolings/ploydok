@@ -13,10 +13,10 @@
 // End-to-end WS tests (replay + live stream) live in the log-bus.test.ts
 // which tests the LogBus independently, and in future E2E Playwright specs.
 
-import { describe, it, expect } from "bun:test";
-import { wsRouter } from "./ws";
+import { describe, it, expect } from "bun:test"
+import { wsRouter } from "./ws"
 
-const wsEnv = { server: { upgrade: () => false } };
+const wsEnv = { server: { upgrade: () => false } }
 
 // ---------------------------------------------------------------------------
 // Smoke: router is a Hono instance with the right shape
@@ -24,17 +24,17 @@ const wsEnv = { server: { upgrade: () => false } };
 
 describe("wsRouter shape", () => {
   it("is exported and has a fetch function (Hono)", () => {
-    expect(typeof wsRouter.fetch).toBe("function");
-  });
+    expect(typeof wsRouter.fetch).toBe("function")
+  })
 
   it("responds to unknown routes with 404", async () => {
     const res = await wsRouter.fetch(
       new Request("http://localhost/apps/x/unknown-route"),
-      wsEnv,
-    );
-    expect(res.status).toBe(404);
-  });
-});
+      wsEnv
+    )
+    expect(res.status).toBe(404)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Auth rejection: requests without a valid cookie must not successfully
@@ -48,25 +48,41 @@ describe("wsRouter auth", () => {
   it("/apps/:id/build/:buildId — plain GET without cookie returns non-200", async () => {
     const res = await wsRouter.fetch(
       new Request("http://localhost/apps/app-1/build/build-1"),
-      wsEnv,
-    );
+      wsEnv
+    )
     // Without a valid JWT cookie the endpoint should either 401 or
     // perform a WebSocket upgrade (101).  Since there is no live Bun
     // server backing this test, the upgrade middleware internally calls
     // server.upgrade() which fails gracefully — Hono/Bun returns a
     // 426 Upgrade Required or the handler's fallback.
     // We just assert it is NOT a plain 200 success (which would be wrong).
-    expect(res.status).not.toBe(200);
-  });
+    expect(res.status).not.toBe(200)
+  })
 
   it("/apps/:id/logs — plain GET without cookie returns non-200", async () => {
     const res = await wsRouter.fetch(
       new Request("http://localhost/apps/app-1/logs"),
-      wsEnv,
-    );
-    expect(res.status).not.toBe(200);
-  });
-});
+      wsEnv
+    )
+    expect(res.status).not.toBe(200)
+  })
+
+  it("/databases/:id/logs — plain GET without cookie returns non-200", async () => {
+    const res = await wsRouter.fetch(
+      new Request("http://localhost/databases/db-1/logs"),
+      wsEnv
+    )
+    expect(res.status).not.toBe(200)
+  })
+
+  it("/services/:id/logs — plain GET without cookie returns non-200", async () => {
+    const res = await wsRouter.fetch(
+      new Request("http://localhost/services/svc-1/logs"),
+      wsEnv
+    )
+    expect(res.status).not.toBe(200)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // wsHandler exported for Bun.serve
@@ -74,8 +90,8 @@ describe("wsRouter auth", () => {
 
 describe("wsHandler", () => {
   it("wsHandler is exported and is an object (BunWebSocket handler)", async () => {
-    const { wsHandler } = await import("./ws");
-    expect(typeof wsHandler).toBe("object");
-    expect(wsHandler).not.toBeNull();
-  });
-});
+    const { wsHandler } = await import("./ws")
+    expect(typeof wsHandler).toBe("object")
+    expect(wsHandler).not.toBeNull()
+  })
+})

@@ -69,6 +69,24 @@ describe("cleanupBuildCaches", () => {
     expect((await stat(cacheDir)).isDirectory()).toBe(true)
   })
 
+  it("never removes a stale cache owned by an active build", async () => {
+    const root = await makeRoot()
+    const cacheDir = path.join(root, "app-active", ".buildkit-cache")
+    await mkdir(cacheDir, { recursive: true })
+    await writeFile(path.join(cacheDir, "layer"), "cached")
+    await touchDir(cacheDir, new Date("2026-04-20T08:00:00.000Z"))
+
+    const result = await cleanupBuildCaches({
+      rootDir: root,
+      now: new Date("2026-05-10T08:00:00.000Z"),
+      activeAppIds: new Set(["app-active"]),
+    })
+
+    expect(result.removedDirs).toBe(0)
+    expect(result.skippedActiveApps).toBe(1)
+    expect((await stat(cacheDir)).isDirectory()).toBe(true)
+  })
+
   it("prunes the dedicated BuildKit cache through its configured address", async () => {
     const spawn = mock(() => ({
       stdout: new Response("ID RECLAIMABLE SIZE\ncache-1 true 42B\n").body!,

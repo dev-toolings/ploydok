@@ -29,9 +29,15 @@ import {
 import { ensureStateDirs } from "./state-dirs"
 import { claimQueuedRow } from "./queue-claim"
 import { auditClaimed, auditUnauthorized } from "./queue-audit"
-import { gcQueue, transactionalOutboxQueues } from "./queues"
+import { dockerCleanupQueue, gcQueue, transactionalOutboxQueues } from "./queues"
 import { handleGcImagesJob } from "./handlers/gc-images"
 import { handleGcBuildcacheJob } from "./handlers/gc-buildcache"
+import { handleDockerCleanupJob } from "./handlers/gc-docker"
+import {
+  isDockerCleanupScheduleEnabled,
+  startDockerCleanupCron,
+  stopDockerCleanupCron,
+} from "./jobs/docker-cleanup"
 import {
   startAuditRetentionCron,
   stopAuditRetentionCron,
@@ -88,10 +94,6 @@ import {
   startCaddyReconcileCron,
   stopCaddyReconcileCron,
 } from "./jobs/caddy-reconcile"
-import {
-  startCleanupBuildCachesCron,
-  stopCleanupBuildCachesCron,
-} from "./jobs/cleanup-build-caches"
 import { startAutoHealCron, stopAutoHealCron } from "./jobs/auto-heal"
 import {
   startImageUpdateWatchCron,
@@ -330,6 +332,15 @@ export function startWorker(
     ),
 
     new Worker(
+      "gc.docker",
+      async (job) => {
+        await handleDockerCleanupJob(db, job)
+      },
+      // Manual and scheduled cleanup must never overlap.
+      { connection, concurrency: 1 }
+    ),
+
+    new Worker(
       "scan.image",
       async (job) => {
         await handleImageScan(db, job.data)
@@ -521,7 +532,11 @@ export function startWorker(
   startCveRefreshCron(db)
   startPurgeBuildLogsCron(db)
   startCaddyReconcileCron(db)
-  startCleanupBuildCachesCron()
+  if (isDockerCleanupScheduleEnabled(env.PLOYDOK_DOCKER_CLEANUP_ENABLED)) {
+    startDockerCleanupCron({ db, queue: dockerCleanupQueue })
+  } else {
+    logger.info("daily Docker cleanup disabled (PLOYDOK_DOCKER_CLEANUP_ENABLED=off)")
+  }
   startAutoHealCron(db)
   startImageUpdateWatchCron(db)
   startOutboxDispatcher(db)
@@ -546,7 +561,7 @@ export function startWorker(
     stopCveRefreshCron()
     stopPurgeBuildLogsCron()
     stopCaddyReconcileCron()
-    stopCleanupBuildCachesCron()
+    stopDockerCleanupCron()
     stopAutoHealCron()
     stopImageUpdateWatchCron()
     stopOutboxDispatcher()

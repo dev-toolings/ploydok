@@ -12,6 +12,7 @@ const REFERENCE_PAYLOAD_KEYS = {
   "gc.registry\0gc.registry.requested": ["jobId"],
   "gc.images\0gc.images.requested": ["jobId"],
   "gc.buildcache\0gc.buildcache.requested": ["jobId"],
+  "gc.docker\0gc.docker.requested": ["jobId"],
   "app.delete\0app.delete.requested": ["jobId"],
 } as const
 

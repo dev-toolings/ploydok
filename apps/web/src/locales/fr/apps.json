@@ -550,8 +550,17 @@
     "noMatchHint": "{{total}} au total. Essayez d'effacer la recherche ou le niveau.",
     "connectedWaiting": "Connecté, en attente de sortie…",
     "waitingHint": "Les journaux s'afficheront ici au fur et à mesure du build.",
+    "waitingHintRuntime": "Les journaux s'afficheront ici au fur et à mesure que le conteneur les émet.",
     "runtimeLogs": "Journaux runtime",
-    "buildLogs": "Journaux de build"
+    "runtimeNamed": "Journaux runtime · {{name}}",
+    "buildLogs": "Journaux de build",
+    "buildNamed": "Build {{id}} · {{name}}",
+    "buildOnly": "Build {{id}}",
+    "wsUnavailableArchive": "WebSocket indisponible — chargement des journaux archivés…",
+    "wsUnavailableRuntime": "WebSocket indisponible — chargement des journaux runtime récents…",
+    "noRuntimeContainer": "Aucun conteneur runtime trouvé",
+    "loadFailed": "Impossible de charger les journaux",
+    "loadFailedStatus": "Impossible de charger les journaux ({{status}})"
   },
   "build": {
     "title": "Build et runtime",

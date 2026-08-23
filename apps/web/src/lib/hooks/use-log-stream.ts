@@ -2,6 +2,7 @@
 import * as React from "react"
 import { apiFetch } from "../api"
 import { apiBaseUrl, apiWebSocketBaseUrl } from "../api/base"
+import i18n from "../i18n"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -136,7 +137,9 @@ function stringifyStructuredValue(value: unknown): string {
   }
 }
 
-function levelFromStructured(structured: StructuredLogLine): LogSeverity | null {
+function levelFromStructured(
+  structured: StructuredLogLine
+): LogSeverity | null {
   for (const field of structured.fields) {
     if (!LEVEL_KEYS.includes(field.key.toLowerCase())) continue
     switch (field.value.trim().toLowerCase()) {
@@ -452,14 +455,116 @@ export function parseLogEntries(
 }
 
 // ---------------------------------------------------------------------------
+// Source selection — isolate which resource/endpoint from parse/filter
+// ---------------------------------------------------------------------------
+
+export type LogSource =
+  | {
+      kind: "app"
+      resourceId: string
+      buildId?: string
+      archiveOnly?: boolean
+    }
+  | { kind: "database"; resourceId: string }
+  | { kind: "service"; resourceId: string; containerIndex?: number }
+
+export interface ResolvedLogSource {
+  wsPath: string
+  snapshot:
+    { type: "archive"; path: string } | { type: "runtime"; path: string }
+}
+
+function isAppBuildSource(
+  source: LogSource
+): source is Extract<LogSource, { kind: "app" }> & { buildId: string } {
+  return (
+    source.kind === "app" &&
+    typeof source.buildId === "string" &&
+    source.buildId.length > 0 &&
+    source.buildId !== "latest"
+  )
+}
+
+/**
+ * Maps a log source to the live WebSocket path and the HTTP snapshot/archive
+ * fallback used by the same viewer for apps, databases, and services.
+ */
+export function resolveLogSource(source: LogSource): ResolvedLogSource {
+  if (source.kind === "app" && isAppBuildSource(source)) {
+    return {
+      wsPath: `/ws/apps/${source.resourceId}/build/${source.buildId}`,
+      snapshot: {
+        type: "archive",
+        path: `/apps/${source.resourceId}/logs?buildId=${encodeURIComponent(source.buildId)}`,
+      },
+    }
+  }
+
+  if (source.kind === "database") {
+    return {
+      wsPath: `/ws/databases/${source.resourceId}/logs`,
+      snapshot: {
+        type: "runtime",
+        path: `/databases/${source.resourceId}/logs`,
+      },
+    }
+  }
+
+  if (source.kind === "service") {
+    const index = source.containerIndex ?? 0
+    const query = `?container=${index}`
+    return {
+      wsPath: `/ws/services/${source.resourceId}/logs${query}`,
+      snapshot: {
+        type: "runtime",
+        path: `/services/${source.resourceId}/logs${query}`,
+      },
+    }
+  }
+
+  return {
+    wsPath: `/ws/apps/${source.resourceId}/logs`,
+    snapshot: {
+      type: "runtime",
+      path: `/apps/${source.resourceId}/runtime-logs`,
+    },
+  }
+}
+
+export interface RuntimeLogSnapshot {
+  lines: Array<{
+    t: number
+    line: string
+    stream?: "stdout" | "stderr"
+  }>
+  containerFound?: boolean
+}
+
+export type RuntimeSnapshotFallback =
+  { kind: "empty-runtime" } | { kind: "lines"; lines: Array<string> }
+
+/**
+ * Turns a runtime-log HTTP payload (app, database, or service) into the same
+ * envelope lines the live WebSocket feeds into parseLogEntries.
+ */
+export function runtimeSnapshotToFallback(
+  data: RuntimeLogSnapshot
+): RuntimeSnapshotFallback {
+  if (data.containerFound === false && data.lines.length === 0) {
+    return { kind: "empty-runtime" }
+  }
+  return {
+    kind: "lines",
+    lines: data.lines.map((entry) => JSON.stringify(entry)),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // useLogStream
 // ---------------------------------------------------------------------------
 
 export interface UseLogStreamOptions {
-  appId: string
-  buildId?: string
-  /** Load the persisted build log file without opening a live WebSocket. */
-  archiveOnly?: boolean
+  source: LogSource
   /** Maximum number of lines retained in memory. Defaults to ABSOLUTE_MAX_LINES. */
   maxLines?: number
 }
@@ -470,49 +575,59 @@ export interface UseLogStreamResult {
   error: string | null
 }
 
-interface RuntimeLogResponse {
-  lines: Array<{
-    t: number
-    line: string
-    stream?: "stdout" | "stderr"
-  }>
-  containerFound?: boolean
+function loadFailedMessage(status?: number): string {
+  if (typeof status === "number") {
+    return i18n.t("apps:logs.loadFailedStatus", { status })
+  }
+  return i18n.t("apps:logs.loadFailed")
 }
 
-type FallbackResult =
-  | { kind: "empty-runtime" }
-  | { kind: "lines"; lines: Array<string> }
-
 async function loadArchivedBuildLogs(
-  appId: string,
-  buildId: string
-): Promise<FallbackResult> {
-  const path = `/apps/${appId}/logs?buildId=${encodeURIComponent(buildId)}`
+  path: string
+): Promise<RuntimeSnapshotFallback> {
   const res = await fetch(`${apiBaseUrl()}${path}`, { credentials: "include" })
-  if (!res.ok) throw new Error(`Failed to load logs (${res.status})`)
+  if (!res.ok) throw new Error(loadFailedMessage(res.status))
   const text = await res.text()
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0)
   return { kind: "lines", lines }
 }
 
-async function loadRuntimeLogs(appId: string): Promise<FallbackResult> {
-  const data = await apiFetch<RuntimeLogResponse>(`/apps/${appId}/runtime-logs`)
-  if (data.containerFound === false && data.lines.length === 0) {
-    return { kind: "empty-runtime" }
-  }
-  return {
-    kind: "lines",
-    lines: data.lines.map((entry) => JSON.stringify(entry)),
+async function loadRuntimeSnapshot(
+  path: string
+): Promise<RuntimeSnapshotFallback> {
+  const data = await apiFetch<RuntimeLogSnapshot>(path)
+  return runtimeSnapshotToFallback(data)
+}
+
+function controlMessageKind(text: string): "missing" | "ignore" | null {
+  if (!text.startsWith("{")) return null
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return null
+    }
+    const obj = parsed as Record<string, unknown>
+    if (typeof obj.line === "string") return null
+    if (obj.type === "runtime.missing") return "missing"
+    if (typeof obj.type === "string") return "ignore"
+    return null
+  } catch {
+    return null
   }
 }
 
 export function useLogStream({
-  appId,
-  buildId,
-  archiveOnly,
+  source,
   maxLines,
 }: UseLogStreamOptions): UseLogStreamResult {
   const cap = Math.min(maxLines ?? ABSOLUTE_MAX_LINES, ABSOLUTE_MAX_LINES)
+  const resolved = resolveLogSource(source)
+  const archiveOnly = source.kind === "app" && Boolean(source.archiveOnly)
+  const isBuild = isAppBuildSource(source)
 
   const [lines, setLines] = React.useState<Array<LogLine>>([])
   const [connected, setConnected] = React.useState(false)
@@ -561,9 +676,14 @@ export function useLogStream({
     counterRef.current = 0
     normalizerRef.current = createLogEntryNormalizer()
 
-    if (archiveOnly && buildId && buildId !== "latest") {
+    const loadSnapshot = (): Promise<RuntimeSnapshotFallback> =>
+      resolved.snapshot.type === "archive"
+        ? loadArchivedBuildLogs(resolved.snapshot.path)
+        : loadRuntimeSnapshot(resolved.snapshot.path)
+
+    if (archiveOnly && isBuild) {
       let cancelled = false
-      loadArchivedBuildLogs(appId, buildId)
+      loadSnapshot()
         .then((result) => {
           if (cancelled) return
           if (result.kind !== "lines") return
@@ -576,7 +696,7 @@ export function useLogStream({
         })
         .catch((err: unknown) => {
           if (cancelled) return
-          const msg = err instanceof Error ? err.message : "Failed to load logs"
+          const msg = err instanceof Error ? err.message : loadFailedMessage()
           setError(msg)
         })
       return () => {
@@ -584,11 +704,7 @@ export function useLogStream({
       }
     }
 
-    const wsBase = apiWebSocketBaseUrl()
-    const wsPath =
-      buildId && buildId !== "latest"
-        ? `${wsBase}/ws/apps/${appId}/build/${buildId}`
-        : `${wsBase}/ws/apps/${appId}/logs`
+    const wsUrl = `${apiWebSocketBaseUrl()}${resolved.wsPath}`
 
     let ws: WebSocket
     let fallbackTriggered = false
@@ -596,20 +712,15 @@ export function useLogStream({
 
     const triggerFallback = (): void => {
       setError(
-        buildId && buildId !== "latest"
-          ? "WebSocket unavailable — loading archived logs\u2026"
-          : "WebSocket unavailable — loading recent runtime logs\u2026"
+        isBuild
+          ? i18n.t("apps:logs.wsUnavailableArchive")
+          : i18n.t("apps:logs.wsUnavailableRuntime")
       )
 
-      const loader =
-        buildId && buildId !== "latest"
-          ? loadArchivedBuildLogs(appId, buildId)
-          : loadRuntimeLogs(appId)
-
-      loader
+      loadSnapshot()
         .then((result) => {
           if (result.kind === "empty-runtime") {
-            setError("No runtime container found for this app")
+            setError(i18n.t("apps:logs.noRuntimeContainer"))
             return
           }
           setError(null)
@@ -620,13 +731,13 @@ export function useLogStream({
           flushPendingLines()
         })
         .catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : "Failed to load logs"
+          const msg = err instanceof Error ? err.message : loadFailedMessage()
           setError(msg)
         })
     }
 
     try {
-      ws = new WebSocket(wsPath)
+      ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
         setConnected(true)
@@ -635,10 +746,12 @@ export function useLogStream({
 
       ws.onmessage = (ev: MessageEvent<string>) => {
         const text = typeof ev.data === "string" ? ev.data : String(ev.data)
-        if (text.includes('"type":"runtime.missing"')) {
-          setError("No runtime container found for this app")
+        const control = controlMessageKind(text)
+        if (control === "missing") {
+          setError(i18n.t("apps:logs.noRuntimeContainer"))
           return
         }
+        if (control === "ignore") return
         appendLine(text)
       }
 
@@ -672,7 +785,15 @@ export function useLogStream({
       if (fallbackTimer) clearTimeout(fallbackTimer)
       ws?.close()
     }
-  }, [appId, buildId, archiveOnly, appendLine, flushPendingLines])
+  }, [
+    resolved.wsPath,
+    resolved.snapshot.path,
+    resolved.snapshot.type,
+    archiveOnly,
+    isBuild,
+    appendLine,
+    flushPendingLines,
+  ])
 
   return { lines, connected, error }
 }

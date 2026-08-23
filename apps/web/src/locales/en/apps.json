@@ -550,8 +550,17 @@
     "noMatchHint": "{{total}} total. Try clearing the search or the level.",
     "connectedWaiting": "Connected, waiting for output…",
     "waitingHint": "Logs will stream here as the build emits them.",
+    "waitingHintRuntime": "Logs will stream here as the container emits them.",
     "runtimeLogs": "Runtime logs",
-    "buildLogs": "Build logs"
+    "runtimeNamed": "Runtime logs · {{name}}",
+    "buildLogs": "Build logs",
+    "buildNamed": "Build {{id}} · {{name}}",
+    "buildOnly": "Build {{id}}",
+    "wsUnavailableArchive": "WebSocket unavailable — loading archived logs…",
+    "wsUnavailableRuntime": "WebSocket unavailable — loading recent runtime logs…",
+    "noRuntimeContainer": "No runtime container found",
+    "loadFailed": "Failed to load logs",
+    "loadFailedStatus": "Failed to load logs ({{status}})"
   },
   "build": {
     "title": "Build & runtime",

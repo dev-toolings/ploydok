@@ -8,7 +8,7 @@ export const system_jobs = pgTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind", {
-      enum: ["gc.registry", "gc.images", "gc.buildcache"],
+      enum: ["gc.registry", "gc.images", "gc.buildcache", "gc.docker"],
     }).notNull(),
     status: text("status", {
       enum: ["pending", "running", "succeeded", "failed", "cancelled"],

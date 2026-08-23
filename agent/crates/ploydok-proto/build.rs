@@ -7,6 +7,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Path relative to this crate root (agent/crates/ploydok-proto/).
     let proto_root = "../../../packages/agent-proto/proto";
 
+    // CI and the installer do not need a system-wide protoc package.
+    std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
+
     tonic_build::configure()
         .build_server(true)
         .build_client(true)

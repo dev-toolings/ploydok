@@ -37,7 +37,7 @@ use std::sync::Arc;
 use bollard::auth::DockerCredentials;
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogsOptions,
-    RemoveContainerOptions, StatsOptions, StopContainerOptions,
+    PruneContainersOptions, RemoveContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::{
@@ -52,7 +52,9 @@ use bollard::models::{
     ServiceSpecUpdateConfig, ServiceSpecUpdateConfigFailureActionEnum,
     ServiceSpecUpdateConfigOrderEnum, TaskSpec, TaskSpecContainerSpec, TaskSpecResources,
 };
-use bollard::network::{ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions};
+use bollard::network::{
+    ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions, PruneNetworksOptions,
+};
 use bollard::service::{InspectServiceOptions, UpdateServiceOptions};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -67,23 +69,24 @@ use ploydok_proto::agent::{
     BuildCachePruneResponse, BuildProgress, ContainerCreateRequest, ContainerCreateResponse,
     ContainerLogsRequest, ContainerRemoveRequest, ContainerRemoveResponse, ContainerStartRequest,
     ContainerStartResponse, ContainerStatsRequest, ContainerStopRequest, ContainerStopResponse,
-    DiskUsageCategory, DumpChunk, DumpRequest, ExecFrame, FileEntry, GetAuditPubkeyRequest,
-    GetAuditPubkeyResponse, HostStatsRequest, HostStatsResponse, ImageBuildRequest, ImageDfRequest,
-    ImageDfResponse, ImagePruneRequest, ImagePruneResponse, ImagePullRequest, ImagePushRequest,
-    ImagePushResponse, ImageRemoveRequest, ImageRemoveResponse, InspectContainerHealthRequest,
-    InspectContainerHealthResponse, ListContainerFilesRequest, ListContainerFilesResponse,
-    ListContainersRequest, ListContainersResponse, ListServiceTasksRequest,
-    ListServiceTasksResponse, LogLine, NetworkConnectRequest, NetworkConnectResponse,
-    NetworkCreateRequest, NetworkCreateResponse, NetworkDisconnectRequest,
-    NetworkDisconnectResponse, NetworkRemoveRequest, NetworkRemoveResponse, PingContainerRequest,
-    PingContainerResponse, PullProgress, ReadContainerFileRequest, ReadContainerFileResponse,
-    RegistryGarbageCollectRequest, RegistryGarbageCollectResponse, RegistryImageDigestRequest,
-    RegistryImageDigestResponse, RestoreChunk, RestoreResult, ServiceCreateRequest,
-    ServiceCreateResponse, ServiceRemoveRequest, ServiceRemoveResponse, ServiceRollbackRequest,
-    ServiceRollbackResponse, ServiceScaleRequest, ServiceScaleResponse, ServiceUpdateImageRequest,
-    ServiceUpdateImageResponse, SignAuditEntryRequest, SignAuditEntryResponse, StatsFrame,
-    SwarmEnsureSingleNodeRequest, SwarmEnsureSingleNodeResponse, SwarmInfoRequest,
-    SwarmInfoResponse, SwarmServiceSpec, SwarmTaskSnapshot,
+    DiskUsageCategory, DockerCleanupRequest, DockerCleanupResponse, DumpChunk, DumpRequest,
+    ExecFrame, FileEntry, GetAuditPubkeyRequest, GetAuditPubkeyResponse, HostStatsRequest,
+    HostStatsResponse, ImageBuildRequest, ImageDfRequest, ImageDfResponse, ImagePruneRequest,
+    ImagePruneResponse, ImagePullRequest, ImagePushRequest, ImagePushResponse, ImageRemoveRequest,
+    ImageRemoveResponse, InspectContainerHealthRequest, InspectContainerHealthResponse,
+    ListContainerFilesRequest, ListContainerFilesResponse, ListContainersRequest,
+    ListContainersResponse, ListServiceTasksRequest, ListServiceTasksResponse, LogLine,
+    NetworkConnectRequest, NetworkConnectResponse, NetworkCreateRequest, NetworkCreateResponse,
+    NetworkDisconnectRequest, NetworkDisconnectResponse, NetworkRemoveRequest,
+    NetworkRemoveResponse, PingContainerRequest, PingContainerResponse, PullProgress,
+    ReadContainerFileRequest, ReadContainerFileResponse, RegistryGarbageCollectRequest,
+    RegistryGarbageCollectResponse, RegistryImageDigestRequest, RegistryImageDigestResponse,
+    RestoreChunk, RestoreResult, ServiceCreateRequest, ServiceCreateResponse, ServiceRemoveRequest,
+    ServiceRemoveResponse, ServiceRollbackRequest, ServiceRollbackResponse, ServiceScaleRequest,
+    ServiceScaleResponse, ServiceUpdateImageRequest, ServiceUpdateImageResponse,
+    SignAuditEntryRequest, SignAuditEntryResponse, StatsFrame, SwarmEnsureSingleNodeRequest,
+    SwarmEnsureSingleNodeResponse, SwarmInfoRequest, SwarmInfoResponse, SwarmServiceSpec,
+    SwarmTaskSnapshot,
 };
 
 use crate::audit::{audit, audit_with_client, client_identity_from_request};
@@ -1318,6 +1321,73 @@ impl Agent for AgentService {
         audit("build_cache_prune", "host", Ok(()));
         Ok(Response::new(BuildCachePruneResponse {
             space_reclaimed_bytes: reclaimed,
+        }))
+    }
+
+    // ── DockerCleanup ───────────────────────────────────────────────────────
+    //
+    // Fixed policy, deliberately not a generic Docker command endpoint. Docker
+    // itself protects every running container and every image it references;
+    // volumes are never passed to any prune operation.
+    async fn docker_cleanup(
+        &self,
+        _request: Request<DockerCleanupRequest>,
+    ) -> Result<Response<DockerCleanupResponse>, Status> {
+        let containers = self
+            .docker
+            .prune_containers(Some(PruneContainersOptions::<String> {
+                filters: HashMap::new(),
+            }))
+            .await
+            .map_err(|e| bollard_err("prune_containers", e))?;
+
+        let mut image_filters = HashMap::new();
+        // `dangling=false` is Docker's equivalent of `image prune --all`: it
+        // includes tagged images that are no longer referenced by a container.
+        image_filters.insert("dangling".to_string(), vec!["false".to_string()]);
+        let images = self
+            .docker
+            .prune_images(Some(PruneImagesOptions {
+                filters: image_filters,
+            }))
+            .await
+            .map_err(|e| bollard_err("prune_images", e))?;
+
+        // Docker Engine's build prune API is used directly because bollard
+        // does not expose the full builder-prune option set. `all=1` is fixed
+        // here rather than supplied by callers; it never addresses volumes.
+        let output = docker_socket_post("/build/prune?all=1", "{}").await?;
+        let response_body = output
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or(&output);
+        let builder: serde_json::Value = serde_json::from_str(response_body)
+            .map_err(|e| Status::internal(format!("decode build prune response: {e}")))?;
+        let builder_reclaimed = builder
+            .get("SpaceReclaimed")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let networks = self
+            .docker
+            .prune_networks(Some(PruneNetworksOptions::<String> {
+                filters: HashMap::new(),
+            }))
+            .await
+            .map_err(|e| bollard_err("prune_networks", e))?;
+
+        audit(
+            "docker_cleanup",
+            "containers,images,builder,networks:no-volumes",
+            Ok(()),
+        );
+        Ok(Response::new(DockerCleanupResponse {
+            stopped_containers_deleted: containers.containers_deleted.unwrap_or_default().len()
+                as i32,
+            unused_images_deleted: images.images_deleted.map(|v| v.len() as i32).unwrap_or(0),
+            images_space_reclaimed_bytes: images.space_reclaimed.unwrap_or(0),
+            builder_cache_space_reclaimed_bytes: builder_reclaimed,
+            unused_networks_deleted: networks.networks_deleted.unwrap_or_default().len() as i32,
         }))
     }
 

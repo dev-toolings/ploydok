@@ -11,6 +11,7 @@ import type { Db } from "@ploydok/db"
 
 let fakeInstanceAdmin = true
 let fakeJob: Record<string, unknown> | null = null
+let fakeJobs: Record<string, unknown>[] = []
 
 const fakeDb = {
   select: mock((selection?: Record<string, unknown>) => ({
@@ -22,6 +23,7 @@ const fakeDb = {
             : fakeJob
               ? [fakeJob]
               : [],
+        orderBy: () => ({ limit: async () => fakeJobs }),
       }),
     }),
   })),
@@ -67,6 +69,7 @@ const mockHostStats = mock(() =>
     error: "",
   })
 )
+const mockEnqueue = mock(() => Promise.resolve({ row: { id: "cleanup-job-1" }, jobId: "cleanup-job-1" }))
 
 // NOTE: this file uses a dynamic `await import("./disk")` below (needed so the
 // mock is registered before the route module resolves its agent singleton),
@@ -80,6 +83,10 @@ mock.module("../debug/singletons", () => ({
     hostStats: mockHostStats,
   }),
   getSharedCaddy: () => ({}),
+}))
+mock.module("../worker/queue-enqueue", () => ({
+  enqueueWithDbRow: mockEnqueue,
+  assertTransactionalQueueRegistry: () => undefined,
 }))
 
 const { createDiskRouter, resetDiskUsageCache } = await import("./disk")
@@ -115,9 +122,39 @@ function buildTestApp(authedUser?: AuthUser): Hono {
 beforeEach(() => {
   fakeInstanceAdmin = true
   fakeJob = null
+  fakeJobs = []
   mockImageDf.mockClear()
   mockHostStats.mockClear()
+  mockEnqueue.mockClear()
   resetDiskUsageCache()
+})
+
+describe("GET /disk/jobs", () => {
+  it("lists cancelled and failed partial cleanup history", async () => {
+    const now = new Date()
+    fakeJobs = [
+      { id: "cancelled", kind: "gc.docker", status: "cancelled", result: { skipped: "another Docker cleanup is running" }, error_message: null, queued_at: now, claimed_at: now, finished_at: now },
+      { id: "failed", kind: "gc.docker", status: "failed", result: { activeBuildAppsSkipped: 0, docker: { status: "succeeded" }, localCaches: { status: "pending" }, dedicatedBuildKit: { status: "failed" } }, error_message: "failed", queued_at: now, claimed_at: now, finished_at: now },
+    ]
+    const res = await buildTestApp(fakeUser()).request("/disk/jobs")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject([{ status: "cancelled" }, { status: "failed", result: { docker: { status: "succeeded" } } }])
+  })
+})
+
+describe("POST /disk/cleanup", () => {
+  it("requires authentication and instance-admin access", async () => {
+    expect((await buildTestApp().request("/disk/cleanup", { method: "POST" })).status).toBe(401)
+    fakeInstanceAdmin = false
+    expect((await buildTestApp(fakeUser()).request("/disk/cleanup", { method: "POST" })).status).toBe(403)
+  })
+
+  it("enqueues an admin cleanup and returns its durable job id", async () => {
+    const res = await buildTestApp(fakeUser()).request("/disk/cleanup", { method: "POST" })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ jobId: "cleanup-job-1" })
+    expect(mockEnqueue).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("GET /disk/jobs/:jobId", () => {
@@ -148,6 +185,20 @@ describe("GET /disk/jobs/:jobId", () => {
     const app = buildTestApp(fakeUser())
     const res = await app.request("/disk/jobs/missing")
     expect(res.status).toBe(404)
+  })
+
+  it("returns a cancelled contention result without violating the shared schema", async () => {
+    fakeJob = { id: "job-cancelled", kind: "gc.docker", status: "cancelled", result: { skipped: "another Docker cleanup is running" }, error_message: null, queued_at: new Date(), claimed_at: new Date(), finished_at: new Date() }
+    const res = await buildTestApp(fakeUser()).request("/disk/jobs/job-cancelled")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ status: "cancelled", result: { skipped: "another Docker cleanup is running" } })
+  })
+
+  it("returns a failed cleanup with its persisted partial result", async () => {
+    fakeJob = { id: "job-failed", kind: "gc.docker", status: "failed", result: { activeBuildAppsSkipped: 0, docker: { status: "succeeded" }, localCaches: { status: "succeeded" }, dedicatedBuildKit: { status: "failed", error: "dial" } }, error_message: "dial", queued_at: new Date(), claimed_at: new Date(), finished_at: new Date() }
+    const res = await buildTestApp(fakeUser()).request("/disk/jobs/job-failed")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ status: "failed", errorMessage: "dial", result: { docker: { status: "succeeded" } } })
   })
 })
 

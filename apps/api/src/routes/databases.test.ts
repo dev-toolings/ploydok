@@ -712,3 +712,32 @@ describe("POST /databases/:id lifecycle", () => {
     expect(data.error.code).toBe("UNSUPPORTED_DATABASE_MODE")
   })
 })
+
+describe("GET /databases/:id/logs", () => {
+  it("returns 404 when the database is missing", async () => {
+    const app = wrapRouter(buildDb({ dbRow: null }))
+    const res = await app.fetch(req("GET", "/db-missing/logs"))
+    expect(res.status).toBe(404)
+    const data = (await res.json()) as { error: { code: string } }
+    expect(data.error.code).toBe("NOT_FOUND")
+  })
+
+  it("returns an empty snapshot when the database has no container", async () => {
+    const app = wrapRouter(
+      buildDb({
+        dbRow: {
+          id: "db-1",
+          container_id: null,
+        },
+      })
+    )
+    const res = await app.fetch(req("GET", "/db-1/logs"))
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as {
+      lines: unknown[]
+      containerFound: boolean
+    }
+    expect(data.containerFound).toBe(false)
+    expect(data.lines).toEqual([])
+  })
+})

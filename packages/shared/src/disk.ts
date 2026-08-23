@@ -49,17 +49,34 @@ export const DiskPruneResultSchema = z.object({
 export type DiskPruneResult = z.infer<typeof DiskPruneResultSchema>
 
 export const DiskJobResultSchema = z.union([
+  z.object({ skipped: z.string() }),
   z.object({
     imagesDeleted: z.number().int().nonnegative(),
     spaceReclaimedBytes: z.number().nonnegative(),
   }),
   z.object({ output: z.string() }),
+  z.object({
+    stoppedContainersDeleted: z.number().int().nonnegative(),
+    unusedImagesDeleted: z.number().int().nonnegative(),
+    imagesSpaceReclaimedBytes: z.number().nonnegative(),
+    builderCacheSpaceReclaimedBytes: z.number().nonnegative(),
+    unusedNetworksDeleted: z.number().int().nonnegative(),
+    localCacheDirsRemoved: z.number().int().nonnegative(),
+    localCacheSpaceReclaimedBytes: z.number().nonnegative(),
+    dedicatedBuildKitOutput: z.string(),
+  }),
+  z.object({
+    activeBuildAppsSkipped: z.number().int().nonnegative(),
+    docker: z.record(z.string(), z.unknown()),
+    localCaches: z.record(z.string(), z.unknown()),
+    dedicatedBuildKit: z.record(z.string(), z.unknown()),
+  }),
 ])
 export type DiskJobResult = z.infer<typeof DiskJobResultSchema>
 
 export const DiskJobStatusSchema = z.object({
   jobId: z.string(),
-  kind: z.enum(["gc.images", "gc.buildcache"]),
+  kind: z.enum(["gc.images", "gc.buildcache", "gc.docker"]),
   status: z.enum(["pending", "running", "succeeded", "failed", "cancelled"]),
   result: DiskJobResultSchema.nullable(),
   errorMessage: z.string().nullable(),
