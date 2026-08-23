@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMutation, useSuspenseQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query"
 import { apiFetch } from "./api"
 import type {
   CheckoutResponse,
@@ -7,11 +7,23 @@ import type {
   PortalResponse,
 } from "@ploydok/shared"
 
-export function useCurrentPlan(orgSlug: string) {
-  return useSuspenseQuery({
-    queryKey: ["billing", "current", orgSlug],
+function currentPlanQuery(orgSlug: string) {
+  return {
+    queryKey: ["billing", "current", orgSlug] as const,
     queryFn: (): Promise<CurrentPlanResponse> =>
       apiFetch<CurrentPlanResponse>(`/orgs/${orgSlug}/billing/current`),
+  }
+}
+
+export function useCurrentPlan(orgSlug: string) {
+  return useSuspenseQuery(currentPlanQuery(orgSlug))
+}
+
+/** Non-suspense read of the current plan. Hide UI on pending/error. */
+export function useCurrentPlanQuery(orgSlug: string) {
+  return useQuery({
+    ...currentPlanQuery(orgSlug),
+    retry: false,
   })
 }
 

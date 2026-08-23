@@ -17,6 +17,7 @@ import {
   SSOConfigUpdateBodySchema,
 } from "@ploydok/shared"
 import { env } from "../env"
+import { requireFeature } from "../billing/feature-gate"
 import {
   initOIDCClient,
   generateAuthorizationUrl,
@@ -39,6 +40,7 @@ function getUser(c: { get: (k: string) => unknown }): any {
 
 export function createSSORouter(db: Db): Hono<any, any, any> {
   const router = new Hono<AppEnv>()
+  const requireSso = requireFeature(db, "sso")
 
   /**
    * GET /orgs/:slug/sso-configs — Get SSO config (summary, no secret).
@@ -94,7 +96,7 @@ export function createSSORouter(db: Db): Hono<any, any, any> {
   /**
    * POST /orgs/:slug/sso-configs — Create SSO config.
    */
-  router.post("/orgs/:slug/sso-configs", async (c) => {
+  router.post("/orgs/:slug/sso-configs", requireSso, async (c) => {
     const slug = c.req.param("slug")
     const user = getUser(c)
 
@@ -175,7 +177,7 @@ export function createSSORouter(db: Db): Hono<any, any, any> {
   /**
    * PATCH /orgs/:slug/sso-configs — Update SSO config.
    */
-  router.patch("/orgs/:slug/sso-configs", async (c) => {
+  router.patch("/orgs/:slug/sso-configs", requireSso, async (c) => {
     const slug = c.req.param("slug")
     const user = getUser(c)
 
@@ -253,7 +255,7 @@ export function createSSORouter(db: Db): Hono<any, any, any> {
   /**
    * DELETE /orgs/:slug/sso-configs — Delete SSO config.
    */
-  router.delete("/orgs/:slug/sso-configs", async (c) => {
+  router.delete("/orgs/:slug/sso-configs", requireSso, async (c) => {
     const slug = c.req.param("slug")
     const user = getUser(c)
 
@@ -288,7 +290,7 @@ export function createSSORouter(db: Db): Hono<any, any, any> {
   /**
    * POST /orgs/:slug/sso-configs/test — Test OIDC connection.
    */
-  router.post("/orgs/:slug/sso-configs/test", async (c) => {
+  router.post("/orgs/:slug/sso-configs/test", requireSso, async (c) => {
     const slug = c.req.param("slug")
     const user = getUser(c)
 
