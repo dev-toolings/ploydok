@@ -23,6 +23,7 @@ export interface ComposeContainer {
   restartPolicy: "no" | "always" | "unless-stopped" | "on-failure"
   command: string[]
   dependsOn: string[]
+  composeName?: string
   healthcheck?: {
     test: string[]
     intervalSeconds?: number
@@ -375,6 +376,24 @@ function assertNoUnsupportedServiceFeatures(name: string, svc: any) {
       `Service "${name}": per-service "networks" override is not supported. All services are joined to the provided network.`
     )
   }
+  if (svc.privileged === true) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${name}": privileged containers are not supported.`
+    )
+  }
+  if (
+    typeof svc.network_mode === "string" &&
+    (svc.network_mode === "host" || svc.network_mode === "service")
+  ) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${name}": network_mode "${svc.network_mode}" is not supported.`
+    )
+  }
+  if (svc.cap_add !== undefined) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${name}": cap_add is not supported.`
+    )
+  }
 }
 
 export function composeToContainers(
@@ -448,6 +467,7 @@ export function composeToContainers(
 
     const entry: ComposeContainer & { _composeName: string } = {
       _composeName: svcName,
+      composeName: svcName,
       name: containerName,
       image: String(svc.image),
       env,
@@ -473,7 +493,7 @@ export function composeToContainers(
 
   return order.map((name) => {
     const entry = parsed[name]!
-    const { _composeName: _, ...container } = entry
-    return container
+    const { _composeName, ...rest } = entry
+    return { ...rest, composeName: _composeName }
   })
 }

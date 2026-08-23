@@ -32,6 +32,7 @@ function makeContainer(
     restartPolicy: "unless-stopped",
     command: [],
     dependsOn: [],
+    composeName: "app",
     ...overrides,
   }
 }

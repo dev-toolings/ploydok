@@ -651,7 +651,11 @@ export async function handlePreviewDeploy(
       )
       runtimePort = await detectDockerfilePort(dockerfilePath)
     }
-    if (detected.method !== "static" && runtimePort == null) {
+    if (
+      detected.method !== "static" &&
+      detected.method !== "compose" &&
+      runtimePort == null
+    ) {
       runtimePort = defaultRuntimePortForStack(detected.method, classification)
     }
     if (detected.method !== "static" && runtimePort == null) {

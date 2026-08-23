@@ -18,6 +18,7 @@ export const services = pgTable("services", {
   generated_env: jsonb("generated_env").notNull().default({}),
   domain: text("domain"),
   container_ids: text("container_ids").array(),
+  swarm_service_names: text("swarm_service_names").array(),
   created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
     .notNull()
     .$defaultFn(() => new Date()),

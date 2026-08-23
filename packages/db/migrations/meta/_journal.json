@@ -526,6 +526,13 @@
       "when": 1787095800000,
       "tag": "0075_project_swarm_network_name",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1787099400000,
+      "tag": "0076_compose_swarm_service_names",
+      "breakpoints": true
     }
   ]
 }

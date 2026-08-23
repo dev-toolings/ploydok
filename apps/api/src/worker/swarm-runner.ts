@@ -417,16 +417,25 @@ export async function scaleSwarmApp(appId: string, replicas: number, db: Db) {
 
 export async function stopSwarmApp(appId: string, db: Db) {
   const rows = await db
-    .select({ service: apps.swarm_service_name })
+    .select({
+      service: apps.swarm_service_name,
+      services: apps.swarm_service_names,
+    })
     .from(apps)
     .where(eq(apps.id, appId))
     .limit(1)
-  const service = rows[0]?.service
+  const names = [
+    ...new Set(
+      [rows[0]?.service, ...(rows[0]?.services ?? [])].filter(
+        (name): name is string => Boolean(name)
+      )
+    ),
+  ]
   const agent = createAgentClient()
   const caddy = new CaddyClient()
   try {
-    if (service) {
-      await grpcUnary(agent.serviceRemove.bind(agent), { serviceName: service })
+    for (const serviceName of names) {
+      await grpcUnary(agent.serviceRemove.bind(agent), { serviceName })
     }
     await caddy.removeUpstream(appId)
     await db
@@ -434,6 +443,7 @@ export async function stopSwarmApp(appId: string, db: Db) {
       .set({
         status: "stopped",
         swarm_service_name: null,
+        swarm_service_names: null,
         container_id: null,
         updated_at: new Date(),
       })

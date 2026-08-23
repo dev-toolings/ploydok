@@ -125,6 +125,21 @@ export async function updateServiceContainers(
     .where(eq(services.id, serviceId))
 }
 
+export async function updateServiceSwarmNames(
+  db: Db,
+  serviceId: string,
+  swarmServiceNames: string[]
+): Promise<void> {
+  await db
+    .update(services)
+    .set({
+      swarm_service_names: swarmServiceNames,
+      container_ids: [],
+      updated_at: new Date(),
+    })
+    .where(eq(services.id, serviceId))
+}
+
 export async function markServiceDeleting(
   db: Db,
   serviceId: string

@@ -6,6 +6,7 @@ import {
   insertService,
   updateServiceStatus,
   updateServiceContainers,
+  updateServiceSwarmNames,
   markServiceDeleting,
   uniqueServiceSlug,
   getServiceForUser,
@@ -16,36 +17,18 @@ import { resolveTemplate } from "@ploydok/shared"
 import { childLogger } from "../logger"
 import type { Agent } from "../agent"
 import type { CaddyClient } from "../caddy/client.js"
-import { getSharedCaddy } from "../debug/singletons.js"
+import { getSharedCaddy, getSharedAgent } from "../debug/singletons.js"
+import { createAgentClient } from "../agent/client.js"
+import { removeServiceRoute } from "../caddy/service-routes.js"
+import { ensureCaddyOnProjectNetwork } from "../caddy/attachment.js"
+import { ensureProjectSwarmNetwork } from "./projects.js"
 import {
-  upsertServiceRoute,
-  removeServiceRoute,
-  ServiceHasNoEntrypointError,
-} from "../caddy/service-routes.js"
-
-import {
-  composeToContainers,
-  type ComposeContainer,
-} from "../marketplace/compose-to-containers"
-
-function topoOrder(containers: ComposeContainer[]): string[] {
-  const names = new Set(containers.map((c) => c.name))
-  const visited = new Set<string>()
-  const order: string[] = []
-
-  function visit(name: string) {
-    if (visited.has(name)) return
-    visited.add(name)
-    const spec = containers.find((c) => c.name === name)
-    for (const dep of spec?.dependsOn ?? []) {
-      if (names.has(dep)) visit(dep)
-    }
-    order.push(name)
-  }
-
-  for (const c of containers) visit(c.name)
-  return order
-}
+  deployPlannedComposeStack,
+  planComposeSwarmDeploy,
+  removeComposeSwarmServices,
+  swarmAgentFromGrpc,
+  type ComposeSwarmAgent,
+} from "../worker/compose-swarm.js"
 
 const log = childLogger("marketplace-orchestrator")
 
@@ -60,6 +43,7 @@ export interface OrchestratorDeps {
   >
   db: Db
   caddy?: Pick<CaddyClient, "upsertRoute" | "removeRoute">
+  swarm?: ComposeSwarmAgent
 }
 
 function slugify(name: string): string {
@@ -107,17 +91,6 @@ export async function installFromTemplate(
     }
   )
 
-  const containers = composeToContainers({
-    compose: composeResolved,
-    servicePrefix: `ploydok-svc-${slug}`,
-    network: "ploydok-public",
-    labels: {
-      "ploydok.kind": "service",
-      "ploydok.service_id": serviceId,
-    },
-  })
-  const deployOrder = topoOrder(containers)
-
   const row = await insertService(db, {
     id: serviceId,
     project_id: input.projectId,
@@ -132,74 +105,41 @@ export async function installFromTemplate(
     container_ids: [],
   })
 
-  // Fire-and-forget: pull → create → start each container in topological order
+  const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+
   ;(async () => {
     try {
-      const containerIds: string[] = []
-
-      for (const containerName of deployOrder) {
-        const spec = containers.find((c) => c.name === containerName)
-        if (!spec) continue
-
-        for await (const _progress of agent.imagePull({
-          image: spec.image,
-          registryAuth: undefined,
-        })) {
-          // drain progress stream
-        }
-
-        const createRes = await agent.containerCreate({
-          name: spec.name,
-          image: spec.image,
-          env: spec.env,
-          labels: spec.labels,
-          network: spec.networks[0] ?? "",
-          networks: spec.networks,
-          ports: spec.ports,
-          volumes: spec.volumes,
-          command: spec.command,
-          restartPolicy: spec.restartPolicy,
-          resourceLimits: undefined,
-          healthcheck: spec.healthcheck
-            ? {
-                test: spec.healthcheck.test,
-                intervalSeconds: spec.healthcheck.intervalSeconds ?? 0,
-                timeoutSeconds: spec.healthcheck.timeoutSeconds ?? 0,
-                retries: spec.healthcheck.retries ?? 0,
-                startPeriodSeconds: spec.healthcheck.startPeriodSeconds ?? 0,
-              }
-            : undefined,
-          user: "",
-        })
-
-        containerIds.push(createRes.containerId)
-        await agent.containerStart({ containerId: createRes.containerId })
-      }
-
-      await updateServiceContainers(db, serviceId, containerIds)
+      const network = await ensureProjectSwarmNetwork(db, input.projectId)
+      await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+      const plan = planComposeSwarmDeploy({
+        compose: composeResolved,
+        kindToken: `svc-${slug}`.slice(0, 40),
+        network,
+        labels: {
+          "ploydok.kind": "service",
+          "ploydok.service_id": serviceId,
+          "ploydok.app_id": serviceId,
+          "ploydok.owner_id": userId,
+        },
+      })
+      const names = await deployPlannedComposeStack(swarm, plan)
+      await updateServiceSwarmNames(db, serviceId, names)
       await updateServiceStatus(db, serviceId, "running")
 
-      if (domain && containers.length > 0) {
+      if (domain && plan.entrypoint) {
         try {
-          await upsertServiceRoute(caddy, {
-            serviceId,
-            domain,
-            containers,
+          await caddy.upsertRoute({
+            host: domain,
+            upstream: `${plan.entrypoint.name}:${plan.entrypoint.port}`,
+            appId: serviceId,
           })
         } catch (err) {
-          if (err instanceof ServiceHasNoEntrypointError) {
-            log.warn(
-              { serviceId, domain },
-              "service deployed but no entrypoint port found — skipping Caddy route"
-            )
-          } else {
-            log.warn({ err, serviceId, domain }, "Caddy route upsert failed")
-          }
+          log.warn({ err, serviceId, domain }, "Caddy route upsert failed")
         }
       }
 
       log.info(
-        { serviceId, slug, containerCount: containerIds.length },
+        { serviceId, slug, serviceCount: names.length },
         "service deployed"
       )
     } catch (err) {
@@ -233,6 +173,30 @@ export async function startService(
     )
   }
 
+  if ((svc.swarm_service_names ?? []).length > 0) {
+    await updateServiceStatus(db, serviceId, "running")
+    return
+  }
+  if (svc.compose_raw && (svc.container_ids ?? []).length === 0) {
+    const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+    const network = await ensureProjectSwarmNetwork(db, svc.project_id)
+    await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+    const plan = planComposeSwarmDeploy({
+      compose: svc.compose_raw,
+      kindToken: `svc-${svc.slug}`.slice(0, 40),
+      network,
+      labels: {
+        "ploydok.kind": "service",
+        "ploydok.service_id": serviceId,
+        "ploydok.app_id": serviceId,
+        "ploydok.owner_id": userId,
+      },
+    })
+    const names = await deployPlannedComposeStack(swarm, plan)
+    await updateServiceSwarmNames(db, serviceId, names)
+    await updateServiceStatus(db, serviceId, "running")
+    return
+  }
   for (const containerId of svc.container_ids ?? []) {
     await agent.containerStart({ containerId })
   }
@@ -256,6 +220,14 @@ export async function stopService(
     )
   }
 
+  const swarmNames = svc.swarm_service_names ?? []
+  if (swarmNames.length > 0) {
+    const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+    await removeComposeSwarmServices(swarm, swarmNames)
+    await updateServiceSwarmNames(db, serviceId, [])
+    await updateServiceStatus(db, serviceId, "stopped")
+    return
+  }
   for (const containerId of [...(svc.container_ids ?? [])].reverse()) {
     await agent.containerStop({ containerId, timeoutSeconds: 10 })
   }
@@ -275,6 +247,12 @@ export async function deleteService(
     throw Object.assign(new Error("Service not found"), { code: "NOT_FOUND" })
 
   await markServiceDeleting(db, serviceId)
+
+  const swarmNames = svc.swarm_service_names ?? []
+  if (swarmNames.length > 0) {
+    const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+    await removeComposeSwarmServices(swarm, swarmNames)
+  }
 
   for (const containerId of svc.container_ids ?? []) {
     try {

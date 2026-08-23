@@ -40,6 +40,16 @@ import { eventBus } from "../event-bus"
 import { runBlueGreen } from "../runner"
 import { runSwarmDeploy } from "../swarm-runner"
 import {
+  deployPlannedComposeStack,
+  planComposeSwarmDeploy,
+  readComposeFileFromWorkspace,
+  swarmAgentFromGrpc,
+} from "../compose-swarm"
+import { createAgentClient } from "../../agent/client.js"
+import { ensureCaddyOnProjectNetwork } from "../../caddy/attachment.js"
+import { ensureProjectSwarmNetwork } from "../../services/projects.js"
+import { CaddyClient } from "../../caddy/client.js"
+import {
   dispatchStaticDeploy,
   gcOldShas,
   caddyStaticRootForApp,
@@ -614,30 +624,31 @@ export async function handleDeploy(
     }
   }
 
-  // Normalize app.build_method:
-  //   - legacy "docker" aliases to "dockerfile"
-  //   - "compose" and "railpack" are planned but unavailable in production.
   const rawMethod = app.build_method ?? "auto"
-  if (rawMethod === "compose" || rawMethod === "railpack") {
+  if (rawMethod === "railpack") {
     recordDeploymentOutcome("application_failed")
     throw new FatalDeployError(
-      `build_method="${rawMethod}" is not yet supported (planned sprint 3.3)`
+      `build_method="${rawMethod}" is not yet supported`
     )
   }
-  const normalizedMethod: "docker" | "nixpacks" | "static" | "auto" =
+  const normalizedMethod: "docker" | "nixpacks" | "static" | "compose" | "auto" =
     rawMethod === "docker" || rawMethod === "dockerfile"
       ? "docker"
       : rawMethod === "nixpacks"
         ? "nixpacks"
         : rawMethod === "static"
           ? "static"
-          : "auto"
+          : rawMethod === "compose"
+            ? "compose"
+            : "auto"
   const resolvedBuildMethod =
     normalizedMethod === "nixpacks"
       ? "nixpacks"
       : normalizedMethod === "static"
         ? "static"
-        : "docker"
+        : normalizedMethod === "compose"
+          ? "compose"
+          : "docker"
 
   // Hydrate build record with build_method, commitSha, commitMessage.
   await db
@@ -1022,7 +1033,8 @@ export async function handleDeploy(
     const detectedOverride =
       normalizedMethod === "docker" ||
       normalizedMethod === "nixpacks" ||
-      normalizedMethod === "static"
+      normalizedMethod === "static" ||
+      normalizedMethod === "compose"
         ? normalizedMethod
         : "auto"
     const detected = await detectBuildMethod({
@@ -1142,6 +1154,7 @@ export async function handleDeploy(
 
     if (
       detected.method !== "static" &&
+      detected.method !== "compose" &&
       (app.runtime_port === null || app.runtime_port === undefined)
     ) {
       const inferredRuntimePort = defaultRuntimePortForStack(
@@ -1190,7 +1203,10 @@ export async function handleDeploy(
     const repo = imageRepoForApp(app.id)
     const pushRef = `${pushRegistry}/${repo}:${commitSha}`
     const imageRef = `${pullRegistry}/${repo}:${commitSha}`
-    scanImageRef = detected.method === "static" ? null : imageRef
+    scanImageRef =
+      detected.method === "static" || detected.method === "compose"
+        ? null
+        : imageRef
 
     // onLog is defined earlier in this handler (right after logStream creation)
     // so it can be used by both the image-source path and the git-source path.
@@ -1225,6 +1241,63 @@ export async function handleDeploy(
           ? frameworkEnvErr.message
           : "Framework env is not deployable"
       )
+    }
+
+    if (detected.method === "compose") {
+      onLog("[deploy] compose swarm stack selected")
+      const composeFile = await readComposeFileFromWorkspace(
+        workspacePath,
+        app.root_dir
+      )
+      onLog(`[deploy] using ${composeFile.filename}`)
+      const network = await ensureProjectSwarmNetwork(db, app.project_id)
+      await fenceDeploySideEffect()
+      await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+      const kindToken = `${app.slug}-${app.id}`.replace(/[^a-z0-9-]+/gi, "-")
+      const plan = planComposeSwarmDeploy({
+        compose: composeFile.contents,
+        kindToken,
+        network,
+        extraEnv: runtimeSecretEnv,
+        replicas: app.replicas ?? 1,
+        labels: {
+          "ploydok.kind": "app",
+          "ploydok.app_id": app.id,
+          "ploydok.owner_id": app.owner_id,
+        },
+      })
+      const swarm = swarmAgentFromGrpc(createAgentClient())
+      await fenceDeploySideEffect()
+      const names = await deployPlannedComposeStack(swarm, plan)
+      if (app.domain && plan.entrypoint) {
+        await fenceDeploySideEffect()
+        await new CaddyClient().setUpstream(
+          app.id,
+          app.domain,
+          { host: plan.entrypoint.name, port: plan.entrypoint.port }
+        )
+        onLog(
+          `[deploy] Caddy upstream ${plan.entrypoint.name}:${plan.entrypoint.port}`
+        )
+      }
+      await fenceDeploySideEffect()
+      await db
+        .update(apps)
+        .set({
+          runtime_mode: "swarm",
+          swarm_service_name: plan.entrypoint?.name ?? names[0] ?? null,
+          swarm_service_names: names,
+          container_id: null,
+          status: "running",
+          runtime_port: plan.entrypoint?.port ?? app.runtime_port,
+          updated_at: new Date(),
+        })
+        .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
+      finalPatch = { finishedAt: new Date() }
+      finalStatus = "succeeded"
+      runtimePublished = true
+      onLog(`[deploy] compose stack live: ${names.join(", ")}`)
+      return
     }
 
     if (detected.method === "static") {

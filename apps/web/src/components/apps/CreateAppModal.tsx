@@ -1847,6 +1847,13 @@ function BuildStep({
             detected={classification?.recommendedBuild === "static"}
             onSelect={() => selectMethod("static")}
           />
+          <BuildMethodCard
+            label={t("create.compose")}
+            hint={t("create.composeHint")}
+            active={form.buildMethod === "compose"}
+            detected={classification?.recommendedBuild === "compose"}
+            onSelect={() => selectMethod("compose")}
+          />
         </div>
       </section>
 
@@ -2246,9 +2253,11 @@ function DetectedPanel({
               className="text-[11px] text-amber-600 dark:text-amber-400"
             >
               ⚠{" "}
-              {w === "compose_native_unavailable"
-                ? t("create.composeNativeUnavailable")
-                : w}
+              {w === "compose_images_only"
+                ? t("create.composeImagesOnly")
+                : w === "compose_native_unavailable"
+                  ? t("create.composeNativeUnavailable")
+                  : w}
             </li>
           ))}
         </ul>

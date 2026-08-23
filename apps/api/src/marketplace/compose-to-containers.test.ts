@@ -347,4 +347,35 @@ services:
 `)
     ).toThrow(UnsupportedComposeFeatureError)
   })
+
+  it("privileged → UnsupportedComposeFeatureError", () => {
+    expect(() =>
+      run(`
+services:
+  app:
+    image: alpine
+    privileged: true
+`)
+    ).toThrow(/privileged/)
+  })
+
+  it("network_mode host → UnsupportedComposeFeatureError", () => {
+    expect(() =>
+      run(`
+services:
+  app:
+    image: alpine
+    network_mode: host
+`)
+    ).toThrow(/network_mode/)
+  })
+
+  it("keeps the compose service name", () => {
+    const result = run(`
+services:
+  api-gateway:
+    image: alpine
+`)
+    expect(result[0]!.composeName).toBe("api-gateway")
+  })
 })

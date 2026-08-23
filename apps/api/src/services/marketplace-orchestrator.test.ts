@@ -25,6 +25,7 @@ const mockInsertService = mock(
 
 const mockUpdateServiceStatus = mock(async () => {})
 const mockUpdateServiceContainers = mock(async () => {})
+const mockUpdateServiceSwarmNames = mock(async () => {})
 const mockMarkServiceDeleting = mock(async () => {})
 const mockUniqueServiceSlug = mock(async () => "my-pb")
 const mockGetServiceForUser = mock(async () => null as unknown)
@@ -34,6 +35,7 @@ mock.module("@ploydok/db/queries", () => ({
   insertService: mockInsertService,
   updateServiceStatus: mockUpdateServiceStatus,
   updateServiceContainers: mockUpdateServiceContainers,
+  updateServiceSwarmNames: mockUpdateServiceSwarmNames,
   markServiceDeleting: mockMarkServiceDeleting,
   uniqueServiceSlug: mockUniqueServiceSlug,
   getServiceForUser: mockGetServiceForUser,
@@ -46,6 +48,22 @@ mock.module("@ploydok/db", () => ({
   services: {},
   projects: {},
   createDb: mock(() => ({})),
+}))
+
+mock.module("./projects.js", () => ({
+  ensureProjectSwarmNetwork: mock(async () => "ploydok-swarm-proj-proj-1"),
+}))
+
+mock.module("../caddy/attachment.js", () => ({
+  ensureCaddyOnProjectNetwork: mock(async () => {}),
+}))
+
+mock.module("../debug/singletons.js", () => ({
+  getSharedCaddy: mock(() => ({
+    upsertRoute: mock(async () => {}),
+    removeRoute: mock(async () => {}),
+  })),
+  getSharedAgent: mock(() => ({})),
 }))
 
 mock.module("../logger", () => ({
@@ -87,6 +105,18 @@ function makeAgent(
 }
 
 type CaddyDeps = NonNullable<OrchestratorDeps["caddy"]>
+
+function makeSwarm() {
+  return {
+    swarmEnsureSingleNode: mock(async () => ({})),
+    serviceCreate: mock(
+      async (req: { spec: Record<string, unknown> }) => ({
+        serviceId: String(req.spec["name"] ?? "svc"),
+      })
+    ),
+    serviceRemove: mock(async () => ({})),
+  }
+}
 
 function makeCaddy(overrides: Partial<CaddyDeps> = {}): CaddyDeps {
   return {
@@ -132,7 +162,7 @@ describe("installFromTemplate", () => {
 
     await expect(
       installFromTemplate(
-        { agent: makeAgent(), db, caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db, caddy: makeCaddy() },
         "user-1",
         {
           projectId: "proj-missing",
@@ -159,7 +189,7 @@ describe("installFromTemplate", () => {
 
     await expect(
       installFromTemplate(
-        { agent: makeAgent(), db, caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db, caddy: makeCaddy() },
         "user-1",
         {
           projectId: "proj-1",
@@ -184,7 +214,7 @@ describe("installFromTemplate", () => {
     } as unknown as OrchestratorDeps["db"]
 
     const row = await installFromTemplate(
-      { agent: makeAgent(), db, caddy: makeCaddy() },
+      { agent: makeAgent(), swarm: makeSwarm(), db, caddy: makeCaddy() },
       "user-1",
       {
         projectId: "proj-1",
@@ -213,7 +243,7 @@ describe("installFromTemplate", () => {
 
     const caddy = makeCaddy()
 
-    await installFromTemplate({ agent: makeAgent(), db, caddy }, "user-1", {
+    await installFromTemplate({ agent: makeAgent(), swarm: makeSwarm(), db, caddy }, "user-1", {
       projectId: "proj-1",
       templateId: "pocketbase",
       templateVersion: "0.22.0",
@@ -243,7 +273,7 @@ describe("installFromTemplate", () => {
     const caddy = makeCaddy()
 
     // compose without x-ploydok-domain → domain will be null
-    await installFromTemplate({ agent: makeAgent(), db, caddy }, "user-1", {
+    await installFromTemplate({ agent: makeAgent(), swarm: makeSwarm(), db, caddy }, "user-1", {
       projectId: "proj-1",
       templateId: "pocketbase",
       templateVersion: "0.22.0",
@@ -266,7 +296,7 @@ describe("startService", () => {
     mockGetServiceForUser.mockResolvedValueOnce(null)
     await expect(
       startService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -283,7 +313,7 @@ describe("startService", () => {
     })
     await expect(
       startService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -326,7 +356,7 @@ describe("stopService", () => {
     })
     await expect(
       stopService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -369,7 +399,7 @@ describe("deleteService", () => {
     mockGetServiceForUser.mockResolvedValueOnce(null)
     await expect(
       deleteService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
