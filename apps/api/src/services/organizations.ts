@@ -6,12 +6,14 @@ import {
   databases,
   eventWebhooks,
   memberships,
+  org_subscriptions,
   projects,
   scheduled_jobs,
   services,
   sso_configs,
 } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
+import { setOrgSubscription } from "@ploydok/db/queries"
 
 /**
  * Ensure the user has an owner-level membership on the given project.
@@ -112,6 +114,24 @@ function isUniqueViolation(err: unknown): boolean {
   )
 }
 
+type OrgSubscriptionDb = Pick<Db, "insert" | "update" | "query">
+
+// Skip existing rows so a retry cannot downgrade a paid workspace.
+export async function ensureFreeOrgSubscription(
+  db: OrgSubscriptionDb,
+  orgId: string
+): Promise<void> {
+  try {
+    const existing = await db.query.org_subscriptions.findFirst({
+      where: eq(org_subscriptions.org_id, orgId),
+    })
+    if (existing) return
+    await setOrgSubscription(db, orgId, "free", "active")
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err
+  }
+}
+
 export async function ensureDefaultOrganizationForUser(
   db: Db,
   userId: string,
@@ -174,6 +194,7 @@ export async function ensureDefaultOrganizationForUser(
         .returning()
       if (!inserted) throw new Error("failed to insert default organization")
       await ensureOwnerMembership(tx, inserted.id, userId, now)
+      await ensureFreeOrgSubscription(tx, inserted.id)
       return inserted
     })
   } catch (err) {
@@ -274,6 +295,7 @@ export async function createOrganizationForUser(
     .returning()
   if (inserted) {
     await ensureOwnerMembership(db, inserted.id, userId, now)
+    await ensureFreeOrgSubscription(db, inserted.id)
   }
 
   if (!inserted) throw new Error("failed to insert organization")

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { eq } from "drizzle-orm"
+import { nanoid } from "nanoid"
 import type { Db } from "../client"
 import { billing_plans, org_subscriptions } from "../schema"
 import type { BillingPlanRow, OrgSubscriptionRow } from "../schema"
+
+type SubscriptionDb = Pick<Db, "insert" | "update" | "query">
 
 /**
  * Fetch the billing plan and subscription for an organization.
@@ -105,7 +108,7 @@ export async function hasQuota(
  * Create or update an organization subscription to a plan.
  */
 export async function setOrgSubscription(
-  db: Db,
+  db: SubscriptionDb,
   orgId: string,
   planSlug: string,
   status: "active" | "trialing" | "past_due" | "canceled" = "active"
@@ -131,7 +134,7 @@ export async function setOrgSubscription(
   const inserted = await db
     .insert(org_subscriptions)
     .values({
-      id: crypto.getRandomValues(new Uint8Array(12)).toString(),
+      id: nanoid(),
       org_id: orgId,
       plan_slug: planSlug,
       status,
