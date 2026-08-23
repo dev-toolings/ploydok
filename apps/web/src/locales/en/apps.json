@@ -130,6 +130,7 @@
     "detected": "Detected",
     "probable": "Probable",
     "estimate": "Estimate",
+    "composeNativeUnavailable": "Native Compose deploys are not available yet in Ploydok; pick another build method explicitly.",
     "laravelSqliteHint": "For Laravel apps on SQLite, Ploydok prepares the file and runs migrations on start.",
     "laravelSeed": "Seed the SQLite database on first deploy",
     "laravelSeedBody": "Adds PLOYDOK_LARAVEL_SEED=true and runs php artisan db:seed only if the SQLite file was just created.",

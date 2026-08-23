@@ -2245,7 +2245,10 @@ function DetectedPanel({
               key={w}
               className="text-[11px] text-amber-600 dark:text-amber-400"
             >
-              ⚠ {w}
+              ⚠{" "}
+              {w === "compose_native_unavailable"
+                ? t("create.composeNativeUnavailable")
+                : w}
             </li>
           ))}
         </ul>
