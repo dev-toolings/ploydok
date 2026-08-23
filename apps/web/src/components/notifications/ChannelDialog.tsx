@@ -53,7 +53,6 @@ const ALL_KINDS: ReadonlyArray<NotificationKind> = [
   "slack",
   "email",
   "telegram",
-  "whatsapp",
 ]
 
 interface ChannelDialogProps {

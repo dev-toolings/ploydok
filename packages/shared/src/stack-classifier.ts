@@ -385,9 +385,7 @@ export function classifyStack(probes: ProbeResults): StackClassification {
       confidence: "high",
       signals: [compose],
       recommendedBuild: "compose",
-      warnings: [
-        "Le déploiement Compose natif n'est pas encore disponible dans Ploydok ; choisis explicitement une autre méthode de build.",
-      ],
+      warnings: ["compose_native_unavailable"],
       suggestedEnvVars: {},
       requiresExplicitBuildChoice: true,
     }

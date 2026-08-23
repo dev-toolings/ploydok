@@ -3,12 +3,6 @@ import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { Input } from "@workspace/ui/components/input"
 import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@workspace/ui/components/alert"
-import { Badge } from "@workspace/ui/components/badge"
-import {
   Field,
   FieldContent,
   FieldDescription,
@@ -30,13 +24,6 @@ export function SlackForm({
   const { t } = useTranslation("settings")
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <Badge variant="secondary">{t("notifications.comingSoon")}</Badge>
-      </div>
-      <Alert>
-        <AlertTitle>{t("notifications.disabledTitle")}</AlertTitle>
-        <AlertDescription>{t("notifications.slackNotActive")}</AlertDescription>
-      </Alert>
       <Field>
         <FieldLabel htmlFor="slack-webhook-url">
           {t("notifications.webhookUrl")}
