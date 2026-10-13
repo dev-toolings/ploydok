@@ -67,10 +67,17 @@ export function Shell({ appId }: ShellProps): React.JSX.Element {
 
       if (disposed || !containerRef.current) return
 
+      const fontFamily =
+        getComputedStyle(containerRef.current)
+          .getPropertyValue("--font-mono")
+          .trim() || "monospace"
+      await document.fonts.load(`13px ${fontFamily.split(",")[0]}`)
+      if (disposed || !containerRef.current) return
+
       const term = new Terminal({
         cursorBlink: true,
         fontSize: 13,
-        fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
+        fontFamily,
         theme: {
           background: "#09090b",
           foreground: "#e4e4e7",
@@ -162,9 +169,7 @@ export function Shell({ appId }: ShellProps): React.JSX.Element {
 
       ws.addEventListener("error", () => {
         if (disposed) return
-        term.write(
-          `\r\n\x1b[31m${t("shell.wsError")}\x1b[0m\r\n`
-        )
+        term.write(`\r\n\x1b[31m${t("shell.wsError")}\x1b[0m\r\n`)
       })
 
       term.onData((data: string) => {
@@ -242,7 +247,7 @@ export function Shell({ appId }: ShellProps): React.JSX.Element {
     <div className="flex h-full w-full">
       <div className="flex min-w-0 flex-1 flex-col bg-[#09090b]">
         <div className="flex h-9 shrink-0 items-center justify-between border-b border-zinc-800 px-3">
-          <span className="font-mono text-[12px] tracking-normal text-zinc-400 uppercase">
+          <span className="font-sans text-[12px] tracking-normal text-zinc-400 uppercase">
             {mode === "rw" ? t("shell.write") : t("shell.readOnly")}
           </span>
           <button

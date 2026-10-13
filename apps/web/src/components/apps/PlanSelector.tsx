@@ -76,7 +76,7 @@ function PlanOption({
           <span className="size-2 rounded-full border border-border" />
         )}
       </div>
-      <span className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <span className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         {t(`plan.${name}Hint`)}
       </span>
       {limits ? (
@@ -100,7 +100,7 @@ function PlanStat({
   label: string
 }): React.JSX.Element {
   return (
-    <div className="flex items-center gap-1 truncate font-mono text-[10px] text-muted-foreground">
+    <div className="flex items-center gap-1 truncate font-sans text-[10px] text-muted-foreground">
       <Icon className="size-3 shrink-0" />
       <span className="truncate">{label}</span>
     </div>

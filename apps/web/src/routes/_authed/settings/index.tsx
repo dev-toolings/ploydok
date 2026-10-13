@@ -66,7 +66,7 @@ function SettingsOverviewPage(): React.JSX.Element {
 
           <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
             <div>
-              <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+              <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
                 Passkeys
               </dt>
               <dd className="mt-0.5 font-medium">
@@ -74,7 +74,7 @@ function SettingsOverviewPage(): React.JSX.Element {
               </dd>
             </div>
             <div>
-              <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+              <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
                 TOTP
               </dt>
               <dd className="mt-0.5 font-medium">
@@ -82,7 +82,7 @@ function SettingsOverviewPage(): React.JSX.Element {
               </dd>
             </div>
             <div>
-              <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+              <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
                 Backup codes
               </dt>
               <dd className="mt-0.5 font-medium">
@@ -120,7 +120,7 @@ function SectionLink({ section }: { section: SectionCard }): React.JSX.Element {
         <Icon className="size-5 text-muted-foreground group-hover:text-foreground" />
       </div>
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+        <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
           {section.eyebrow}
         </p>
         <p className="text-sm font-medium">{section.title}</p>

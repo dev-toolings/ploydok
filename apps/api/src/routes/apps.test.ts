@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test"
 import { Hono } from "hono"
 import { nanoid } from "nanoid"
 import { eq } from "drizzle-orm"
+import { PgDialect } from "drizzle-orm/pg-core"
+import type { SQL } from "drizzle-orm"
 import {
   users,
   projects,
@@ -274,6 +276,57 @@ function buildTestApp(db: TestDb, authedUser?: AuthUser): Hono {
 function fakeUser(id: string, email: string): AuthUser {
   return { id, email, display_name: "Test User", session_id: "sess-test" }
 }
+
+describe("deletion job status", () => {
+  it("returns the persisted failure after the app row is gone, scoped to the requester", async () => {
+    let filter: SQL | undefined
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: (condition: SQL) => {
+            filter = condition
+            return {
+              limit: async () => [
+                {
+                  id: "delete-job",
+                  appId: "deleted-app",
+                  status: "failed",
+                  errorMessage: "Registry unavailable",
+                  finishedAt: new Date(),
+                },
+              ],
+            }
+          },
+        }),
+      }),
+    } as unknown as Db
+    const response = await buildTestApp(
+      db,
+      fakeUser("requester", "requester@test.com")
+    ).request("/apps/deletion-jobs/delete-job")
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { job: { status: string } }
+    expect(body.job.status).toBe("failed")
+    const query = new PgDialect().sqlToQuery(filter!)
+    expect(query.sql).toContain("requested_by_user_id")
+    expect(query.params).toEqual(["delete-job", "requester"])
+  })
+
+  it("does not expose a job missing from the requesting user's scope", async () => {
+    const db = {
+      select: () => ({
+        from: () => ({ where: () => ({ limit: async () => [] }) }),
+      }),
+    } as unknown as Db
+    const response = await buildTestApp(
+      db,
+      fakeUser("another-user", "another@test.com")
+    ).request("/apps/deletion-jobs/delete-job")
+    expect(response.status).toBe(404)
+    const body = (await response.json()) as { error: { code: string } }
+    expect(body.error.code).toBe("NOT_FOUND")
+  })
+})
 
 describe("enqueueAppDeleteJob", () => {
   it("commits app_delete_jobs before queue.add claims the job", async () => {

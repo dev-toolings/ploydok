@@ -184,7 +184,7 @@ export function RestartDatabaseDialog({
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between text-sm">
                 <span>{stageLabel}</span>
-                <span className="font-mono tabular-nums">{progressValue}%</span>
+                <span className="font-sans tabular-nums">{progressValue}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-muted">
                 <div

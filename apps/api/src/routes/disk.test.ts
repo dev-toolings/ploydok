@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, mock } from "bun:test"
 import { Hono } from "hono"
 import type { AuthUser } from "../auth/middleware"
 import type { Db } from "@ploydok/db"
+import type { DiskUsageResponse } from "@ploydok/shared"
 
 // ---------------------------------------------------------------------------
 // Fake db — only `select().from().where().limit()` is exercised, by
@@ -69,7 +70,9 @@ const mockHostStats = mock(() =>
     error: "",
   })
 )
-const mockEnqueue = mock(() => Promise.resolve({ row: { id: "cleanup-job-1" }, jobId: "cleanup-job-1" }))
+const mockEnqueue = mock(() =>
+  Promise.resolve({ row: { id: "cleanup-job-1" }, jobId: "cleanup-job-1" })
+)
 
 // NOTE: this file uses a dynamic `await import("./disk")` below (needed so the
 // mock is registered before the route module resolves its agent singleton),
@@ -90,6 +93,13 @@ mock.module("../worker/queue-enqueue", () => ({
 }))
 
 const { createDiskRouter, resetDiskUsageCache } = await import("./disk")
+let persistedUsage: DiskUsageResponse | null = null
+const usageStore = {
+  read: mock(async () => persistedUsage),
+  write: mock(async (payload: DiskUsageResponse) => {
+    persistedUsage = payload
+  }),
+}
 
 // ---------------------------------------------------------------------------
 // Test app builder — injects a fake auth middleware
@@ -115,8 +125,13 @@ function buildTestApp(authedUser?: AuthUser): Hono {
     return next()
   })
 
-  app.route("/disk", createDiskRouter(fakeDb))
+  app.route("/disk", createDiskRouter(fakeDb, usageStore))
   return app
+}
+
+async function warmUsage(app: Hono): Promise<void> {
+  await app.request("/disk/usage")
+  await Bun.sleep(0)
 }
 
 beforeEach(() => {
@@ -126,6 +141,9 @@ beforeEach(() => {
   mockImageDf.mockClear()
   mockHostStats.mockClear()
   mockEnqueue.mockClear()
+  persistedUsage = null
+  usageStore.read.mockClear()
+  usageStore.write.mockClear()
   resetDiskUsageCache()
 })
 
@@ -206,6 +224,25 @@ describe("GET /disk/jobs/:jobId", () => {
 // GET /disk/usage
 // ---------------------------------------------------------------------------
 
+describe("GET /disk/insights", () => {
+  it("requires instance-admin access", async () => {
+    expect((await buildTestApp().request("/disk/insights")).status).toBe(401)
+    fakeInstanceAdmin = false
+    expect((await buildTestApp(fakeUser()).request("/disk/insights")).status).toBe(403)
+  })
+
+  it("returns real samples with their calculated seven-day trend", async () => {
+    const now = new Date()
+    fakeJobs = [
+      { measured_at: new Date(now.getTime() - 7 * 86_400_000), used_bytes: 200, total_bytes: 1_000 },
+      { measured_at: now, used_bytes: 270, total_bytes: 1_000 },
+    ]
+    const response = await buildTestApp(fakeUser()).request("/disk/insights")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ history: [{ usedBytes: 200 }, { usedBytes: 270 }], growth7dBytes: 70, daysTo90Percent: 63 })
+  })
+})
+
 describe("GET /disk/usage", () => {
   it("returns 401 without an authenticated user", async () => {
     const app = buildTestApp()
@@ -224,6 +261,7 @@ describe("GET /disk/usage", () => {
 
   it("maps the agent's ImageDf + HostStats responses into the shared DiskUsageResponse shape", async () => {
     const app = buildTestApp(fakeUser())
+    await warmUsage(app)
     const res = await app.request("/disk/usage")
     expect(res.status).toBe(200)
 
@@ -235,7 +273,7 @@ describe("GET /disk/usage", () => {
         count: number
       }>
       layersSizeBytes: number
-      host: { totalBytes: number; usedBytes: number; freeBytes: number } | null
+      host: { totalBytes: number; usedBytes: number; freeBytes: number; inodesTotal: number | null; inodesUsed: number | null } | null
     }
 
     expect(body.categories).toEqual([
@@ -252,6 +290,8 @@ describe("GET /disk/usage", () => {
       totalBytes: 10_000,
       usedBytes: 4_000,
       freeBytes: 6_000,
+      inodesTotal: 0,
+      inodesUsed: 0,
     })
     expect(mockImageDf).toHaveBeenCalledTimes(1)
     expect(mockHostStats).toHaveBeenCalledTimes(1)
@@ -268,18 +308,26 @@ describe("GET /disk/usage", () => {
     expect(body.host).toBeNull()
   })
 
-  it("returns 502 when imageDf fails", async () => {
+  it("keeps host usage available and stops polling when imageDf fails", async () => {
     mockImageDf.mockImplementationOnce(() =>
       Promise.reject(new Error("agent unavailable"))
     )
     const app = buildTestApp(fakeUser())
+    await warmUsage(app)
     const res = await app.request("/disk/usage")
-    expect(res.status).toBe(502)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      host: { usedBytes: 4_000 },
+      refreshedAt: null,
+      stale: false,
+      refreshFailed: true,
+    })
+    expect(mockImageDf).toHaveBeenCalledTimes(1)
   })
 
   it("serves a second read from cache without re-walking the agent", async () => {
     const app = buildTestApp(fakeUser())
-    await app.request("/disk/usage")
+    await warmUsage(app)
     const res = await app.request("/disk/usage")
 
     expect(res.status).toBe(200)
@@ -288,9 +336,22 @@ describe("GET /disk/usage", () => {
     expect(mockImageDf).toHaveBeenCalledTimes(1)
   })
 
+  it("preserves exclusive cleanup estimates and individual consumers from the agent", async () => {
+    mockImageDf.mockImplementationOnce(async () => ({
+      categories: [], layersSizeBytes: 900, cleanupReclaimableBytes: 100,
+      topConsumers: [{ kind: "volumes", name: "database-data", sizeBytes: 500 }],
+    }))
+    const app = buildTestApp(fakeUser())
+    await warmUsage(app)
+    expect(await (await app.request("/disk/usage")).json()).toMatchObject({
+      cleanupReclaimableBytes: 100,
+      topConsumers: [{ kind: "volumes", name: "database-data", sizeBytes: 500 }],
+    })
+  })
+
   it("answers ?refresh=1 from cache without waiting, and re-walks behind it", async () => {
     const app = buildTestApp(fakeUser())
-    await app.request("/disk/usage") // warms the cache with the default mock
+    await warmUsage(app)
 
     let release: (() => void) | undefined
     mockImageDf.mockImplementationOnce(async () => {
@@ -333,5 +394,87 @@ describe("GET /disk/usage", () => {
 
     expect([a.status, b.status, c.status]).toEqual([200, 200, 200])
     expect(mockImageDf).toHaveBeenCalledTimes(1)
+    expect(mockHostStats).toHaveBeenCalledTimes(1)
+    expect(usageStore.read).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns host usage on a cold cache before a slow Docker measurement completes", async () => {
+    let release: (() => void) | undefined
+    mockImageDf.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { categories: [], layersSizeBytes: 42 }
+    })
+    const app = buildTestApp(fakeUser())
+    try {
+      const res = await app.request("/disk/usage")
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({
+        host: { usedBytes: 4_000 },
+        categories: [],
+        refreshedAt: null,
+        stale: true,
+        refreshFailed: false,
+      })
+    } finally {
+      release?.()
+      await Bun.sleep(0)
+    }
+    expect(await (await app.request("/disk/usage")).json()).toMatchObject({
+      layersSizeBytes: 42,
+      stale: false,
+      refreshFailed: false,
+    })
+  })
+
+  it("restores the persisted Docker measurement after an API cache reset", async () => {
+    const app = buildTestApp(fakeUser())
+    await warmUsage(app)
+    expect(usageStore.write).toHaveBeenCalledTimes(1)
+    resetDiskUsageCache()
+    const restartedApp = buildTestApp(fakeUser())
+    expect(
+      await (await restartedApp.request("/disk/usage")).json()
+    ).toMatchObject({
+      layersSizeBytes: 900,
+      stale: false,
+    })
+    expect(mockImageDf).toHaveBeenCalledTimes(1)
+    expect(usageStore.read).toHaveBeenCalledTimes(2)
+  })
+
+  it("serves an expired persisted measurement while Docker revalidates", async () => {
+    const app = buildTestApp(fakeUser())
+    await warmUsage(app)
+    persistedUsage = {
+      ...persistedUsage!,
+      refreshedAt: new Date(Date.now() - 120_000).toISOString(),
+    }
+    resetDiskUsageCache()
+    let release: (() => void) | undefined
+    mockImageDf.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { categories: [], layersSizeBytes: 42 }
+    })
+    try {
+      expect(await (await app.request("/disk/usage")).json()).toMatchObject({
+        layersSizeBytes: 900,
+        stale: true,
+      })
+    } finally {
+      release?.()
+      await Bun.sleep(0)
+    }
+  })
+
+  it("bounds a stalled persisted-cache read and still serves host usage", async () => {
+    usageStore.read.mockImplementationOnce(() => new Promise(() => {}))
+    const app = buildTestApp(fakeUser())
+    const res = await app.request("/disk/usage")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ host: { usedBytes: 4_000 } })
   })
 })

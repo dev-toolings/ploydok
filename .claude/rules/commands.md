@@ -8,7 +8,7 @@
 | Web (Vite/TanStack Start) | `http://localhost:5173`                         |
 | Postgres                  | `127.0.0.1:5434` (container `ploydok-postgres`) |
 | Redis                     | `127.0.0.1:6381` (container `ploydok-redis`)    |
-| Caddy data                | `8180` (http) / `8543` (https)                  |
+| Caddy data                | `8181` (http) / `8543` (https)                  |
 | Caddy admin               | `http://127.0.0.1:2020/config/`                 |
 | BuildKit                  | `docker-container://ploydok-buildkitd`          |
 | Registry v2               | `http://127.0.0.1:5000/v2/`                     |
@@ -17,7 +17,7 @@
 ## Domaine des apps en dev
 
 Base par défaut : **`demo.localhost`** (`deriveDefaultAppDomainBase`, `apps/api/src/routes/apps.ts`).
-Une app déployée est donc joignable sur `http://<slug>-<id>.demo.localhost:8180/`.
+Une app déployée est donc joignable sur `http://<slug>-<id>.demo.localhost:8181/`.
 
 `.localhost` résout vers la loopback sans DNS ni `/etc/hosts`, wildcards compris.
 Ne **pas** revenir à un TLD `.local` : la plupart des `nsswitch.conf` Linux routent

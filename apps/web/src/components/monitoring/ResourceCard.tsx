@@ -85,7 +85,7 @@ function KindBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-mono text-[9px] tracking-wide",
+        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-sans text-[9px] tracking-wide",
         style.cls
       )}
     >
@@ -260,7 +260,7 @@ export function ResourceCard({
 
       {/* Memory usage meter */}
       <div className="space-y-1">
-        <div className="flex items-baseline justify-between font-mono text-[10px] text-muted-foreground">
+        <div className="flex items-baseline justify-between font-sans text-[10px] text-muted-foreground">
           <span className="tracking-wide uppercase">{t("memoryBudget")}</span>
           <span className="tabular-nums">
             <span className="text-foreground">{formatBytes(snapshot.mem_bytes)}</span>
@@ -278,7 +278,7 @@ export function ResourceCard({
       </div>
 
       {/* Footer metadata — small row */}
-      <footer className="flex items-center justify-between gap-2 border-t border-border pt-3 font-mono text-[10px] text-muted-foreground">
+      <footer className="flex items-center justify-between gap-2 border-t border-border pt-3 font-sans text-[10px] text-muted-foreground">
         <div className="flex items-center gap-3">
           <FootStat icon={RiHistoryLine} label={t("up")} value={formatUptime(snapshot.uptime_s)} />
           <FootStat

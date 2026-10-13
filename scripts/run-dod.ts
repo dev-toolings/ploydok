@@ -180,7 +180,7 @@ function checkPrereqs(): void {
   // Caddy
   const caddyCheck = spawnSync(
     "curl",
-    ["-sf", "--max-time", "3", "http://localhost:8180/"],
+    ["-sf", "--max-time", "3", "http://localhost:8181/"],
     { encoding: "utf8" },
   )
   // Caddy may return non-2xx but we only care about connection, so check

@@ -67,7 +67,6 @@
     "internalUrl": "URL interne :",
     "slugHint": "Identifiant unique au sein de l'organisation. Le slug est généré à partir du nom.",
     "publicUrl": "URL publique",
-    "openGitLabSettings": "Ouvrir les réglages GitLab",
     "autoDeployHint": "Déploiement automatique à chaque push",
     "dockerOci": "Docker / OCI",
     "repoLabel": "Dépôt {{provider}}",
@@ -210,6 +209,12 @@
     "healthAria": "Santé de l'application : {{label}}"
   },
   "actions": {
+    "deleteConsequences": "Cela supprime définitivement les conteneurs, les images du registre, les artefacts de build, la route Caddy et la ligne en base. Cette action est irréversible.",
+    "deleteConfirmLabel": "Pour confirmer la suppression, saisissez le nom de l’application ci-dessous. Cliquez sur le nom pour le copier.",
+    "copyName": "Copier {{name}}",
+    "nameCopied": "{{name}} copié",
+    "copyNameFailed": "Impossible de copier le nom. Sélectionnez-le et copiez-le manuellement.",
+    "runtimeControls": "Actions de l'application",
     "deploy": "Déployer",
     "deployHint": "Récupérer la source Git, construire et déployer",
     "restart": "Redémarrer",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from "zod"
 
-// Host disk usage & reclaim — contract between the API and the web dashboard.
+// Host disk usage and reclaim: contract between the API and the web dashboard.
 // Backs the "Disk" panel: a `docker system df` breakdown plus host filesystem
 // usage, and on-demand prune jobs (image / build-cache).
 
@@ -25,6 +25,8 @@ export const DiskHostUsageSchema = z.object({
   totalBytes: z.number().nonnegative(),
   usedBytes: z.number().nonnegative(),
   freeBytes: z.number().nonnegative(),
+  inodesTotal: z.number().nonnegative().nullable().default(null),
+  inodesUsed: z.number().nonnegative().nullable().default(null),
 })
 export type DiskHostUsage = z.infer<typeof DiskHostUsageSchema>
 
@@ -33,13 +35,36 @@ export const DiskUsageResponseSchema = z.object({
   layersSizeBytes: z.number().nonnegative(),
   // Root-filesystem usage from the agent's host stats; null if unavailable.
   host: DiskHostUsageSchema.nullable(),
-  // When the breakdown was measured. `docker system df` is expensive, so the
-  // API serves it from a stale-while-revalidate cache: `stale` means a
-  // background refresh is running and these numbers are the previous ones.
-  refreshedAt: z.string(),
+  // Null until the first Docker measurement completes. An empty category list
+  // during that window is pending data, not a measured zero.
+  refreshedAt: z.string().datetime().nullable(),
   stale: z.boolean(),
+  refreshFailed: z.boolean().default(false),
+  cleanupReclaimableBytes: z.number().nonnegative().nullable().default(null),
+  topConsumers: z
+    .array(
+      z.object({
+        kind: DiskUsageCategoryKindEnum,
+        name: z.string(),
+        sizeBytes: z.number().nonnegative(),
+      })
+    )
+    .default([]),
 })
 export type DiskUsageResponse = z.infer<typeof DiskUsageResponseSchema>
+
+export const DiskSampleSchema = z.object({
+  measuredAt: z.string().datetime(),
+  usedBytes: z.number().nonnegative(),
+  totalBytes: z.number().positive(),
+})
+export type DiskSample = z.infer<typeof DiskSampleSchema>
+export const DiskInsightsResponseSchema = z.object({
+  history: z.array(DiskSampleSchema),
+  growth7dBytes: z.number().nullable(),
+  daysTo90Percent: z.number().nonnegative().nullable(),
+})
+export type DiskInsightsResponse = z.infer<typeof DiskInsightsResponseSchema>
 
 // Prune endpoints enqueue a system_jobs row and return its id; the caller
 // re-fetches the usage breakdown once the job completes.

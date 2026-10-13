@@ -4,7 +4,7 @@ Docker Compose orchestre le control-plane local pour le développement :
 
 | Service     | Rôle                                                                             | Port local                                |
 | ----------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
-| `caddy`     | Reverse proxy + TLS. Admin API 2020.                                             | 8180 (http) / 8543 (https) / 2020 (admin) |
+| `caddy`     | Reverse proxy + TLS. Admin API 2020.                                             | 8181 (http) / 8543 (https) / 2020 (admin) |
 | `buildkitd` | Build OCI images (BuildKit). Adressé via `docker-container://ploydok-buildkitd`. | —                                         |
 | `registry`  | Registry v2 local, push des images buildées.                                     | 5000                                      |
 | `postgres`  | Base de données de développement.                                                | 5434                                      |

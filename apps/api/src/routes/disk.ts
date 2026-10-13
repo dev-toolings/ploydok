@@ -14,6 +14,9 @@ import type { DiskUsageResponse } from "@ploydok/shared"
 import { requireInstanceAdmin } from "../auth/instance-admin"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
+import { listHostDiskSamples } from "@ploydok/db/queries"
+import { diskHostKey } from "../disk/host-key"
+import { diskGrowth } from "../disk/history"
 import { enqueueWithDbRow } from "../worker/queue-enqueue"
 import {
   dockerCleanupQueue,
@@ -29,18 +32,49 @@ function getUser(c: { get: (key: string) => unknown }): AuthUser {
   return c.get("user") as AuthUser
 }
 
-// ---------------------------------------------------------------------------
-// Disk usage cache
-//
-// The agent's ImageDf maps to `GET /system/df`, whose image branch walks the
-// whole layer store: measured at ~7 s on a 82-image host, and dockerd caches
-// nothing. Serving that synchronously turned every visit to /admin/disk into a
-// 7 s spinner, so reads go through a stale-while-revalidate cache: a fresh
-// entry answers in microseconds, a stale one answers immediately and kicks off
-// a background refresh, and only a cold process pays the full walk.
-// ---------------------------------------------------------------------------
-
 const FRESH_MS = 60_000
+const CACHE_IO_TIMEOUT_MS = 250
+const HOST_FRESH_MS = 5_000
+
+interface DiskUsageStore {
+  read(): Promise<DiskUsageResponse | null>
+  write(payload: DiskUsageResponse): Promise<void>
+}
+
+const cacheKey = `ploydok:disk:usage:v1:${diskHostKey}`
+
+// Reuse the application's Redis connection. This snapshot is best-effort and
+// must never hold up the page when Redis is unavailable.
+const redisUsageStore: DiskUsageStore = {
+  async read() {
+    const redis = await dockerCleanupQueue.client
+    const raw = await redis.get(cacheKey)
+    if (!raw) return null
+    const payload = DiskUsageResponseSchema.parse(JSON.parse(raw))
+    return payload.refreshedAt ? payload : null
+  },
+  async write(payload) {
+    const redis = await dockerCleanupQueue.client
+    await redis.set(cacheKey, JSON.stringify(payload), { EX: 86_400 })
+  },
+}
+
+async function boundedCacheIo<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Disk cache timed out")),
+          CACHE_IO_TIMEOUT_MS
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 let cached: { payload: DiskUsageResponse; at: number; gen: number } | null =
   null
@@ -52,51 +86,96 @@ let inflight: {
 // Walks are ordered by this counter, not by `at`: two of them can start within
 // the same millisecond and a wall-clock comparison then drops the newer result.
 let walkSeq = 0
+let restored = false
+let restoring: Promise<void> | null = null
+let refreshFailedAt: number | null = null
+let hostCache: { payload: DiskUsageResponse["host"]; at: number } | null = null
+let hostInflight: Promise<DiskUsageResponse["host"]> | null = null
 
 async function collectDiskUsage(): Promise<DiskUsageResponse> {
   const agent = getSharedAgent()
-
-  // Independent RPCs: hostStats samples CPU for 100 ms and must not queue
-  // behind the df walk.
-  const [dfResult, hostResult] = await Promise.allSettled([
-    agent.imageDf({}),
-    agent.hostStats({}),
-  ])
-
-  if (dfResult.status === "rejected") throw dfResult.reason
-
-  let host: DiskUsageResponse["host"] = null
-  if (hostResult.status === "fulfilled") {
-    host = {
-      totalBytes: hostResult.value.diskTotalBytes,
-      usedBytes: hostResult.value.diskUsedBytes,
-      freeBytes: hostResult.value.diskFreeBytes,
-    }
-  } else {
-    log.warn(
-      { err: hostResult.reason },
-      "hostStats unavailable — disk.host will be null"
-    )
-  }
+  const df = await agent.imageDf({})
 
   return DiskUsageResponseSchema.parse({
-    categories: dfResult.value.categories.map((cat) => ({
+    categories: df.categories.map((cat) => ({
       kind: cat.kind,
       totalBytes: cat.totalBytes,
       reclaimableBytes: cat.reclaimableBytes,
       count: cat.count,
     })),
-    layersSizeBytes: dfResult.value.layersSizeBytes,
-    host,
+    layersSizeBytes: df.layersSizeBytes,
+    cleanupReclaimableBytes: df.cleanupReclaimableBytes ?? null,
+    topConsumers: df.topConsumers ?? [],
+    host: null,
     refreshedAt: new Date().toISOString(),
     stale: false,
   })
 }
 
+async function readHostUsage(): Promise<DiskUsageResponse["host"]> {
+  if (hostCache && Date.now() - hostCache.at < HOST_FRESH_MS)
+    return hostCache.payload
+  if (hostInflight) return hostInflight
+  const generation = walkSeq
+  const promise = getSharedAgent()
+    .hostStats({}, 1_000)
+    .then((stats) => ({
+      totalBytes: stats.diskTotalBytes,
+      usedBytes: stats.diskUsedBytes,
+      freeBytes: stats.diskFreeBytes,
+      inodesTotal: stats.inodesTotal,
+      inodesUsed: stats.inodesUsed,
+    }))
+    .catch((err) => {
+      log.warn(
+        { err },
+        "hostStats unavailable; serving the last host measurement"
+      )
+      return hostCache?.payload ?? null
+    })
+    .then((payload) => {
+      if (generation === walkSeq) hostCache = { payload, at: Date.now() }
+      return payload
+    })
+    .finally(() => {
+      if (hostInflight === promise) hostInflight = null
+    })
+  hostInflight = promise
+  return promise
+}
+
+function restoreDiskUsage(store: DiskUsageStore): Promise<void> {
+  if (restored) return Promise.resolve()
+  if (restoring) return restoring
+  const generation = walkSeq
+  const promise = boundedCacheIo(store.read())
+    .then((payload) => {
+      if (payload?.refreshedAt && generation === walkSeq) {
+        cached = {
+          payload,
+          at: Date.parse(payload.refreshedAt),
+          gen: generation,
+        }
+      }
+    })
+    .catch((err) => log.warn({ err }, "disk usage cache unavailable"))
+    .finally(() => {
+      if (restoring === promise) {
+        restored = true
+        restoring = null
+      }
+    })
+  restoring = promise
+  return promise
+}
+
 // Single-flight. `notBefore` lets a forced refresh reject an in-flight walk
 // that started before the caller's event (a prune that just finished), while
 // background revalidations happily join whatever is already running.
-function refreshDiskUsage(notBefore = 0): Promise<DiskUsageResponse> {
+function refreshDiskUsage(
+  store: DiskUsageStore,
+  notBefore = 0
+): Promise<DiskUsageResponse> {
   if (inflight && inflight.at >= notBefore) return inflight.promise
 
   const at = Date.now()
@@ -105,8 +184,18 @@ function refreshDiskUsage(notBefore = 0): Promise<DiskUsageResponse> {
     .then((payload) => {
       // Two walks can overlap when a forced refresh preempts a background one.
       // Whoever started last wins, whatever the completion order.
-      if (!cached || cached.gen < gen) cached = { payload, at, gen }
+      if (walkSeq === gen) {
+        cached = { payload, at: Date.now(), gen }
+        refreshFailedAt = null
+        void boundedCacheIo(store.write(payload)).catch((err) => {
+          log.warn({ err }, "could not persist disk usage cache")
+        })
+      }
       return payload
+    })
+    .catch((err) => {
+      if (walkSeq === gen) refreshFailedAt = Date.now()
+      throw err
     })
     .finally(() => {
       if (inflight?.gen === gen) inflight = null
@@ -118,44 +207,59 @@ function refreshDiskUsage(notBefore = 0): Promise<DiskUsageResponse> {
 
 // Exposed for tests: module state outlives a single request by design.
 export function resetDiskUsageCache(): void {
+  ++walkSeq
   cached = null
   inflight = null
+  restored = false
+  restoring = null
+  refreshFailedAt = null
+  hostCache = null
+  hostInflight = null
 }
 
-export function createDiskRouter(db: Db): Hono<AppEnv> {
+export function createDiskRouter(
+  db: Db,
+  usageStore: DiskUsageStore = redisUsageStore
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>()
   const instanceAdmin = requireInstanceAdmin(db)
 
-  // GET /disk/usage — `docker system df` breakdown + host filesystem usage.
-  //
-  // Never blocks on the walk when a previous measurement exists, including for
-  // `?refresh=1` (used by the Refresh button and after a prune job): the
-  // caller gets the last known breakdown flagged `stale` and polls until the
-  // refresh lands. Only a cold process has to wait.
+  router.get("/insights", instanceAdmin, async (c) => {
+    const rows = await listHostDiskSamples(db, diskHostKey, new Date(Date.now() - 30 * 86_400_000))
+    const history = rows.map((row) => ({ measuredAt: row.measured_at.toISOString(), usedBytes: row.used_bytes, totalBytes: row.total_bytes }))
+    return c.json({ history, ...diskGrowth(history) })
+  })
+
+  // Host stats and a persisted snapshot are cheap. Docker's layer walk always
+  // runs behind the response, including the first visit after an API restart.
   router.get("/usage", instanceAdmin, async (c) => {
     const forced = c.req.query("refresh") === "1"
-
-    if (cached) {
-      const fresh = !forced && Date.now() - cached.at < FRESH_MS
-      if (!fresh) {
-        // A failing revalidation keeps the last good value rather than
-        // blanking the page.
-        void refreshDiskUsage(forced ? Date.now() : 0).catch((err) => {
+    const [host] = await Promise.all([
+      readHostUsage(),
+      restoreDiskUsage(usageStore),
+    ])
+    const fresh = cached && Date.now() - cached.at < FRESH_MS
+    const retryDue =
+      refreshFailedAt === null || Date.now() - refreshFailedAt >= FRESH_MS
+    if (forced || (!fresh && retryDue)) {
+      void refreshDiskUsage(usageStore, forced ? Date.now() : 0).catch(
+        (err) => {
           log.warn({ err }, "background disk usage refresh failed")
-        })
-      }
-      // `inflight` covers the window where a refresh triggered by an earlier
-      // request is still running: reporting `stale: false` there would stop
-      // the dashboard from polling and freeze it on the previous numbers.
-      return c.json({ ...cached.payload, stale: inflight !== null })
+        }
+      )
     }
-
-    try {
-      return c.json(await refreshDiskUsage())
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return c.json({ error: { code: "AGENT_ERROR", message } }, 502)
-    }
+    return c.json(
+      DiskUsageResponseSchema.parse({
+        ...(cached?.payload ?? {
+          categories: [],
+          layersSizeBytes: 0,
+          refreshedAt: null,
+        }),
+        host,
+        stale: inflight !== null,
+        refreshFailed: refreshFailedAt !== null,
+      })
+    )
   })
 
   router.get("/jobs/:jobId", instanceAdmin, async (c) => {
@@ -195,15 +299,25 @@ export function createDiskRouter(db: Db): Hono<AppEnv> {
     const rows = await db
       .select()
       .from(system_jobs)
-      .where(inArray(system_jobs.kind, ["gc.images", "gc.buildcache", "gc.docker"]))
+      .where(
+        inArray(system_jobs.kind, ["gc.images", "gc.buildcache", "gc.docker"])
+      )
       .orderBy(desc(system_jobs.queued_at))
       .limit(20)
-    return c.json(rows.map((job) => DiskJobStatusSchema.parse({
-      jobId: job.id, kind: job.kind, status: job.status, result: job.result ?? null,
-      errorMessage: job.error_message, queuedAt: job.queued_at.toISOString(),
-      startedAt: job.claimed_at?.toISOString() ?? null,
-      finishedAt: job.finished_at?.toISOString() ?? null,
-    })))
+    return c.json(
+      rows.map((job) =>
+        DiskJobStatusSchema.parse({
+          jobId: job.id,
+          kind: job.kind,
+          status: job.status,
+          result: job.result ?? null,
+          errorMessage: job.error_message,
+          queuedAt: job.queued_at.toISOString(),
+          startedAt: job.claimed_at?.toISOString() ?? null,
+          finishedAt: job.finished_at?.toISOString() ?? null,
+        })
+      )
+    )
   })
 
   // POST /disk/prune/images — dangling-only image prune (all: false, safe default).

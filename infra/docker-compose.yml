@@ -37,7 +37,7 @@ services:
       ploydok.kind: infra
       ploydok.service: caddy
     ports:
-      - "8180:80"
+      - "8181:80"
       - "8543:443"
       - "16432-16532:16432-16532"
       - "127.0.0.1:2020:2019"

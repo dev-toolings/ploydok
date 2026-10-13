@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
+  DiskInsightsResponseSchema,
   DiskJobStatusSchema,
   DiskPruneResultSchema,
   DiskUsageResponseSchema,
 } from "@ploydok/shared"
 import { apiFetch } from "./api"
 import type {
+  DiskInsightsResponse,
   DiskJobStatus,
   DiskPruneResult,
   DiskUsageResponse,
 } from "@ploydok/shared"
 
+export async function getDiskInsights(): Promise<DiskInsightsResponse> {
+  return DiskInsightsResponseSchema.parse(
+    await apiFetch<unknown>("/disk/insights")
+  )
+}
+
 // `refresh` forces the API to re-run the expensive `docker system df` walk
-// instead of answering from its cache — used after a prune job completes.
+// instead of answering from its cache. Used after a prune job completes.
 export async function getDiskUsage(
   refresh = false
 ): Promise<DiskUsageResponse> {
@@ -46,7 +54,7 @@ export async function getDiskJob(jobId: string): Promise<DiskJobStatus> {
   return DiskJobStatusSchema.parse(data)
 }
 
-export async function getDiskJobs(): Promise<DiskJobStatus[]> {
+export async function getDiskJobs(): Promise<Array<DiskJobStatus>> {
   const data = await apiFetch<unknown>("/disk/jobs")
   return DiskJobStatusSchema.array().parse(data)
 }

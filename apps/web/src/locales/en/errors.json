@@ -14,8 +14,19 @@
   "configure": "Configure",
   "unexpected": "Something went wrong. Try again.",
   "codes": {
+    "invalid_private_key": "The private key must be a valid RSA PEM key.",
+    "github_app_credentials_invalid": "GitHub rejected the App ID or private key. Your existing configuration was preserved.",
+    "github_app_mismatch": "Use the App ID and Client ID of the currently configured GitHub App.",
+    "github_app_verification_failed": "GitHub could not be reached or returned an invalid response. Your existing configuration was preserved. Try again.",
+    "github_app_sync_failed": "The credentials were saved, but repository synchronization could not start. Retry the reconnection.",
     "SESSION_EXPIRED": "Session expired, please sign in again",
     "SECOND_FACTOR_REQUIRED": "Set up a second factor to unlock this action.",
-    "BACKEND_UNAVAILABLE": "The frontend can no longer reach the API."
-  }
+    "BACKEND_UNAVAILABLE": "Unable to reach the service. Check your connection and try again.",
+    "INVALID_CREDENTIALS": "Invalid email or password.",
+    "RATE_LIMITED": "Too many attempts. Try again in a few minutes.",
+    "CSRF_MISMATCH": "Your security token has expired. Reload the page and try again."
+  },
+  "networkDiagnostic": "No HTTP response for {{method}} {{url}} ({{reason}}). Check the API process, network, CORS and browser console. The browser does not reveal the exact cause to JavaScript.",
+  "httpDiagnostic": "{{method}} {{url}} : HTTP {{status}} [{{code}}]. {{message}}",
+  "requestReference": "Request reference: {{id}}."
 }

@@ -14,7 +14,7 @@ set -euo pipefail
 
 API_BASE="${API_BASE:-http://127.0.0.1:3335}"
 CADDY_ADMIN="${CADDY_ADMIN:-http://127.0.0.1:2020}"
-CADDY_HTTP="${CADDY_HTTP:-http://127.0.0.1:8180}"
+CADDY_HTTP="${CADDY_HTTP:-http://127.0.0.1:8181}"
 
 # Couleurs pour la lisibilité des logs
 RED='\033[0;31m'

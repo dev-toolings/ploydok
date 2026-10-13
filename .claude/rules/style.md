@@ -1,5 +1,26 @@
 # Style
 
+## Typography policy
+
+- Use **Inter Variable** for all interface text: headings, navigation, labels,
+  buttons, forms, tables, dialogs, notifications, and chart labels. This follows
+  the [Cloudflare dashboard](https://dash.cloudflare.com/login)'s interface typography.
+- Load fonts locally through `@fontsource-variable` imports in
+  `packages/ui/src/styles/globals.css`. Do not add remote font stylesheets.
+- Use `font-sans` for interface text and `font-heading` for headings. Both resolve
+  to the same Inter stack. Do not add component-specific font families.
+- Reserve `font-mono` (**JetBrains Mono Variable**) for code, logs, terminal output,
+  secrets, and technical identifiers where fixed-width characters help reading.
+  Do not use monospace for decorative labels, badges, explanatory text, or counts.
+- Use `tabular-nums` for aligned metrics and counters instead of switching fonts.
+- Use weight 400 for body text, 500 for controls and labels, and 600 for headings.
+  Keep form input text at least 16px on mobile.
+- Charts inherit the shared sans token. Canvas-based terminals use the computed
+  shared mono token rather than a hardcoded font stack.
+- Verify the actual loaded family with `document.fonts` and computed styles on
+  a public page and an authenticated page. A declared family without loaded font
+  files does not satisfy this policy.
+
 ## Prettier (`.prettierrc`)
 
 - `semi: false` — pas de `;` finaux.

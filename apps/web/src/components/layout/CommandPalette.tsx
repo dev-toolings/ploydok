@@ -211,6 +211,7 @@ const NAV_ITEMS: Array<NavEntry> = [
     section: "Instance",
     icon: RiHardDriveLine,
     to: "/admin/disk",
+    orgPathSuffix: "disk",
     adminOnly: true,
   },
 ]

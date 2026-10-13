@@ -308,6 +308,7 @@ function OpsStrip({
   isLoading,
 }: OpsStripProps): React.JSX.Element {
   const { t } = useTranslation("monitoring")
+  if (isLoading) return <OpsStripSkeleton />
   const liveStyles = {
     live: {
       dot: "bg-emerald-500",
@@ -362,13 +363,13 @@ function OpsStrip({
           <div className="space-y-0.5">
             <p
               className={cn(
-                "font-mono text-[10px] tracking-wide uppercase",
+                "font-sans text-[10px] tracking-wide uppercase",
                 liveStyles.label
               )}
             >
               {t(liveStyles.textKey)}
             </p>
-            <p className="font-mono text-[11px] text-muted-foreground">
+            <p className="font-sans text-[11px] text-muted-foreground">
               {ageSec === null
                 ? t("noSignal")
                 : ageSec < 2
@@ -381,41 +382,66 @@ function OpsStrip({
         <dl className="grid grid-cols-2 divide-x divide-y divide-border sm:grid-cols-3 lg:grid-cols-5 lg:divide-y-0">
           <Metric
             label={t("runtimes")}
-            value={isLoading ? "—" : String(total)}
+            value={String(total)}
             icon={RiServerLine}
           />
           <Metric
             label={t("healthy")}
-            value={isLoading ? "—" : String(healthy)}
+            value={String(healthy)}
             icon={RiCheckboxCircleFill}
             accent={healthy > 0 ? "emerald" : "muted"}
           />
           <Metric
             label={t("degraded")}
-            value={isLoading ? "—" : String(warn)}
+            value={String(warn)}
             icon={RiAlarmWarningLine}
             accent={warn > 0 ? "amber" : "muted"}
           />
           <Metric
             label={t("down")}
-            value={isLoading ? "—" : String(down)}
+            value={String(down)}
             icon={RiCloseCircleFill}
             accent={down > 0 ? "destructive" : "muted"}
           />
           <Metric
             label={t("cpu")}
-            value={isLoading ? "—" : `${cpuSum.toFixed(1)}%`}
-            sub={
-              isLoading
-                ? undefined
-                : t("of", {
-                    used: formatBytes(memSum),
-                    total: formatBytes(memLimitSum),
-                  })
-            }
+            value={`${cpuSum.toFixed(1)}%`}
+            sub={t("of", {
+              used: formatBytes(memSum),
+              total: formatBytes(memLimitSum),
+            })}
             icon={RiCpuLine}
           />
         </dl>
+      </div>
+    </section>
+  )
+}
+
+function OpsStripSkeleton(): React.JSX.Element {
+  const { t } = useTranslation("monitoring")
+  return (
+    <section
+      aria-busy="true"
+      aria-label={t("fleet")}
+      className="overflow-hidden rounded-xl rounded-2xl bg-panel"
+    >
+      <div className="grid divide-y divide-border md:grid-cols-[auto_1fr] md:divide-x md:divide-y-0">
+        <div className="flex items-center gap-3 px-5 py-4">
+          <div className="size-2.5 shrink-0 rounded-full skeleton-surface" />
+          <div className="space-y-1.5">
+            <div className="h-2.5 w-16 rounded skeleton-surface" />
+            <div className="h-2.5 w-20 rounded skeleton-surface" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 divide-x divide-y divide-border sm:grid-cols-3 lg:grid-cols-5 lg:divide-y-0">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex min-w-0 flex-col gap-2 px-5 py-4">
+              <div className="h-2.5 w-16 rounded skeleton-surface" />
+              <div className="h-6 w-8 rounded skeleton-surface" />
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -442,7 +468,7 @@ function Metric({
   }[accent]
   return (
     <div className="flex min-w-0 flex-col gap-1 px-5 py-4">
-      <dt className="flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="flex items-center gap-1.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         <Icon className={cn("size-3", accentText)} />
         {label}
       </dt>
@@ -458,7 +484,7 @@ function Metric({
           {value}
         </span>
         {sub ? (
-          <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+          <span className="ml-1 font-sans text-[10px] text-muted-foreground">
             {sub}
           </span>
         ) : null}
@@ -580,7 +606,7 @@ function ChipGroup({
 }): React.JSX.Element {
   return (
     <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 p-0.5">
-      <span className="flex items-center gap-1 pr-1 pl-2 font-mono text-[9px] tracking-wide text-muted-foreground uppercase">
+      <span className="flex items-center gap-1 pr-1 pl-2 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
         <Icon className="size-3" />
         {label}
       </span>
@@ -627,7 +653,7 @@ function Chip({
     >
       {children}
       {count !== undefined ? (
-        <span className="font-mono text-[9px] opacity-60">{count}</span>
+        <span className="font-sans text-[9px] opacity-60">{count}</span>
       ) : null}
     </button>
   )
@@ -662,7 +688,7 @@ function InlineAlert({
     >
       <Icon className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-0.5">
-        <p className="font-mono text-[10px] tracking-wide uppercase opacity-80">
+        <p className="font-sans text-[10px] tracking-wide uppercase opacity-80">
           {code}
         </p>
         <p className="text-xs leading-5">{message}</p>

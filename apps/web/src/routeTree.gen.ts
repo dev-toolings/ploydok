@@ -35,6 +35,7 @@ import { Route as AuthedOrgsOrgSlugAuditRouteImport } from './routes/_authed/org
 import { Route as AuthedOrgsOrgSlugBrandingRouteImport } from './routes/_authed/orgs/$orgSlug/branding'
 import { Route as AuthedOrgsOrgSlugDashboardRouteImport } from './routes/_authed/orgs/$orgSlug/dashboard'
 import { Route as AuthedOrgsOrgSlugDeploymentsRouteImport } from './routes/_authed/orgs/$orgSlug/deployments'
+import { Route as AuthedOrgsOrgSlugDiskRouteImport } from './routes/_authed/orgs/$orgSlug/disk'
 import { Route as AuthedOrgsOrgSlugEventWebhooksRouteImport } from './routes/_authed/orgs/$orgSlug/event-webhooks'
 import { Route as AuthedOrgsOrgSlugMarketplaceRouteImport } from './routes/_authed/orgs/$orgSlug/marketplace'
 import { Route as AuthedOrgsOrgSlugMembersRouteImport } from './routes/_authed/orgs/$orgSlug/members'
@@ -206,6 +207,11 @@ const AuthedOrgsOrgSlugDeploymentsRoute =
     path: '/deployments',
     getParentRoute: () => AuthedOrgsOrgSlugRoute,
   } as any)
+const AuthedOrgsOrgSlugDiskRoute = AuthedOrgsOrgSlugDiskRouteImport.update({
+  id: '/disk',
+  path: '/disk',
+  getParentRoute: () => AuthedOrgsOrgSlugRoute,
+} as any)
 const AuthedOrgsOrgSlugEventWebhooksRoute =
   AuthedOrgsOrgSlugEventWebhooksRouteImport.update({
     id: '/event-webhooks',
@@ -451,6 +457,7 @@ export interface FileRoutesByFullPath {
   '/orgs/$orgSlug/branding': typeof AuthedOrgsOrgSlugBrandingRoute
   '/orgs/$orgSlug/dashboard': typeof AuthedOrgsOrgSlugDashboardRoute
   '/orgs/$orgSlug/deployments': typeof AuthedOrgsOrgSlugDeploymentsRoute
+  '/orgs/$orgSlug/disk': typeof AuthedOrgsOrgSlugDiskRoute
   '/orgs/$orgSlug/event-webhooks': typeof AuthedOrgsOrgSlugEventWebhooksRoute
   '/orgs/$orgSlug/marketplace': typeof AuthedOrgsOrgSlugMarketplaceRoute
   '/orgs/$orgSlug/members': typeof AuthedOrgsOrgSlugMembersRoute
@@ -512,6 +519,7 @@ export interface FileRoutesByTo {
   '/orgs/$orgSlug/branding': typeof AuthedOrgsOrgSlugBrandingRoute
   '/orgs/$orgSlug/dashboard': typeof AuthedOrgsOrgSlugDashboardRoute
   '/orgs/$orgSlug/deployments': typeof AuthedOrgsOrgSlugDeploymentsRoute
+  '/orgs/$orgSlug/disk': typeof AuthedOrgsOrgSlugDiskRoute
   '/orgs/$orgSlug/event-webhooks': typeof AuthedOrgsOrgSlugEventWebhooksRoute
   '/orgs/$orgSlug/marketplace': typeof AuthedOrgsOrgSlugMarketplaceRoute
   '/orgs/$orgSlug/members': typeof AuthedOrgsOrgSlugMembersRoute
@@ -576,6 +584,7 @@ export interface FileRoutesById {
   '/_authed/orgs/$orgSlug/branding': typeof AuthedOrgsOrgSlugBrandingRoute
   '/_authed/orgs/$orgSlug/dashboard': typeof AuthedOrgsOrgSlugDashboardRoute
   '/_authed/orgs/$orgSlug/deployments': typeof AuthedOrgsOrgSlugDeploymentsRoute
+  '/_authed/orgs/$orgSlug/disk': typeof AuthedOrgsOrgSlugDiskRoute
   '/_authed/orgs/$orgSlug/event-webhooks': typeof AuthedOrgsOrgSlugEventWebhooksRoute
   '/_authed/orgs/$orgSlug/marketplace': typeof AuthedOrgsOrgSlugMarketplaceRoute
   '/_authed/orgs/$orgSlug/members': typeof AuthedOrgsOrgSlugMembersRoute
@@ -641,6 +650,7 @@ export interface FileRouteTypes {
     | '/orgs/$orgSlug/branding'
     | '/orgs/$orgSlug/dashboard'
     | '/orgs/$orgSlug/deployments'
+    | '/orgs/$orgSlug/disk'
     | '/orgs/$orgSlug/event-webhooks'
     | '/orgs/$orgSlug/marketplace'
     | '/orgs/$orgSlug/members'
@@ -702,6 +712,7 @@ export interface FileRouteTypes {
     | '/orgs/$orgSlug/branding'
     | '/orgs/$orgSlug/dashboard'
     | '/orgs/$orgSlug/deployments'
+    | '/orgs/$orgSlug/disk'
     | '/orgs/$orgSlug/event-webhooks'
     | '/orgs/$orgSlug/marketplace'
     | '/orgs/$orgSlug/members'
@@ -765,6 +776,7 @@ export interface FileRouteTypes {
     | '/_authed/orgs/$orgSlug/branding'
     | '/_authed/orgs/$orgSlug/dashboard'
     | '/_authed/orgs/$orgSlug/deployments'
+    | '/_authed/orgs/$orgSlug/disk'
     | '/_authed/orgs/$orgSlug/event-webhooks'
     | '/_authed/orgs/$orgSlug/marketplace'
     | '/_authed/orgs/$orgSlug/members'
@@ -994,6 +1006,13 @@ declare module '@tanstack/react-router' {
       path: '/deployments'
       fullPath: '/orgs/$orgSlug/deployments'
       preLoaderRoute: typeof AuthedOrgsOrgSlugDeploymentsRouteImport
+      parentRoute: typeof AuthedOrgsOrgSlugRoute
+    }
+    '/_authed/orgs/$orgSlug/disk': {
+      id: '/_authed/orgs/$orgSlug/disk'
+      path: '/disk'
+      fullPath: '/orgs/$orgSlug/disk'
+      preLoaderRoute: typeof AuthedOrgsOrgSlugDiskRouteImport
       parentRoute: typeof AuthedOrgsOrgSlugRoute
     }
     '/_authed/orgs/$orgSlug/event-webhooks': {
@@ -1320,6 +1339,7 @@ interface AuthedOrgsOrgSlugRouteChildren {
   AuthedOrgsOrgSlugBrandingRoute: typeof AuthedOrgsOrgSlugBrandingRoute
   AuthedOrgsOrgSlugDashboardRoute: typeof AuthedOrgsOrgSlugDashboardRoute
   AuthedOrgsOrgSlugDeploymentsRoute: typeof AuthedOrgsOrgSlugDeploymentsRoute
+  AuthedOrgsOrgSlugDiskRoute: typeof AuthedOrgsOrgSlugDiskRoute
   AuthedOrgsOrgSlugEventWebhooksRoute: typeof AuthedOrgsOrgSlugEventWebhooksRoute
   AuthedOrgsOrgSlugMarketplaceRoute: typeof AuthedOrgsOrgSlugMarketplaceRoute
   AuthedOrgsOrgSlugMembersRoute: typeof AuthedOrgsOrgSlugMembersRoute
@@ -1342,6 +1362,7 @@ const AuthedOrgsOrgSlugRouteChildren: AuthedOrgsOrgSlugRouteChildren = {
   AuthedOrgsOrgSlugBrandingRoute: AuthedOrgsOrgSlugBrandingRoute,
   AuthedOrgsOrgSlugDashboardRoute: AuthedOrgsOrgSlugDashboardRoute,
   AuthedOrgsOrgSlugDeploymentsRoute: AuthedOrgsOrgSlugDeploymentsRoute,
+  AuthedOrgsOrgSlugDiskRoute: AuthedOrgsOrgSlugDiskRoute,
   AuthedOrgsOrgSlugEventWebhooksRoute: AuthedOrgsOrgSlugEventWebhooksRoute,
   AuthedOrgsOrgSlugMarketplaceRoute: AuthedOrgsOrgSlugMarketplaceRoute,
   AuthedOrgsOrgSlugMembersRoute: AuthedOrgsOrgSlugMembersRoute,

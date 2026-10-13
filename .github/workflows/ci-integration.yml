@@ -189,7 +189,7 @@ jobs:
         run: |
           API_BASE=http://127.0.0.1:4000 \
           CADDY_ADMIN=http://127.0.0.1:2020 \
-          CADDY_HTTP=http://127.0.0.1:8180 \
+          CADDY_HTTP=http://127.0.0.1:8181 \
           bash scripts/e2e-spawn-nginx.sh
 
       # -----------------------------------------------------------------------

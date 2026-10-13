@@ -3,6 +3,7 @@ import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { cn } from "@workspace/ui/lib/utils"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,7 +40,10 @@ import type {
 type CredentialsStatus = GitHubAppCredentialsStatus["status"] | undefined
 
 const responsiveDialogActionClassName =
-  "h-auto min-h-[38px] w-full whitespace-normal py-2 sm:h-[38px] sm:w-auto sm:whitespace-nowrap sm:py-0"
+  "h-auto min-h-11 min-w-0 w-full max-w-full whitespace-normal py-2 text-center sm:w-auto"
+
+const recoveryDialogActionClassName =
+  "h-auto min-h-11 min-w-0 w-full max-w-full whitespace-normal py-2 text-center"
 
 const INSTALL_ERROR_KEYS = [
   "admin_required",
@@ -70,17 +74,15 @@ export function canLoadGitHubInstallations(
 
 export function GitHubCredentialsRecovery({
   unreadable,
-  onImported,
 }: {
   unreadable: boolean
-  onImported: () => void
 }): React.JSX.Element | null {
   const { t } = useTranslation("settings")
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [dialogDismissed, setDialogDismissed] = React.useState(false)
-  const [reconnecting, setReconnecting] = React.useState(false)
   const [forgetDialogOpen, setForgetDialogOpen] = React.useState(false)
   const forgetLocalApp = useForgetLocalGitHubApp()
+  const reconnectApp = useCreateGitHubAppFlow("/settings/git-providers/github")
 
   React.useEffect(() => {
     if (
@@ -94,7 +96,6 @@ export function GitHubCredentialsRecovery({
     if (!unreadable) {
       setDialogOpen(false)
       setDialogDismissed(false)
-      setReconnecting(false)
       setForgetDialogOpen(false)
     }
   }, [dialogDismissed, unreadable])
@@ -124,50 +125,44 @@ export function GitHubCredentialsRecovery({
             {t("github.credentialsUnreadableHint")}
           </p>
         </div>
-        {!reconnecting && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setReconnecting(true)}
-            >
-              {t("github.reconnectApp")}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => {
-                forgetLocalApp.reset()
-                setForgetDialogOpen(true)
-              }}
-            >
-              {t("github.resetLocal")}
-            </Button>
-          </div>
-        )}
-        {reconnecting && (
-          <GitHubAppSetupCard
-            mode="reconnect"
-            isPending={false}
-            onCreate={() => undefined}
-            onImported={() => {
-              setReconnecting(false)
-              onImported()
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            loading={reconnectApp.isPending}
+            onClick={() => void reconnectApp.start()}
+          >
+            {t("github.reconnectApp")}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={reconnectApp.isPending}
+            onClick={() => {
+              forgetLocalApp.reset()
+              setForgetDialogOpen(true)
             }}
-            error={null}
-          />
+          >
+            {t("github.resetLocal")}
+          </Button>
+        </div>
+        {reconnectApp.error && (
+          <p className="text-sm text-destructive" role="alert">
+            {reconnectApp.error}
+          </p>
         )}
       </div>
 
       <AlertDialog
         open={dialogOpen}
         onOpenChange={(open) => {
+          if (reconnectApp.isPending) return
           setDialogOpen(open)
           if (!open) setDialogDismissed(true)
         }}
       >
-        <AlertDialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl">
-          <AlertDialogHeader>
+        <AlertDialogContent className="@container/github-recovery max-w-2xl sm:max-w-2xl">
+          <AlertDialogHeader className="min-w-0 place-items-start text-left">
             <AlertDialogTitle>
               {t("github.credentialsNeedAttention")}
             </AlertDialogTitle>
@@ -175,13 +170,28 @@ export function GitHubCredentialsRecovery({
               {t("github.credentialsNeedAttentionHint")}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className={responsiveDialogActionClassName}>
+          {reconnectApp.error && (
+            <p className="text-sm text-destructive" role="alert">
+              {reconnectApp.error}
+            </p>
+          )}
+          <AlertDialogFooter className="grid grid-cols-1 @min-[28rem]/github-recovery:grid-cols-2 @min-[38rem]/github-recovery:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)]">
+            <AlertDialogCancel
+              disabled={reconnectApp.isPending}
+              className={cn(
+                recoveryDialogActionClassName,
+                "col-start-1 row-start-3 @min-[28rem]/github-recovery:row-start-2 @min-[38rem]/github-recovery:row-start-1"
+              )}
+            >
               {t("github.later")}
             </AlertDialogCancel>
             <Button
-              className={responsiveDialogActionClassName}
+              className={cn(
+                recoveryDialogActionClassName,
+                "row-start-2 @min-[28rem]/github-recovery:col-start-2 @min-[38rem]/github-recovery:row-start-1"
+              )}
               variant="destructive"
+              disabled={reconnectApp.isPending}
               onClick={() => {
                 setDialogOpen(false)
                 setDialogDismissed(true)
@@ -191,15 +201,16 @@ export function GitHubCredentialsRecovery({
             >
               {t("github.resetLocal")}
             </Button>
-            <AlertDialogAction
-              className={responsiveDialogActionClassName}
-              onClick={() => {
-                setDialogDismissed(true)
-                setReconnecting(true)
-              }}
+            <Button
+              className={cn(
+                recoveryDialogActionClassName,
+                "col-start-1 row-start-1 @min-[28rem]/github-recovery:col-span-2 @min-[38rem]/github-recovery:col-span-1 @min-[38rem]/github-recovery:col-start-3"
+              )}
+              loading={reconnectApp.isPending}
+              onClick={() => void reconnectApp.start()}
             >
               {t("github.reconnectApp")}
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -207,10 +218,15 @@ export function GitHubCredentialsRecovery({
       <AlertDialog
         open={forgetDialogOpen}
         onOpenChange={(open) => {
-          if (!forgetLocalApp.isPending) setForgetDialogOpen(open)
+          if (forgetLocalApp.isPending) return
+          setForgetDialogOpen(open)
+          if (!open) {
+            setDialogDismissed(false)
+            setDialogOpen(true)
+          }
         }}
       >
-        <AlertDialogContent className="max-w-[calc(100vw-2rem)]">
+        <AlertDialogContent className="max-w-lg sm:max-w-lg">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("github.resetLocalConfirm")}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -339,10 +355,7 @@ export function GitHubPanel(): React.JSX.Element {
         )}
       </div>
 
-      <GitHubCredentialsRecovery
-        unreadable={credentialsUnreadable}
-        onImported={() => setAppSuccess(true)}
-      />
+      <GitHubCredentialsRecovery unreadable={credentialsUnreadable} />
 
       {appConfig?.configured && credentialsStatus.isError && (
         <p className="text-sm text-destructive" role="alert">

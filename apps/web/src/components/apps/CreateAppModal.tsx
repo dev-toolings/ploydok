@@ -17,6 +17,12 @@ import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Input } from "@workspace/ui/components/input"
 import { Switch } from "@workspace/ui/components/switch"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@workspace/ui/components/tooltip"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -1317,17 +1323,6 @@ function SourceStep({
           onChange={onSourceChange}
           gitLabAvailability={gitLabAvailability}
         />
-        {!gitLabAvailability.enabled && gitLabAvailability.reason ? (
-          <p className="text-xs text-muted-foreground" role="status">
-            {gitLabAvailability.reason}{" "}
-            <a
-              className="text-primary underline-offset-4 hover:underline"
-              href="/settings/git-providers/gitlab"
-            >
-              {t("create.openGitLabSettings")}
-            </a>
-          </p>
-        ) : null}
       </section>
 
       {form.source === "github" && (
@@ -1395,6 +1390,7 @@ function ProviderTabs({
   gitLabAvailability: { enabled: boolean; reason: string | null }
 }): React.JSX.Element {
   const { t } = useTranslation("apps")
+  const [unavailableHintOpen, setUnavailableHintOpen] = React.useState(false)
   const tabs: Array<{
     id: SourceKind
     label: string
@@ -1428,65 +1424,83 @@ function ProviderTabs({
   ]
 
   return (
-    <div
-      role="tablist"
-      aria-label={t("create.source")}
-      className="grid gap-2 sm:grid-cols-3"
-    >
-      {tabs.map((tab) => {
-        const active = source === tab.id && !tab.disabled
-        const disabled = Boolean(tab.disabled)
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            aria-disabled={disabled}
-            disabled={disabled}
-            onClick={() => {
-              if (!disabled) onChange(tab.id)
-            }}
-            title={
-              disabled ? (gitLabAvailability.reason ?? undefined) : undefined
-            }
-            className={cn(
-              "group relative flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
-              disabled
-                ? "cursor-not-allowed border-border bg-muted/30 opacity-60"
-                : active
-                  ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20"
-                  : "border-border bg-card hover:border-primary/30 hover:bg-muted/40"
-            )}
-          >
-            <span
+    <TooltipProvider delayDuration={200}>
+      <div
+        role="tablist"
+        aria-label={t("create.source")}
+        className="grid gap-2 sm:grid-cols-3"
+      >
+        {tabs.map((tab) => {
+          const active = source === tab.id && !tab.disabled
+          const disabled = Boolean(tab.disabled)
+          const button = (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-disabled={disabled}
+              onFocus={() => {
+                if (disabled) setUnavailableHintOpen(true)
+              }}
+              onClick={(event) => {
+                if (disabled) {
+                  event.preventDefault()
+                  setUnavailableHintOpen(true)
+                } else onChange(tab.id)
+              }}
               className={cn(
-                "flex size-9 shrink-0 items-center justify-center rounded-md border",
-                active
-                  ? "border-primary/30 bg-background"
-                  : "border-border bg-muted/40"
+                "group relative flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
+                disabled
+                  ? "cursor-not-allowed border-border bg-muted/30 opacity-60"
+                  : active
+                    ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20"
+                    : "border-border bg-card hover:border-primary/30 hover:bg-muted/40"
               )}
             >
-              {tab.icon}
-            </span>
-            <span className="flex min-w-0 flex-col">
-              <span className="text-sm leading-none font-medium">
-                {tab.label}
+              <span
+                className={cn(
+                  "flex size-9 shrink-0 items-center justify-center rounded-md border",
+                  active
+                    ? "border-primary/30 bg-background"
+                    : "border-border bg-muted/40"
+                )}
+              >
+                {tab.icon}
               </span>
-              <span className="mt-1 truncate text-[11px] text-muted-foreground">
-                {tab.hint}
+              <span className="flex min-w-0 flex-col">
+                <span className="text-sm leading-none font-medium">
+                  {tab.label}
+                </span>
+                <span className="mt-1 truncate text-[11px] text-muted-foreground">
+                  {tab.hint}
+                </span>
               </span>
-            </span>
-            <span className="ml-auto shrink-0 rounded-full border border-border bg-background px-1.5 py-0.5 font-mono text-[9px] tracking-wide text-muted-foreground uppercase">
-              {tab.maturity}
-            </span>
-            {active ? (
-              <RiCheckLine className="size-4 shrink-0 text-primary" />
-            ) : null}
-          </button>
-        )
-      })}
-    </div>
+              <span className="ml-auto shrink-0 rounded-full border border-border bg-background px-1.5 py-0.5 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
+                {tab.maturity}
+              </span>
+              {active ? (
+                <RiCheckLine className="size-4 shrink-0 text-primary" />
+              ) : null}
+            </button>
+          )
+          return disabled && gitLabAvailability.reason ? (
+            <Tooltip
+              key={tab.id}
+              open={unavailableHintOpen}
+              onOpenChange={setUnavailableHintOpen}
+            >
+              <TooltipTrigger asChild>{button}</TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={6}>
+                {gitLabAvailability.reason}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            button
+          )
+        })}
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -2219,7 +2233,7 @@ function DetectedPanel({
   return (
     <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
       <div className="flex items-center gap-2">
-        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wide text-primary uppercase">
+        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 font-sans text-[9px] font-semibold tracking-wide text-primary uppercase">
           {labelByConfidence[classification.confidence]}
         </span>
         <span className="text-sm font-medium">
@@ -2271,7 +2285,7 @@ function LaravelRuntimePanel({
             {t("create.laravelSqliteHint")}
           </p>
         </div>
-        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wide text-primary uppercase">
+        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-sans text-[9px] font-semibold tracking-wide text-primary uppercase">
           SQLite
         </span>
       </div>
@@ -2600,9 +2614,9 @@ function DatabaseStep({
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectItem value="small">Small</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="large">Large</SelectItem>
+                  <SelectItem value="small">{t("plan.small")}</SelectItem>
+                  <SelectItem value="medium">{t("plan.medium")}</SelectItem>
+                  <SelectItem value="large">{t("plan.large")}</SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
@@ -3148,7 +3162,7 @@ function BuildMethodCard({
       <div className="flex w-full items-center justify-between">
         <span className="text-sm font-medium">{label}</span>
         {detected && (
-          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-medium tracking-wide text-primary uppercase">
+          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-sans text-[9px] font-medium tracking-wide text-primary uppercase">
             {t("create.detected")}
           </span>
         )}

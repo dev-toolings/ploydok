@@ -247,7 +247,7 @@ function TotpScanView({
         </div>
 
         <div className="w-full space-y-1">
-          <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("totp.manualEntry")}
           </p>
           <div className="flex items-center gap-2">
@@ -258,7 +258,7 @@ function TotpScanView({
               variant="outline"
               size="sm"
               onClick={onCopySecret}
-              className="shrink-0 font-mono text-[11px]"
+              className="shrink-0 font-sans text-[11px]"
             >
               {copied ? t("totp.copied") : t("common:copy")}
             </Button>
@@ -268,7 +268,7 @@ function TotpScanView({
         <div className="w-full space-y-2">
           <label
             htmlFor="totp-code"
-            className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase"
+            className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase"
           >
             {t("totp.verificationCode")}
           </label>

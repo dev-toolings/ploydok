@@ -137,7 +137,7 @@ function SecurityPosturePage(): React.JSX.Element {
               <RiShieldKeyholeLine className="size-5" />
             </div>
             <div className="space-y-1">
-              <p className="font-mono text-[10px] font-light tracking-wide text-muted-foreground uppercase">
+              <p className="font-sans text-[10px] font-light tracking-wide text-muted-foreground uppercase">
                 {t("posture.label")}
               </p>
               <h2 className="font-heading text-lg leading-tight font-medium">
@@ -196,7 +196,7 @@ function PostureRow({
           <p className="text-sm font-medium">{signal.label}</p>
           <p
             className={cn(
-              "font-mono text-[10px] tracking-wide uppercase",
+              "font-sans text-[10px] tracking-wide uppercase",
               text
             )}
           >

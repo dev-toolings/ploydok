@@ -72,56 +72,101 @@ function useTrackAppRestart(appId: string): () => void {
 const DELETE_APP_TOAST_TIMEOUT_MS = 10 * 60 * 1000
 const STOP_APP_TOAST_TIMEOUT_MS = 3 * 60 * 1000
 
-function useTrackAppDelete(appId: string): () => void {
+function useTrackAppDelete(appId: string): (jobId: string) => void {
   const subscribe = useEventsSubscribeFn()
-  return React.useCallback(() => {
-    const toastId = `delete-app:${appId}`
+  const qc = useQueryClient()
+  return React.useCallback(
+    (jobId: string) => {
+      const toastId = `delete-app:${appId}`
 
-    if (!subscribe || typeof window === "undefined") {
-      toast.loading(i18n.t("apps:toasts.deleting"), { id: toastId })
-      return
-    }
-
-    let cleanup = () => {}
-    const completion = new Promise<string>((resolve, reject) => {
-      let unsubDeleted: (() => void) | null = null
-      let unsubFailed: (() => void) | null = null
-      const timer = window.setTimeout(() => {
-        cleanup()
-        reject(new Error(i18n.t("apps:toasts.deleteStillRunning")))
-      }, DELETE_APP_TOAST_TIMEOUT_MS)
-
-      cleanup = () => {
-        window.clearTimeout(timer)
-        unsubDeleted?.()
-        unsubDeleted = null
-        unsubFailed?.()
-        unsubFailed = null
+      if (typeof window === "undefined") {
+        toast.loading(i18n.t("apps:toasts.deleting"), { id: toastId })
+        return
       }
 
-      unsubDeleted = subscribe("app.deleted", (data) => {
-        const evt = data as { appId?: string; message?: string }
-        if (evt.appId !== appId) return
-        cleanup()
-        resolve(evt.message ?? i18n.t("apps:toasts.deleted"))
+      let cleanup = () => {}
+      const completion = new Promise<string>((resolve, reject) => {
+        let unsubDeleted: (() => void) | null = null
+        let unsubFailed: (() => void) | null = null
+        let pollTimer: number | undefined
+        let finished = false
+        const timer = window.setTimeout(() => {
+          cleanup()
+          reject(new Error(i18n.t("apps:toasts.deleteStillRunning")))
+        }, DELETE_APP_TOAST_TIMEOUT_MS)
+
+        cleanup = () => {
+          finished = true
+          window.clearTimeout(timer)
+          window.clearTimeout(pollTimer)
+          unsubDeleted?.()
+          unsubDeleted = null
+          unsubFailed?.()
+          unsubFailed = null
+        }
+
+        unsubDeleted =
+          subscribe?.("app.deleted", (data) => {
+            const evt = data as { appId?: string; message?: string }
+            if (evt.appId !== appId) return
+            cleanup()
+            resolve(evt.message ?? i18n.t("apps:toasts.deleted"))
+          }) ?? null
+
+        unsubFailed =
+          subscribe?.("app.delete.failed", (data) => {
+            const evt = data as { appId?: string; message?: string }
+            if (evt.appId !== appId) return
+            cleanup()
+            reject(new Error(evt.message ?? i18n.t("apps:toasts.deleteFailed")))
+          }) ?? null
+
+        const reconcile = async (): Promise<void> => {
+          try {
+            const { job } = await apiFetch<{
+              job: { status: string; errorMessage: string | null }
+            }>(`/apps/deletion-jobs/${encodeURIComponent(jobId)}`)
+            if (finished) return
+            if (job.status === "succeeded") {
+              cleanup()
+              invalidateGetCache()
+              removeAppFromListCaches(qc, appId)
+              qc.removeQueries({ queryKey: ["apps", appId] })
+              resolve(i18n.t("apps:toasts.deleted"))
+              return
+            }
+            if (job.status === "failed" || job.status === "cancelled") {
+              cleanup()
+              invalidateGetCache()
+              void qc.invalidateQueries({ queryKey: ["apps"] })
+              reject(
+                new Error(
+                  job.errorMessage ?? i18n.t("apps:toasts.deleteFailed")
+                )
+              )
+              return
+            }
+          } catch {
+            // A temporary network failure is not evidence of job completion.
+          }
+          if (!finished)
+            pollTimer = window.setTimeout(() => void reconcile(), 2_000)
+        }
+        void reconcile()
       })
 
-      unsubFailed = subscribe("app.delete.failed", (data) => {
-        const evt = data as { appId?: string; message?: string }
-        if (evt.appId !== appId) return
-        cleanup()
-        reject(new Error(evt.message ?? i18n.t("apps:toasts.deleteFailed")))
+      toast.promise(completion, {
+        id: toastId,
+        loading: i18n.t("apps:toasts.deleting"),
+        success: (message) => message,
+        error: (err) =>
+          err instanceof Error
+            ? err.message
+            : i18n.t("apps:toasts.deleteFailed"),
       })
-    })
-
-    toast.promise(completion, {
-      id: toastId,
-      loading: i18n.t("apps:toasts.deleting"),
-      success: (message) => message,
-      error: (err) =>
-        err instanceof Error ? err.message : i18n.t("apps:toasts.deleteFailed"),
-    })
-  }, [appId, subscribe])
+    },
+    [appId, subscribe, qc]
+  )
 }
 
 function useTrackAppStop(appId: string): () => void {
@@ -470,24 +515,25 @@ export function useDeleteApp(appId: string) {
     onMutate: () => {
       const listSnapshot = snapshotAppListCaches(qc)
       markAppDeletingInListCaches(qc, appId)
-      trackDelete()
+      toast.loading(i18n.t("apps:toasts.deleting"), {
+        id: `delete-app:${appId}`,
+      })
       return { listSnapshot }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       // Bust apiFetch's module-level GET cache for the apps list — without
       // this, the in-memory Promise from a previous /apps?organizationId=…
       // fetch is replayed and the deleted app reappears until hard refresh.
       // Note: the cascade is async on the server (job queue). Keep the app in
-      // the list and keep the promise toast loading until the SSE app.deleted
-      // / app.delete.failed confirmation.
+      // the list until the persisted job status or SSE confirms completion.
+      trackDelete(result.jobId)
       invalidateGetCache()
       void qc.invalidateQueries({ queryKey: ["apps"] })
     },
     onError: (error, _vars, context) => {
       toast.dismiss(`delete-app:${appId}`)
       notifyMutationError(error, i18n.t("apps:toasts.deleteFailed"))
-      const ctx =
-        context as { listSnapshot?: AppListCacheSnapshot } | undefined
+      const ctx = context as { listSnapshot?: AppListCacheSnapshot } | undefined
       restoreAppListCaches(qc, ctx?.listSnapshot)
       void qc.invalidateQueries({ queryKey: ["apps"] })
     },

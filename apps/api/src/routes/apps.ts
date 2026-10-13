@@ -1714,6 +1714,38 @@ export function createAppsRouter(db: Db): Hono {
       .transform((v) => (v === undefined ? undefined : v === "true")),
   })
 
+  router.get("/deletion-jobs/:jobId", appsRead, async (c) => {
+    const user = getUser(c)
+    const [job] = await db
+      .select({
+        id: app_delete_jobs.id,
+        appId: app_delete_jobs.app_id,
+        status: app_delete_jobs.status,
+        errorMessage: app_delete_jobs.error_message,
+        finishedAt: app_delete_jobs.finished_at,
+      })
+      .from(app_delete_jobs)
+      .where(
+        and(
+          eq(app_delete_jobs.id, c.req.param("jobId")!),
+          eq(app_delete_jobs.requested_by_user_id, user.id)
+        )
+      )
+      .limit(1)
+    if (!job) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "Deletion job not found" } },
+        404
+      )
+    }
+    return c.json({
+      job: {
+        ...job,
+        errorMessage: env.NODE_ENV === "prod" ? null : job.errorMessage,
+      },
+    })
+  })
+
   router.delete("/:id", appsWrite, ownerOnly, sf, async (c) => {
     const user = getUser(c)
     const appId = c.req.param("id")!

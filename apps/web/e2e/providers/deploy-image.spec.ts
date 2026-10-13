@@ -96,7 +96,7 @@ test.describe("Sprint 3bis — deploy from Docker image", () => {
 
     // Hit Caddy on loopback with the app's Host header — keeps the assertion
     // independent of whatever domain base the host is configured with.
-    const resp = await fetch(`http://127.0.0.1:8180/`, {
+    const resp = await fetch(`http://127.0.0.1:8181/`, {
       headers: { host: running.domain! },
       redirect: "manual",
     })
