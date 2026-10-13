@@ -44,14 +44,6 @@ import {
 } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
-import {
   Field,
   FieldContent,
   FieldDescription,
@@ -76,6 +68,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
+import { useTranslation } from "react-i18next"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
 import { resolveDisplayedAppState } from "../../lib/app-runtime"
 import { useApp } from "../../lib/apps"
 import { useLogout, useMe } from "../../lib/auth"
@@ -95,7 +96,6 @@ import {
   useCurrentOrganizationSlug,
   useOrganizations,
 } from "../../lib/organizations"
-import { useTranslation } from "react-i18next"
 import { AppStatusBadge } from "../apps/AppStatusBadge"
 import { useTheme } from "../theme/ThemeToggle"
 import { CommandBar } from "./CommandBar"
