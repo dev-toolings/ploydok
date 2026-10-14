@@ -43,6 +43,7 @@ const SERVICE_NAME_RE = /^ploydok-app-[a-z0-9][a-z0-9-]{0,90}$/
 
 export type PlannedSwarmService = {
   name: string
+  composeName: string
   image: string
   env: Record<string, string>
   labels: Record<string, string>
@@ -130,6 +131,7 @@ export function planComposeSwarmDeploy(input: {
       container.exposedPort ?? container.ports[0]?.containerPort ?? 0
     const planned: PlannedSwarmService = {
       name,
+      composeName: container.composeName ?? "web",
       image: container.image,
       env: { ...container.env, ...input.extraEnv },
       labels: {

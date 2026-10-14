@@ -66,7 +66,7 @@ function numericArg(varName: string, defaultVal: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal
 }
 
-function generateDomain(projectSlug: string, serverIp?: string): string {
+export function generateDomain(projectSlug: string, serverIp?: string): string {
   const hash = randomBytesHex(3)
   const slugIp = serverIp ? serverIp.replaceAll(".", "-") : ""
   return `${projectSlug}-${hash}${slugIp === "" ? "" : `-${slugIp}`}.traefik.me`

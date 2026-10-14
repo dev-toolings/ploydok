@@ -5,6 +5,7 @@
 // vérité pour les routes applicatives : on re-pousse toutes les routes des
 // apps `running`/`restarting` vers l'Admin API Caddy. Idempotent via
 // `setUpstream` (PATCH si route existe, POST sinon).
+import { swarmComposeServiceName } from "../worker/compose-swarm.js"
 import { and, eq, inArray, isNotNull } from "drizzle-orm"
 import {
   apps as appsTable,
@@ -53,6 +54,8 @@ export interface ServiceForReconcile {
   container_ids: string[] | null
   swarm_service_names: string[] | null
   runtime_mode?: "docker" | "swarm" | null
+  entrypoint_service_name?: string | null
+  entrypoint_port?: number | null
 }
 
 export interface DatabaseProxyForReconcile {
@@ -105,6 +108,8 @@ export async function fetchRunningServicesForCaddy(
       container_ids: servicesTable.container_ids,
       swarm_service_names: servicesTable.swarm_service_names,
       runtime_mode: servicesTable.runtime_mode,
+      entrypoint_service_name: servicesTable.entrypoint_service_name,
+      entrypoint_port: servicesTable.entrypoint_port,
     })
     .from(servicesTable)
     .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
@@ -187,6 +192,22 @@ export async function reconcileServiceRoutes(opts: {
       const runtimeMode =
         service.runtime_mode ??
         (swarmServiceNames.length > 0 ? "swarm" : "docker")
+      // The declared route is sufficient without parsing encrypted Compose
+      // scalars (a generated port may itself have been vaulted).
+      if (service.entrypoint_service_name != null && service.entrypoint_port != null) {
+        const name = runtimeMode === "swarm"
+          ? swarmComposeServiceName(`svc-${service.id}-${service.slug}`.slice(0, 40), service.entrypoint_service_name)
+          : `ploydok-svc-${service.id}-${service.entrypoint_service_name}`
+        if (runtimeMode === "swarm" && !swarmServiceNames.includes(name)) {
+          throw new Error(`Service ${service.id} declared entrypoint is not running`)
+        }
+        await upsertServiceRoute(opts.caddy, {
+          serviceId: service.id, domain: service.domain, containers: [],
+          entrypoint: { name, port: service.entrypoint_port },
+        })
+        result.synced++
+        continue
+      }
       const containers = composeToContainers({
         compose: service.compose_raw,
         runtime: runtimeMode,

@@ -18,6 +18,8 @@ const mockInsertService = mock(
     compose_raw: values["compose_raw"],
     generated_env: values["generated_env"],
     domain: values["domain"],
+    entrypoint_service_name: values["entrypoint_service_name"],
+    entrypoint_port: values["entrypoint_port"],
     container_ids: [],
     created_at: new Date(),
     updated_at: new Date(),
@@ -267,7 +269,7 @@ describe("installFromTemplate", () => {
       templateId: "pocketbase",
       templateVersion: "0.22.0",
       name: "My PB",
-      // compose with ${domain} DSL + a port so the entrypoint heuristic succeeds
+      // compose with ${domain} DSL + a port so the legacy route can resolve it
       compose:
         'services:\n  app:\n    image: pocketbase:latest\n    expose: [8080]\n    environment:\n      DOMAIN: ${domain}\n',
     })
@@ -544,4 +546,19 @@ it("selects Docker mode for an explicit host IP before durable acceptance", asyn
     runtime_mode: "docker",
   });
   expect((agent.containerCreate as any).mock.calls).toHaveLength(0);
+});
+
+it("persists the template declared entrypoint instead of the first exposed service", async () => {
+  const db = {
+    select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "proj-1" }] }) }) }),
+    transaction: async (fn: (tx: unknown) => unknown) => fn(db),
+  } as unknown as OrchestratorDeps["db"];
+  const row = await installFromTemplate({ db, agent: makeAgent() }, "user-1", {
+    projectId: "proj-1", templateId: "n8n", templateVersion: "1", name: "N8N",
+    compose: 'services:\n  sidecar:\n    image: nginx\n    expose: [80]\n  n8n:\n    image: n8nio/n8n\n',
+    templateToml: '[variables]\nmain_domain = "\${domain}"\n[[config.domains]]\nserviceName = "n8n"\nport = 5678\nhost = "\${main_domain}"',
+  });
+  expect(row.entrypoint_service_name).toBe("n8n");
+  expect(row.entrypoint_port).toBe(5678);
+  expect(row.domain).toMatch(/^my-pb-/);
 });

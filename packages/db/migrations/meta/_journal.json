@@ -575,6 +575,13 @@
       "when": 1791976256000,
       "tag": "0082_service_runtime_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1791980773550,
+      "tag": "0083_service_declared_entrypoint",
+      "breakpoints": true
     }
   ]
 }

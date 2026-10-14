@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { pgTable, text, timestamp, jsonb, boolean } from "drizzle-orm/pg-core"
+import { pgTable, text, timestamp, jsonb, boolean, integer } from "drizzle-orm/pg-core"
 import { projects } from "./projects"
 
 export const services = pgTable("services", {
@@ -21,6 +21,8 @@ export const services = pgTable("services", {
   generated_env: jsonb("generated_env").notNull().default({}),
   secrets_encrypted: boolean("secrets_encrypted").notNull().default(false),
   domain: text("domain"),
+  entrypoint_service_name: text("entrypoint_service_name"),
+  entrypoint_port: integer("entrypoint_port"),
   container_ids: text("container_ids").array(),
   swarm_service_names: text("swarm_service_names").array(),
   created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
