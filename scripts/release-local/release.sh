@@ -120,7 +120,8 @@ for image in "${images[@]}"; do
       const fs = await import("node:fs");
       if (!fs.existsSync("/app/packages/db/migrations/meta/_journal.json")) throw Error("missing migrations");
       if (fs.readdirSync("/app/node_modules/.bun").some(n => n.startsWith("esbuild@") || n.startsWith("@esbuild+"))) throw Error("esbuild shipped");
-      console.log("API runtime imports and migrations PASS");'
+      console.log("API runtime imports and migrations PASS");
+      process.exit(0);'
   fi
 done
 if ((push)); then
