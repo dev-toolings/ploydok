@@ -38,8 +38,11 @@ bun run typecheck && bun run lint && bun test && bun run check:spdx
 
 ## Règles dures
 
+- **Jamais** de commit sur `main` ni directement sur `develop` : une branche
+  dédiée depuis `develop` (`<type>/DEV-<n>-<slug>` ou `<type>/<slug>`),
+  fusionnée en `--no-ff` dans `develop`. Détail : `AGENTS.md` § Git Workflow.
 - **Jamais** `git push` sans autorisation explicite utilisateur.
-- **Jamais** push sur `main` en force. Pour n'importe quelle branche : demander.
+- **Jamais** de force-push. `main` ne reçoit `develop` que sur demande de release.
 - **Jamais** skip hooks (`--no-verify`, `--no-gpg-sign`) — investiguer la cause du fail.
 - **Jamais** amender un commit déjà poussé.
 - **Jamais** `git add -A` / `git add .` — lister les fichiers (risque de commiter `.env.local`, `test-results/`, dumps Postgres).
@@ -50,4 +53,6 @@ bun run typecheck && bun run lint && bun test && bun run check:spdx
 - Description : `## Summary` + `## Test plan` (checklist).
 - Référencer l'item actif de `PRD-PLAN.md` ou l'issue correspondante quand le
   changement appartient au chantier de production.
-- CI doit être verte avant review : lint + typecheck + test + spdx + dco.
+- Cible : `develop`. La CI ne tourne pas encore sur `develop` : joindre au
+  `## Test plan` les validations locales réellement exécutées.
+- Sur `main` (release), la CI doit être verte : lint + typecheck + test + spdx + dco.
