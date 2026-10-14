@@ -3,6 +3,51 @@
 import i18n from "../i18n"
 import { apiBaseUrl } from "./base"
 
+export interface ApiRequestContext {
+  method: string
+  url: string
+  requestId?: string
+}
+
+function diagnosticUrl(value: string): string {
+  try {
+    const url = new URL(value, "http://localhost")
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return value.split(/[?#]/)[0]!.replace(/\/\/[^/]*@/, "//")
+  }
+}
+
+export function apiErrorMessage(
+  status: number,
+  code: string,
+  message: string,
+  request: ApiRequestContext
+): string {
+  const key = `errors:codes.${code}`
+  const publicMessage =
+    status >= 500
+      ? i18n.t("errors:unexpected")
+      : i18n.exists(key)
+        ? i18n.t(key)
+        : message || i18n.t("errors:unexpected")
+  if (!import.meta.env?.DEV) {
+    return status >= 500 && request.requestId
+      ? `${publicMessage} ${i18n.t("errors:requestReference", { id: request.requestId })}`
+      : publicMessage
+  }
+  const diagnostic = i18n.t("errors:httpDiagnostic", {
+    method: request.method,
+    url: diagnosticUrl(request.url),
+    status,
+    code,
+    message,
+  })
+  return request.requestId
+    ? `${diagnostic} ${i18n.t("errors:requestReference", { id: request.requestId })}`
+    : diagnostic
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -13,7 +58,8 @@ export class ApiError extends Error {
      * (`fieldErrors` de @ploydok/shared). Permet à un formulaire d'annoter le
      * champ fautif au lieu de n'afficher qu'un bandeau global.
      */
-    public fields?: Record<string, string>
+    public fields?: Record<string, string>,
+    public request?: ApiRequestContext
   ) {
     super(message)
     this.name = "ApiError"
@@ -28,19 +74,24 @@ export class SessionExpiredError extends ApiError {
 }
 
 export class SecondFactorRequiredError extends ApiError {
-  constructor(
-    message = i18n.t("errors:codes.SECOND_FACTOR_REQUIRED")
-  ) {
+  constructor(message = i18n.t("errors:codes.SECOND_FACTOR_REQUIRED")) {
     super(403, "SECOND_FACTOR_REQUIRED", message)
     this.name = "SecondFactorRequiredError"
   }
 }
 
 export class BackendUnavailableError extends ApiError {
-  constructor(
-    message = i18n.t("errors:backendUnavailableBody", { url: apiBaseUrl() })
-  ) {
-    super(503, "BACKEND_UNAVAILABLE", message)
+  constructor(message?: string, request?: ApiRequestContext, cause?: unknown) {
+    const context = request ?? { method: "GET", url: apiBaseUrl() }
+    const detail = import.meta.env?.DEV
+      ? i18n.t("errors:networkDiagnostic", {
+          method: context.method,
+          url: diagnosticUrl(context.url),
+          reason: cause instanceof Error ? cause.name : "TypeError",
+        })
+      : i18n.t("errors:codes.BACKEND_UNAVAILABLE")
+    super(503, "BACKEND_UNAVAILABLE", message ?? detail, undefined, context)
+    this.cause = cause
     this.name = "BackendUnavailableError"
   }
 }

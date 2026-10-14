@@ -61,7 +61,7 @@ export function SystemHealthCard(): React.JSX.Element {
   if (error || !data) {
     return (
       <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-        <p className="font-mono text-[10px] tracking-wide uppercase opacity-80">
+        <p className="font-sans text-[10px] tracking-wide uppercase opacity-80">
           system_health_unreachable
         </p>
         <p className="mt-1 text-xs">
@@ -78,12 +78,12 @@ export function SystemHealthCard(): React.JSX.Element {
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="space-y-0.5">
-          <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("system.label")}
           </p>
           <p className="text-sm font-medium">
             {data.ok ? t("system.operational") : t("system.degraded")}{" "}
-            <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+            <span className="ml-1 font-sans text-[10px] text-muted-foreground">
               v{data.version}
             </span>
           </p>
@@ -145,7 +145,7 @@ function ComponentCell({
   const s = STATUS_STYLES[status]
   return (
     <div className="flex flex-col gap-1 px-4 py-3">
-      <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         {label}
       </dt>
       <dd className="flex items-center gap-1.5">

@@ -15,6 +15,7 @@ import { env } from "../env"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
 import type { AuthUser } from "../auth/middleware"
+import { requireScope } from "../auth/require-scope"
 import {
   installFromTemplate,
   startService,
@@ -46,7 +47,7 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   }
 
   // GET /services?projectId=<id>
-  router.get("/", async (c) => {
+  router.get("/", requireScope("services:read"), async (c) => {
     const user = getUser(c)
     const projectId = c.req.query("projectId")
 
@@ -67,9 +68,9 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   })
 
   // GET /services/:id
-  router.get("/:id", async (c) => {
+  router.get("/:id", requireScope("services:read"), async (c) => {
     const user = getUser(c)
-    const svc = await getServiceForUser(db, c.req.param("id"), user.id)
+    const svc = await getServiceForUser(db, c.req.param("id")!, user.id)
     if (!svc) {
       return c.json(
         { error: { code: "NOT_FOUND", message: "Service not found" } },
@@ -80,7 +81,7 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   })
 
   // POST /services/from-template
-  router.post("/from-template", async (c) => {
+  router.post("/from-template", requireScope("services:write"), async (c) => {
     const user = getUser(c)
     const body = await c.req.json().catch(() => null)
     const parsed = CreateServiceFromTemplateBody.safeParse(body)
@@ -123,9 +124,9 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   })
 
   // POST /services/:id/start
-  router.post("/:id/start", ownerOnly, async (c) => {
+  router.post("/:id/start", requireScope("services:write"), ownerOnly, async (c) => {
     const user = getUser(c)
-    const serviceId = c.req.param("id")
+    const serviceId = c.req.param("id")!
 
     try {
       await startService({ agent: getSharedAgent(), db }, user.id, serviceId)
@@ -153,9 +154,9 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   })
 
   // POST /services/:id/stop
-  router.post("/:id/stop", ownerOnly, async (c) => {
+  router.post("/:id/stop", requireScope("services:write"), ownerOnly, async (c) => {
     const user = getUser(c)
-    const serviceId = c.req.param("id")
+    const serviceId = c.req.param("id")!
 
     try {
       await stopService({ agent: getSharedAgent(), db }, user.id, serviceId)
@@ -183,9 +184,9 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   })
 
   // DELETE /services/:id
-  router.delete("/:id", ownerOnly, async (c) => {
+  router.delete("/:id", requireScope("services:write"), ownerOnly, async (c) => {
     const user = getUser(c)
-    const serviceId = c.req.param("id")
+    const serviceId = c.req.param("id")!
 
     const svc = await getServiceForUser(db, serviceId, user.id)
     if (!svc) {
@@ -229,9 +230,9 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
   })
 
   // GET /services/:id/logs
-  router.get("/:id/logs", async (c) => {
+  router.get("/:id/logs", requireScope("services:read"), async (c) => {
     const user = getUser(c)
-    const serviceId = c.req.param("id")
+    const serviceId = c.req.param("id")!
     const containerIdx = Number(c.req.query("container") ?? 0)
     const tailRaw = Number(c.req.query("tail") ?? 200)
     const tail = Number.isFinite(tailRaw)

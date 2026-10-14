@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { apps, databases } from "@ploydok/db"
+import { apps, databases, services } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { getSharedAgent } from "../../debug/singletons"
 import { childLogger } from "../../logger"
@@ -17,7 +17,7 @@ export interface OrphanGcResult {
 }
 
 /**
- * Find application and managed-database containers whose durable owner row is
+ * Find application, managed-database and marketplace service containers whose durable owner row is
  * gone, and remove them after a safety age threshold. Protects
  * against leftover blue/green containers when a deploy crashes between DB
  * commit and container cleanup, or legacy state from an earlier Ploydok
@@ -28,17 +28,21 @@ export interface OrphanGcResult {
  */
 export async function runOrphanContainerGc(db: Db): Promise<OrphanGcResult> {
   const agent = getSharedAgent()
-  const [appResp, databaseResp, liveApps, liveDatabases] = await Promise.all([
+  const [appResp, databaseResp, serviceResp, liveApps, liveDatabases, liveServices] = await Promise.all([
     agent.listContainers({ kindFilter: "app" }),
     agent.listContainers({ kindFilter: "database" }),
+    agent.listContainers({ kindFilter: "service" }),
     db.select({ id: apps.id }).from(apps),
     db.select({ id: databases.id }).from(databases),
+    db.select({ id: services.id }).from(services),
   ])
-  const candidates = [...appResp.containers, ...databaseResp.containers]
+  const candidates = [...appResp.containers, ...databaseResp.containers, ...serviceResp.containers]
   const liveIds = new Set([
     ...liveApps.map((r) => r.id),
     ...liveDatabases.map((r) => r.id),
   ])
+
+  const liveServiceIds = new Set(liveServices.map(r => r.id))
 
   const result: OrphanGcResult = {
     scanned: candidates.length,
@@ -46,8 +50,9 @@ export async function runOrphanContainerGc(db: Db): Promise<OrphanGcResult> {
   }
 
   for (const c of candidates) {
-    if (!c.appId) continue
-    if (liveIds.has(c.appId)) continue
+    const ownerId = c.kind === "service" ? c.serviceId : c.appId
+    if (!ownerId) continue
+    if ((c.kind === "service" ? liveServiceIds : liveIds).has(ownerId)) continue
     if ((c.uptimeS ?? 0) < ORPHAN_MIN_UPTIME_S) continue
 
     try {

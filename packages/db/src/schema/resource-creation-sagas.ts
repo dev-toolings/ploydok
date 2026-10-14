@@ -12,7 +12,7 @@ import {
 import { projects } from "./projects"
 import { users } from "./users"
 
-export type CreationSagaResourceType = "application" | "database"
+export type CreationSagaResourceType = "application" | "database" | "service"
 export type CreationSagaState =
   | "initializing"
   | "provisioning"
@@ -28,6 +28,8 @@ const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
 })
 
 export interface CreationSagaOwnedResources {
+  containerIds?: string[]
+  swarmServiceNames?: string[]
   containerId?: string
   containerName?: string
   networkName?: string
@@ -41,7 +43,7 @@ export const resource_creation_sagas = pgTable(
   {
     id: text("id").primaryKey(),
     resource_type: text("resource_type", {
-      enum: ["application", "database"],
+      enum: ["application", "database", "service"],
     }).notNull(),
     resource_id: text("resource_id").notNull(),
     project_id: text("project_id")

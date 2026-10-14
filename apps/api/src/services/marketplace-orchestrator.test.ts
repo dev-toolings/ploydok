@@ -33,6 +33,15 @@ const mockHasRole = mock(async () => true)
 
 mock.module("@ploydok/db/queries", () => ({
   insertService: mockInsertService,
+  createCreationSaga: mock(async () => {}),
+  claimCreationSaga: mock(async () => null),
+  fenceCreationSaga: mock(async () => true),
+  recordClaimedCreationSagaStep: mock(async () => true),
+  completeClaimedCreationSaga: mock(async () => true),
+  beginClaimedCreationSagaCompensation: mock(async () => true),
+  completeClaimedCreationSagaCompensation: mock(async () => true),
+  retryClaimedCreationSaga: mock(async () => true),
+  getServiceById: mock(async () => null),
   updateServiceStatus: mockUpdateServiceStatus,
   updateServiceContainers: mockUpdateServiceContainers,
   updateServiceSwarmNames: mockUpdateServiceSwarmNames,
@@ -76,6 +85,12 @@ mock.module("../logger", () => ({
 }))
 
 // ---------------------------------------------------------------------------
+// The worker owns Docker effects after the durable acceptance.
+mock.module("../worker/queues", () => ({ serviceInstallQueue: { name: "service.install" } }))
+mock.module("../worker/queue-enqueue", () => ({
+  enqueueWithDbRow: async (opts: { db: unknown; insertRow: (tx: unknown) => Promise<unknown> }) => ({ row: await opts.insertRow(opts.db) }),
+}))
+
 // Import under test (after mocks)
 // ---------------------------------------------------------------------------
 
@@ -230,7 +245,7 @@ describe("installFromTemplate", () => {
     expect(row.template_id).toBe("pocketbase")
   })
 
-  it("calls caddy.upsertRoute once when domain is set", async () => {
+  it("accepts a domain without mutating ingress before the worker runs", async () => {
     const db = {
       select: mock(() => ({
         from: mock(() => ({
@@ -253,10 +268,8 @@ describe("installFromTemplate", () => {
         'services:\n  app:\n    image: pocketbase:latest\n    ports:\n      - "8080:8080"\n    environment:\n      DOMAIN: ${domain}\n',
     })
 
-    // fire-and-forget: wait for the async loop to complete
-    await new Promise((resolve) => setTimeout(resolve, 50))
 
-    expect(caddy.upsertRoute).toHaveBeenCalledTimes(1)
+    expect(caddy.upsertRoute).not.toHaveBeenCalled()
   })
 
   it("does NOT call caddy.upsertRoute when domain is null", async () => {
@@ -281,7 +294,6 @@ describe("installFromTemplate", () => {
       compose: "services:\n  app:\n    image: pocketbase:latest\n",
     })
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
 
     expect(caddy.upsertRoute).not.toHaveBeenCalled()
   })

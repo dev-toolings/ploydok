@@ -350,13 +350,13 @@ function OpsStrip({
           <div className="space-y-0.5">
             <p
               className={cn(
-                "font-mono text-[10px] tracking-wide uppercase",
+                "font-sans text-[10px] tracking-wide uppercase",
                 liveStyles.label
               )}
             >
               {t(liveStyles.textKey)}
             </p>
-            <p className="font-mono text-[11px] text-muted-foreground">
+            <p className="font-sans text-[11px] text-muted-foreground">
               {ageSec === null
                 ? t("noSignal")
                 : ageSec < 2
@@ -430,7 +430,7 @@ function Metric({
   }[accent]
   return (
     <div className="flex min-w-0 flex-col gap-1 px-5 py-4">
-      <dt className="flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="flex items-center gap-1.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         <Icon className={cn("size-3", accentText)} />
         {label}
       </dt>
@@ -439,7 +439,7 @@ function Metric({
           {value}
         </span>
         {sub ? (
-          <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+          <span className="ml-1 font-sans text-[10px] text-muted-foreground">
             {sub}
           </span>
         ) : null}
@@ -561,7 +561,7 @@ function ChipGroup({
 }): React.JSX.Element {
   return (
     <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 p-0.5">
-      <span className="flex items-center gap-1 pl-2 pr-1 font-mono text-[9px] tracking-wide text-muted-foreground uppercase">
+      <span className="flex items-center gap-1 pl-2 pr-1 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
         <Icon className="size-3" />
         {label}
       </span>
@@ -608,7 +608,7 @@ function Chip({
     >
       {children}
       {count !== undefined ? (
-        <span className="font-mono text-[9px] opacity-60">{count}</span>
+        <span className="font-sans text-[9px] opacity-60">{count}</span>
       ) : null}
     </button>
   )
@@ -643,7 +643,7 @@ function InlineAlert({
     >
       <Icon className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-0.5">
-        <p className="font-mono text-[10px] tracking-wide uppercase opacity-80">
+        <p className="font-sans text-[10px] tracking-wide uppercase opacity-80">
           {code}
         </p>
         <p className="text-xs leading-5">{message}</p>

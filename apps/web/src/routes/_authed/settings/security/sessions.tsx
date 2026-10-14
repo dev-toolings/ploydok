@@ -260,7 +260,7 @@ function SessionRow({
             ) : null}
           </div>
 
-          <dl className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+          <dl className="flex flex-wrap gap-x-4 gap-y-0.5 font-sans text-[11px] text-muted-foreground">
             <div className="flex items-center gap-1">
               <dt className="flex items-center gap-1 opacity-60">
                 <RiMapPinLine className="size-3" />

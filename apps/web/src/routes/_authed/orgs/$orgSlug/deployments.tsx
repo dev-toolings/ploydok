@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@workspace/ui/components/select"
+import { useTranslation } from "react-i18next"
 import { BuildLogDrawer } from "../../../../components/apps/BuildLogDrawer"
 import {
   
@@ -39,7 +40,6 @@ import {
 } from "../../../../lib/workspace-deployments"
 import type {DeploymentApplication, DeploymentTableBuild} from "../../../../components/apps/DeploymentsTable";
 import type {WorkspaceDeploymentFilters, WorkspaceDeploymentsSummary} from "../../../../lib/workspace-deployments";
-import { useTranslation } from "react-i18next"
 import type { Build, BuildStatus } from "@ploydok/shared"
 
 const ALL = "all"
@@ -258,21 +258,22 @@ function DeploymentSummary({
 }: {
   summary: WorkspaceDeploymentsSummary | undefined
 }): React.JSX.Element | null {
+  const { t } = useTranslation("workspace")
   if (!summary) return null
   const cards = [
-    { label: "Total", value: summary.total, className: "text-foreground" },
+    { label: t("deployments.total"), value: summary.total, className: "text-foreground" },
     {
-      label: "In progress",
+      label: t("deployments.inProgress"),
       value: summary.pending + summary.running,
       className: "text-blue-600 dark:text-blue-400",
     },
     {
-      label: "Successful",
+      label: t("deployments.successful"),
       value: summary.succeeded + summary.succeededWithWarning,
       className: "text-emerald-600 dark:text-emerald-400",
     },
     {
-      label: "Failed",
+      label: t("deployments.failed"),
       value: summary.failed,
       className: "text-destructive",
     },
@@ -281,7 +282,7 @@ function DeploymentSummary({
   return (
     <section
       className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-      aria-label="Deployment summary"
+      aria-label={t("deployments.summary")}
     >
       {cards.map((card) => (
         <div key={card.label} className="rounded-2xl bg-panel px-4 py-3">
@@ -311,6 +312,7 @@ function DeploymentFilters({
     options?: { resetPage?: boolean }
   ) => void
 }): React.JSX.Element {
+  const { t } = useTranslation("workspace")
   const dirty = Boolean(
     filters.appId ||
     filters.status ||
@@ -330,10 +332,10 @@ function DeploymentFilters({
           }
         >
           <SelectTrigger>
-            <SelectValue placeholder="Application" />
+            <SelectValue placeholder={t("deployments.application")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>All applications</SelectItem>
+            <SelectItem value={ALL}>{t("deployments.allApplications")}</SelectItem>
             {apps.map((app) => (
               <SelectItem key={app.id} value={app.id}>
                 {app.name}
@@ -351,18 +353,18 @@ function DeploymentFilters({
           }
         >
           <SelectTrigger>
-            <SelectValue placeholder="Status" />
+            <SelectValue placeholder={t("deployments.status")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>All statuses</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="running">Running</SelectItem>
-            <SelectItem value="succeeded">Succeeded</SelectItem>
+            <SelectItem value={ALL}>{t("deployments.allStatuses")}</SelectItem>
+            <SelectItem value="pending">{t("deployments.pending")}</SelectItem>
+            <SelectItem value="running">{t("deployments.running")}</SelectItem>
+            <SelectItem value="succeeded">{t("deployments.succeeded")}</SelectItem>
             <SelectItem value="succeeded_with_warning">
-              Succeeded (warning)
+              {t("deployments.succeededWarning")}
             </SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
+            <SelectItem value="failed">{t("deployments.failed")}</SelectItem>
+            <SelectItem value="cancelled">{t("deployments.cancelled")}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -373,18 +375,18 @@ function DeploymentFilters({
           }
         >
           <SelectTrigger>
-            <SelectValue placeholder="Source" />
+            <SelectValue placeholder={t("deployments.source")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>All sources</SelectItem>
-            <SelectItem value="api">Manual</SelectItem>
-            <SelectItem value="webhook:github">GitHub</SelectItem>
-            <SelectItem value="webhook:gitlab">GitLab</SelectItem>
-            <SelectItem value="auto:push">Auto push</SelectItem>
-            <SelectItem value="auto:tag">Auto tag</SelectItem>
-            <SelectItem value="cron:gc">Cleanup</SelectItem>
-            <SelectItem value="cron:cleanup">Scheduled cleanup</SelectItem>
-            <SelectItem value="system">System</SelectItem>
+            <SelectItem value={ALL}>{t("deployments.allSources")}</SelectItem>
+            <SelectItem value="api">{t("deployments.manual")}</SelectItem>
+            <SelectItem value="webhook:github">{t("deployments.github")}</SelectItem>
+            <SelectItem value="webhook:gitlab">{t("deployments.gitlab")}</SelectItem>
+            <SelectItem value="auto:push">{t("deployments.autoPush")}</SelectItem>
+            <SelectItem value="auto:tag">{t("deployments.autoTag")}</SelectItem>
+            <SelectItem value="cron:gc">{t("deployments.cleanup")}</SelectItem>
+            <SelectItem value="cron:cleanup">{t("deployments.scheduledCleanup")}</SelectItem>
+            <SelectItem value="system">{t("deployments.system")}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -396,8 +398,8 @@ function DeploymentFilters({
               onChange({ q: event.target.value || undefined })
             }
             className="pl-8"
-            placeholder="Application or commit"
-            aria-label="Search deployments"
+            placeholder={t("deployments.searchPlaceholder")}
+            aria-label={t("deployments.search")}
           />
         </div>
       </div>
@@ -410,9 +412,11 @@ function DeploymentFilters({
             onChange({ from: event.target.value || undefined })
           }
           className="w-auto"
-          aria-label="Deployments from date"
+          aria-label={t("deployments.from")}
         />
-        <span className="text-xs text-muted-foreground">to</span>
+        <span className="text-xs text-muted-foreground">
+          {t("deployments.to")}
+        </span>
         <Input
           type="date"
           value={filters.to ?? ""}
@@ -420,19 +424,25 @@ function DeploymentFilters({
             onChange({ to: event.target.value || undefined })
           }
           className="w-auto"
-          aria-label="Deployments to date"
+          aria-label={t("deployments.toDate")}
         />
         <Select
           value={String(filters.pageSize)}
           onValueChange={(value) => onChange({ pageSize: Number(value) })}
         >
           <SelectTrigger className="w-32">
-            <SelectValue placeholder="Per page" />
+            <SelectValue placeholder={t("deployments.perPage")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="20">20 per page</SelectItem>
-            <SelectItem value="50">50 per page</SelectItem>
-            <SelectItem value="100">100 per page</SelectItem>
+            <SelectItem value="20">
+              {t("deployments.perPageCount", { count: 20 })}
+            </SelectItem>
+            <SelectItem value="50">
+              {t("deployments.perPageCount", { count: 50 })}
+            </SelectItem>
+            <SelectItem value="100">
+              {t("deployments.perPageCount", { count: 100 })}
+            </SelectItem>
           </SelectContent>
         </Select>
         {dirty ? (
@@ -450,7 +460,7 @@ function DeploymentFilters({
               })
             }
           >
-            Clear filters
+            {t("deployments.clearFilters")}
           </Button>
         ) : null}
       </div>
@@ -473,11 +483,15 @@ function DeploymentPagination({
   onPrevious: () => void
   onNext: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation("workspace")
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs text-muted-foreground">
-        {total} deployment{total === 1 ? "" : "s"} · page {page} of{" "}
-        {Math.max(1, totalPages)}
+        {t("deployments.count", {
+          count: total,
+          page,
+          pages: Math.max(1, totalPages),
+        })}
       </p>
       <div className="flex items-center gap-2">
         <Button
@@ -487,7 +501,7 @@ function DeploymentPagination({
           disabled={page <= 1}
         >
           <RiArrowLeftLine className="size-4" />
-          Previous
+          {t("common:previous")}
         </Button>
         <Button
           variant="outline"
@@ -495,7 +509,7 @@ function DeploymentPagination({
           onClick={onNext}
           disabled={!hasNext}
         >
-          Next
+          {t("common:next")}
           <RiArrowRightLine className="size-4" />
         </Button>
       </div>
@@ -510,14 +524,15 @@ function DeploymentError({
   message: string
   onRetry: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation("workspace")
   return (
     <div className="rounded-xl border border-destructive/25 bg-destructive/5 px-4 py-5">
       <p className="text-sm font-medium text-destructive">
-        Deployments could not be loaded
+        {t("deployments.loadFailed")}
       </p>
       <p className="mt-1 text-sm text-muted-foreground">{message}</p>
       <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
-        Retry
+        {t("common:retry")}
       </Button>
     </div>
   )

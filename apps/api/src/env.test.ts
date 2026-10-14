@@ -1,9 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, describe, expect, it } from "bun:test"
-import { defaultStateDir } from "./env"
+import { defaultStateDir, resolveRegistryApiUrl } from "./env"
 
 const originalNodeEnv = Bun.env["NODE_ENV"]
 const originalHome = Bun.env["HOME"]
+
+describe("resolveRegistryApiUrl", () => {
+  const config = { registryUrl: "127.0.0.1:5000", pushUrl: "registry:5000" }
+  it("uses the published registry address for the local host API", () => {
+    expect(resolveRegistryApiUrl({ ...config, nodeEnv: "dev" })).toBe(
+      "127.0.0.1:5000"
+    )
+  })
+  it("preserves the internal Docker address in production", () => {
+    expect(resolveRegistryApiUrl({ ...config, nodeEnv: "prod" })).toBe(
+      "registry:5000"
+    )
+  })
+  it("honors an explicit registry API address", () => {
+    expect(
+      resolveRegistryApiUrl({
+        ...config,
+        nodeEnv: "dev",
+        apiUrl: "registry.example.com",
+      })
+    ).toBe("registry.example.com")
+  })
+})
 
 afterEach(() => {
   if (originalNodeEnv === undefined) delete Bun.env["NODE_ENV"]

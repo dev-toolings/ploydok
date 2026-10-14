@@ -29,7 +29,7 @@ export function LanguageSwitcher({
             onClick={() => changeLocale(locale)}
             aria-pressed={selected}
             className={cn(
-              "rounded-md px-2 py-1 font-mono text-[11px] font-medium uppercase transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "rounded-md px-2 py-1 font-sans text-[11px] font-medium uppercase transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"

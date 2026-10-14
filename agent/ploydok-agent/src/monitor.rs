@@ -40,6 +40,7 @@ pub struct Snapshot {
     pub restart_count: u32,
     pub kind: String,
     pub app_id: String,
+    pub service_id: String,
     pub color: String,
     /// (latency_ms, ok) from the last PingContainer call; None if never pinged.
     pub last_pong: Option<(u64, bool)>,
@@ -139,6 +140,10 @@ impl Monitor {
             let labels = c.labels.clone().unwrap_or_default();
             let kind = labels.get("ploydok.kind").cloned().unwrap_or_default();
             let app_id = labels.get("ploydok.app_id").cloned().unwrap_or_default();
+            let service_id = labels
+                .get("ploydok.service_id")
+                .cloned()
+                .unwrap_or_default();
             let color = labels.get("ploydok.color").cloned().unwrap_or_default();
 
             // Map bollard status string → our canonical status.
@@ -201,6 +206,7 @@ impl Monitor {
                 restart_count,
                 kind,
                 app_id,
+                service_id,
                 color,
                 last_pong,
                 last_seen_ms: now_ms,
@@ -220,6 +226,35 @@ impl Monitor {
             .collect();
 
         ListContainersResponse { containers }
+    }
+
+    /// Saga recovery needs an authoritative Docker listing, including stopped
+    /// containers. Monitoring cache absence is not proof of resource absence.
+    pub async fn list_services(&self) -> Result<ListContainersResponse, bollard::errors::Error> {
+        let summaries = self
+            .docker
+            .list_containers(Some(ListContainersOptions::<String> {
+                all: true,
+                filters: HashMap::from([(
+                    "label".to_string(),
+                    vec!["ploydok.kind=service".to_string()],
+                )]),
+                ..Default::default()
+            }))
+            .await?;
+        let snapshots = futures::future::join_all(
+            summaries
+                .into_iter()
+                .map(|c| self.build_snapshot(c, unix_now_ms())),
+        )
+        .await;
+        Ok(ListContainersResponse {
+            containers: snapshots
+                .into_iter()
+                .flatten()
+                .map(|s| snapshot_to_proto(&s))
+                .collect(),
+        })
     }
 
     /// Perform an HTTP GET ping against the container's first network IP.
@@ -563,6 +598,7 @@ fn snapshot_to_proto(s: &Snapshot) -> ContainerSnapshot {
         restart_count: s.restart_count,
         kind: s.kind.clone(),
         app_id: s.app_id.clone(),
+        service_id: s.service_id.clone(),
         color: s.color.clone(),
         last_ping_ms,
         last_ping_ok,
@@ -606,10 +642,24 @@ mod tests {
             restart_count: 0,
             kind: "app".to_string(),
             app_id: "app-1".to_string(),
+            service_id: String::new(),
             color: "blue".to_string(),
             last_pong: None,
             last_seen_ms: 0,
         }
+    }
+
+    #[test]
+    fn marketplace_owner_survives_snapshot_wire_encoding() {
+        use prost::Message;
+        let mut service = snap("service-container");
+        service.kind = "service".to_string();
+        service.app_id.clear();
+        service.service_id = "service-owner".to_string();
+        let wire = snapshot_to_proto(&service).encode_to_vec();
+        let decoded = ContainerSnapshot::decode(wire.as_slice()).expect("valid snapshot");
+        assert_eq!(decoded.service_id, "service-owner");
+        assert!(decoded.app_id.is_empty());
     }
 
     #[test]

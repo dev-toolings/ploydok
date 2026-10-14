@@ -6,7 +6,6 @@ import type { Db } from "@ploydok/db"
 import {
   getPreviewDeployment,
   updatePreviewDeployment,
-  updatePreviewDeploymentStatus,
 } from "@ploydok/db/queries"
 import { staticRoot } from "./build-static"
 import { workerLog } from "../logger"
@@ -46,7 +45,8 @@ async function stopPreviewContainer(containerRef: string | null): Promise<void> 
     })
   } catch (error) {
     if (!isNotFound(toAgentError(error))) {
-      log.warn({ containerRef, error }, "preview stop failed")
+      log.warn({ containerRef, error }, "preview stop failed; retry required")
+      throw error
     }
   }
 
@@ -58,7 +58,8 @@ async function stopPreviewContainer(containerRef: string | null): Promise<void> 
     })
   } catch (error) {
     if (!isNotFound(toAgentError(error))) {
-      log.warn({ containerRef, error }, "preview remove failed")
+      log.warn({ containerRef, error }, "preview remove failed; retry required")
+      throw error
     }
   }
 }
@@ -90,21 +91,20 @@ export async function handlePreviewTeardown(
 
     const preview = await getPreviewDeployment(db, previewId)
     await updatePreviewDeployment(db, previewId, {
-      status: "pending",
-    }).catch(() => undefined)
+      status: "tearing_down",
+    })
 
     await getSharedCaddy().removeRoute(resourceId)
     await stopPreviewContainer(preview?.container_id ?? null)
     await rm(path.join(staticRoot(), resourceId), {
       recursive: true,
       force: true,
-    }).catch(() => undefined)
+    })
 
     await updatePreviewDeployment(db, previewId, {
       status: "torn_down",
       container_id: null,
     })
-    await updatePreviewDeploymentStatus(db, previewId, "torn_down")
 
     log.info({ appId, prNumber }, "preview teardown complete")
   } catch (error) {

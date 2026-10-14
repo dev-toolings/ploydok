@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { RiEyeLine, RiEyeOffLine } from "@remixicon/react"
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Button } from "@workspace/ui/components/button"
 import { Alert, AlertDescription } from "@workspace/ui/components/alert"
 import { toast } from "sonner"
 import { apiFetch } from "../../lib/api"
-import { apiBaseUrl } from "../../lib/api/base"
 import { PasskeyButton } from "../../components/auth/PasskeyButton"
 import { getGitProviderStatus } from "../../lib/git-providers"
 import { resolvePostAuthPath } from "../../lib/auth-guards"
@@ -137,6 +137,7 @@ function PasswordModePanel({
   const { t } = useTranslation("auth")
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
+  const [showPassword, setShowPassword] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   // onSuccess ends in a navigation, so it has to be awaited inside the pending
@@ -199,15 +200,36 @@ function PasswordModePanel({
       <Field
         id="password"
         label={t("login.password")}
-        type="password"
+        type={showPassword ? "text" : "password"}
         autoComplete="current-password"
         value={password}
         onChange={setPassword}
         placeholder={t("login.passwordPlaceholder")}
+        inputClassName="pr-12"
+        adornment={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-lg"
+            className="absolute inset-y-0 right-0 my-auto text-muted-foreground hover:text-foreground active:not-aria-[haspopup]:translate-y-0"
+            aria-label={
+              showPassword ? t("setup.hidePassword") : t("setup.showPassword")
+            }
+            aria-controls="password"
+            aria-pressed={showPassword}
+            onClick={() => setShowPassword((visible) => !visible)}
+          >
+            {showPassword ? (
+              <RiEyeOffLine className="size-4" aria-hidden="true" />
+            ) : (
+              <RiEyeLine className="size-4" aria-hidden="true" />
+            )}
+          </Button>
+        }
       />
       {error && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription className="break-words">{error}</AlertDescription>
         </Alert>
       )}
       <Button
@@ -276,16 +298,10 @@ function BackupCodePanel({
   const [error, setError] = React.useState<string | null>(null)
 
   const { pending: loading, run } = usePendingAction(async () => {
-    const res = await fetch(`${apiBaseUrl()}/auth/backup-codes/consume`, {
+    await apiFetch("/auth/backup-codes/consume", {
       method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, code }),
+      body: { email, code },
     })
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: { message?: string } }
-      throw new Error(data.error?.message ?? t("login.backup.invalid"))
-    }
     toast.success(t("login.signedIn"))
     await onSuccess()
   })
@@ -334,7 +350,7 @@ function BackupCodePanel({
       />
       {error && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription className="break-words">{error}</AlertDescription>
         </Alert>
       )}
       <div className="space-y-2">

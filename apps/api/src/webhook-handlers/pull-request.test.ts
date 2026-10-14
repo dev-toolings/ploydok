@@ -104,6 +104,10 @@ describe("handlePullRequest", () => {
       prNumber: 42,
     })
     expect(insertPreviewDeploymentMock).not.toHaveBeenCalled()
-    expect(updatePreviewDeploymentMock).not.toHaveBeenCalled()
+    expect(updatePreviewDeploymentMock).toHaveBeenCalledWith(
+      db,
+      "app-preview-1:pr-42",
+      { status: "tearing_down" }
+    )
   })
 })

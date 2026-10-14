@@ -100,15 +100,15 @@ export function SyncProgressDialog(
         <div className="space-y-1 text-xs text-muted-foreground tabular-nums">
           <div className="flex justify-between">
             <span>{t("sync.importedSoFar")}</span>
-            <span className="font-mono">{importedCount}</span>
+            <span className="font-sans">{importedCount}</span>
           </div>
           <div className="flex justify-between">
             <span>{t("sync.cacheTotal")}</span>
-            <span className="font-mono">{totalCount}</span>
+            <span className="font-sans">{totalCount}</span>
           </div>
           <div className="flex justify-between">
             <span>{t("sync.elapsed")}</span>
-            <span className="font-mono">{elapsed}s</span>
+            <span className="font-sans">{elapsed}s</span>
           </div>
         </div>
 

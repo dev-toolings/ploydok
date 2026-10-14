@@ -248,7 +248,7 @@ monitoringRouter.get("/fleet/quotas", async (c) => {
 // ---------------------------------------------------------------------------
 
 // Ports réservés à l'infra locale — interdits pour éviter le SSRF.
-const RESERVED_PORTS = new Set([22, 5000, 2020, 8180, 8543])
+const RESERVED_PORTS = new Set([22, 5000, 2020, 8180, 8181, 8543])
 
 const PingBodySchema = z.object({
   path: z.string().regex(/^\/[^\s?#]{0,255}$/),

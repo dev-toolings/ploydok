@@ -48,7 +48,11 @@ export function GitHubAppSetupCard({
     slug: "",
     name: "",
   })
-  const importError = importApp.error?.message ?? null
+  const importError = importApp.error
+    ? t(`errors:codes.${importApp.error.code}`, {
+        defaultValue: importApp.error.message,
+      })
+    : null
   const reconnectUrls = useReconnectUrls()
   const canImport = Boolean(
     form.appId.trim() &&
@@ -69,17 +73,21 @@ export function GitHubAppSetupCard({
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> {
     event.preventDefault()
-    await importApp.mutateAsync({
-      ...form,
-      appId: form.appId.trim(),
-      clientId: form.clientId.trim(),
-      slug: form.slug.trim(),
-      name: form.name.trim(),
-      clientSecret: form.clientSecret.trim(),
-      privateKey: form.privateKey.trim(),
-      webhookSecret: form.webhookSecret?.trim() ?? "",
-    })
-    onImported()
+    try {
+      await importApp.mutateAsync({
+        ...form,
+        appId: form.appId.trim(),
+        clientId: form.clientId.trim(),
+        slug: form.slug.trim(),
+        name: form.name.trim(),
+        clientSecret: form.clientSecret.trim(),
+        privateKey: form.privateKey.trim(),
+        webhookSecret: form.webhookSecret?.trim() ?? "",
+      })
+      onImported()
+    } catch {
+      // Keep the entered values so the user can correct or retry the request.
+    }
   }
 
   return (

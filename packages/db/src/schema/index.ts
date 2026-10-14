@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+export { host_disk_samples, type HostDiskSample } from "./host-disk-samples"
 export { apps } from "./apps"
 export { app_volumes } from "./app-volumes"
 export type { AppVolumeRow, AppVolumeInsert } from "./app-volumes"

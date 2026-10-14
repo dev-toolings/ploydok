@@ -4,11 +4,11 @@ import { createFileRoute } from "@tanstack/react-router"
 import { Button } from "@workspace/ui/components/button"
 import { RiAddLine } from "@remixicon/react"
 import { Badge } from "@workspace/ui/components/badge"
+import { useTranslation } from "react-i18next"
 import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
-import { MemberRow } from "../../../../components/members/MemberRow"
+import { MembersTable } from "../../../../components/members/MembersTable"
 import { InviteDialog } from "../../../../components/members/InviteDialog"
 import { useMembers, useRevokeInvitation } from "../../../../lib/memberships"
-import { useTranslation } from "react-i18next"
 import i18n from "../../../../lib/i18n"
 import type { Invitation, Member } from "../../../../lib/memberships"
 
@@ -63,16 +63,11 @@ function MembersPage(): React.JSX.Element {
               {t("members.loadFailed")}
             </p>
           ) : members.length > 0 ? (
-            <div className="space-y-3">
-              {members.map((member) => (
-                <MemberRow
-                  key={member.user_id}
-                  member={member}
-                  orgSlug={orgSlug}
-                  isOwner={isOwner}
-                />
-              ))}
-            </div>
+            <MembersTable
+              members={members}
+              orgSlug={orgSlug}
+              isOwner={isOwner}
+            />
           ) : (
             <div className="rounded-lg border border-dashed border-panel-border bg-panel-inset px-6 py-12 text-center">
               <p className="text-sm font-semibold text-foreground">
@@ -126,7 +121,8 @@ function formatRelativeTime(date: Date | string): string {
 
   if (seconds < 60) return i18n.t("common:relative.justNow")
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return i18n.t("common:relative.minutesAgo", { count: minutes })
+  if (minutes < 60)
+    return i18n.t("common:relative.minutesAgo", { count: minutes })
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return i18n.t("common:relative.hoursAgo", { count: hours })
   const days = Math.floor(hours / 24)

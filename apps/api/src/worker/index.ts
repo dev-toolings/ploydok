@@ -29,7 +29,11 @@ import {
 import { ensureStateDirs } from "./state-dirs"
 import { claimQueuedRow } from "./queue-claim"
 import { auditClaimed, auditUnauthorized } from "./queue-audit"
-import { dockerCleanupQueue, gcQueue, transactionalOutboxQueues } from "./queues"
+import {
+  dockerCleanupQueue,
+  gcQueue,
+  transactionalOutboxQueues,
+} from "./queues"
 import { handleGcImagesJob } from "./handlers/gc-images"
 import { handleGcBuildcacheJob } from "./handlers/gc-buildcache"
 import { handleDockerCleanupJob } from "./handlers/gc-docker"
@@ -74,6 +78,7 @@ import { startAuditAnchorCron, stopAuditAnchorCron } from "./jobs/audit-anchor"
 import { handleSyncProviderRepos } from "./handlers/sync-provider-repos"
 import type { SyncProviderReposPayload } from "./handlers/sync-provider-repos"
 import { handlePreviewDeploy } from "./handlers/preview-deploy"
+import { resumeServiceCreation } from "../services/marketplace-orchestrator"
 import { handlePreviewTeardown } from "./handlers/preview-teardown"
 import { getSharedAgent } from "../debug/singletons"
 import type { Agent } from "../agent"
@@ -95,6 +100,7 @@ import {
   stopCaddyReconcileCron,
 } from "./jobs/caddy-reconcile"
 import { startAutoHealCron, stopAutoHealCron } from "./jobs/auto-heal"
+import { startDiskHistorySampler, stopDiskHistorySampler } from "../disk/history"
 import {
   startImageUpdateWatchCron,
   stopImageUpdateWatchCron,
@@ -373,24 +379,33 @@ export function startWorker(
 
         // Parse job payload to extract appId for notification purposes.
         let appIdForNotification: string | null = null
+        let requestedByUserId: string | null = null
+        let deleteJobId: string | null = null
         try {
           const payload =
             typeof job.data === "string" ? JSON.parse(job.data) : job.data
           if (payload.jobId) {
+            deleteJobId = payload.jobId
             const jobRow = await db
-              .select({ app_id: app_delete_jobs.app_id })
+              .select({
+                app_id: app_delete_jobs.app_id,
+                requested_by_user_id: app_delete_jobs.requested_by_user_id,
+              })
               .from(app_delete_jobs)
               .where(eq(app_delete_jobs.id, payload.jobId))
               .limit(1)
             appIdForNotification = jobRow[0]?.app_id ?? null
+            requestedByUserId = jobRow[0]?.requested_by_user_id ?? null
           }
         } catch {
           // best-effort to extract appId for notification
         }
 
-        const ownerId = appIdForNotification
-          ? await resolveAppOwner(db, appIdForNotification)
-          : null
+        const recipientId =
+          requestedByUserId ??
+          (appIdForNotification
+            ? await resolveAppOwner(db, appIdForNotification)
+            : null)
         const [appRow] = appIdForNotification
           ? await db
               .select({ name: apps.name })
@@ -402,10 +417,41 @@ export function startWorker(
 
         try {
           await handleDeleteApp(db, { id: job.id ?? "", payload: job.data })
+          const [outcome] = deleteJobId
+            ? await db
+                .select({
+                  status: app_delete_jobs.status,
+                  error: app_delete_jobs.error_message,
+                })
+                .from(app_delete_jobs)
+                .where(eq(app_delete_jobs.id, deleteJobId))
+                .limit(1)
+            : []
+          if (outcome?.status !== "succeeded") {
+            if (
+              recipientId &&
+              appIdForNotification &&
+              outcome?.status === "failed"
+            ) {
+              eventBus.publish(`user:${recipientId}`, {
+                type: "app.delete.failed",
+                appId: appIdForNotification,
+                message:
+                  env.NODE_ENV === "prod"
+                    ? "Application cleanup failed"
+                    : (outcome.error ?? "Application cleanup failed"),
+              })
+            }
+            logger.warn(
+              { jobId: job.id, status: outcome?.status },
+              "app.delete cleanup did not succeed"
+            )
+            return
+          }
           logger.info({ jobId: job.id }, "app.delete done")
-          if (ownerId && appIdForNotification) {
+          if (recipientId && appIdForNotification) {
             try {
-              eventBus.publish(`user:${ownerId}`, {
+              eventBus.publish(`user:${recipientId}`, {
                 type: "app.deleted",
                 appId: appIdForNotification,
                 message: `${appName} supprimée`,
@@ -418,9 +464,9 @@ export function startWorker(
             }
           }
         } catch (err) {
-          if (ownerId && appIdForNotification) {
+          if (recipientId && appIdForNotification) {
             try {
-              eventBus.publish(`user:${ownerId}`, {
+              eventBus.publish(`user:${recipientId}`, {
                 type: "app.delete.failed",
                 appId: appIdForNotification,
                 message:
@@ -470,6 +516,17 @@ export function startWorker(
         logger.info({ jobId: job.id }, "preview.deploy job started")
         await handlePreviewDeploy(db, job.data)
         logger.info({ jobId: job.id }, "preview.deploy done")
+      },
+      { connection, concurrency: 1 }
+    ),
+
+    new Worker(
+      "service.install",
+      async (job) => {
+        if (typeof job.data?.serviceId !== "string" || !job.data.serviceId) {
+          throw new UnrecoverableError("Invalid service installation payload")
+        }
+        await resumeServiceCreation({ db, agent: getSharedAgent() }, job.data.serviceId)
       },
       { connection, concurrency: 1 }
     ),
@@ -535,9 +592,12 @@ export function startWorker(
   if (isDockerCleanupScheduleEnabled(env.PLOYDOK_DOCKER_CLEANUP_ENABLED)) {
     startDockerCleanupCron({ db, queue: dockerCleanupQueue })
   } else {
-    logger.info("daily Docker cleanup disabled (PLOYDOK_DOCKER_CLEANUP_ENABLED=off)")
+    logger.info(
+      "daily Docker cleanup disabled (PLOYDOK_DOCKER_CLEANUP_ENABLED=off)"
+    )
   }
   startAutoHealCron(db)
+  startDiskHistorySampler(db)
   startImageUpdateWatchCron(db)
   startOutboxDispatcher(db)
   startQueueOutboxDispatcher(db, transactionalOutboxQueues)
@@ -563,6 +623,7 @@ export function startWorker(
     stopCaddyReconcileCron()
     stopDockerCleanupCron()
     stopAutoHealCron()
+    stopDiskHistorySampler()
     stopImageUpdateWatchCron()
     stopOutboxDispatcher()
     await stopQueueOutboxDispatcher()

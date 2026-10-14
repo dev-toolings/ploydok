@@ -489,15 +489,15 @@ function DeveloperEnvEditor({
             </div>
             <div className="rounded-md border bg-background p-2">
               <dt className="text-muted-foreground">Keys</dt>
-              <dd className="mt-1 font-mono">{secrets.length}</dd>
+              <dd className="mt-1 font-sans tabular-nums">{secrets.length}</dd>
             </div>
             <div className="rounded-md border bg-background p-2">
               <dt className="text-muted-foreground">Manual</dt>
-              <dd className="mt-1 font-mono">{manualCount}</dd>
+              <dd className="mt-1 font-sans tabular-nums">{manualCount}</dd>
             </div>
             <div className="rounded-md border bg-background p-2">
               <dt className="text-muted-foreground">Linked</dt>
-              <dd className="mt-1 font-mono">{linkedCount}</dd>
+              <dd className="mt-1 font-sans tabular-nums">{linkedCount}</dd>
             </div>
           </dl>
           <div className="mt-4 flex flex-col gap-2">

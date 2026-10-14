@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -98,6 +99,7 @@ export function useGitHubRepos(params: ReposParams = {}) {
     getNextPageParam: (last, pages) =>
       last.hasMore ? pages.length + 1 : undefined,
     initialPageParam: 1,
+    placeholderData: keepPreviousData,
     staleTime: 60_000,
     refetchOnWindowFocus: true,
     refetchOnMount: false,
@@ -284,15 +286,19 @@ export function useImportGitHubApp() {
         body: payload,
         headers: { "content-type": "application/json" },
       }),
-    onSuccess: (config) => {
+    onSuccess: async (config) => {
       qc.setQueryData(["github", "app", "config"], config)
       qc.setQueryData<GitHubAppCredentialsStatus>(
         ["github", "app", "credentials", "status"],
         { status: "readable" }
       )
-      qc.invalidateQueries({ queryKey: ["github", "app"] })
-      qc.invalidateQueries({ queryKey: ["github", "installations"] })
-      qc.invalidateQueries({ queryKey: ["github", "cache-status"] })
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["github", "app"] }),
+        qc.invalidateQueries({ queryKey: ["github", "installations"] }),
+        qc.invalidateQueries({ queryKey: ["github", "cache-status"] }),
+        qc.invalidateQueries({ queryKey: ["github", "repos"] }),
+        qc.invalidateQueries({ queryKey: ["git-providers"] }),
+      ])
     },
     onError: (error) => {
       toast.error(error.message)
@@ -384,8 +390,7 @@ export function useInstallations() {
 // ---------------------------------------------------------------------------
 
 export type GitHubInstallationRemovalResponse =
-  | { ok: true; revoked: number }
-  | { ok: true; disconnected: number }
+  { ok: true; revoked: number } | { ok: true; disconnected: number }
 
 export function useRemoveGitHubInstallation() {
   const qc = useQueryClient()

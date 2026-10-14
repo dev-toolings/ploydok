@@ -30,6 +30,7 @@ export const imageScanQueue = new Queue("scan.image", {
     backoff: { type: "exponential" as const, delay: 10_000 },
   },
 })
+export const serviceInstallQueue = new Queue("service.install", { connection, defaultJobOptions: deployDefaults })
 export const cleanupQueue = new Queue("cleanup.build", { connection })
 export const appDeleteQueue = new Queue("app.delete", { connection })
 
@@ -98,6 +99,7 @@ export const logArchiveQueue = new Queue("logs.archive", {
 /** Queues whose critical state transitions are projected through JOB-01. */
 export const transactionalOutboxQueues = [
   deployQueue,
+  serviceInstallQueue,
   gcQueue,
   gcImagesQueue,
   gcBuildCacheQueue,
@@ -108,6 +110,7 @@ export const transactionalOutboxQueues = [
 assertTransactionalQueueRegistry(transactionalOutboxQueues)
 
 export type QueueName =
+  | "service.install"
   | "deploy"
   | "scan.image"
   | "gc.registry"

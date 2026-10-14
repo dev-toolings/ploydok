@@ -21,7 +21,7 @@ const REAL_E2E = process.env["PLOYDOK_E2E_REAL"] === "1"
 const WEB_URL = process.env["E2E_WEB_URL"] ?? "http://localhost:5173"
 const CADDY_ADMIN_URL =
   process.env["CADDY_ADMIN_URL"] ?? "http://127.0.0.1:2020"
-const CADDY_HTTP_PORT = 8180
+const CADDY_HTTP_PORT = 8181
 const REPO_ROOT = path.resolve(
   fileURLToPath(new URL("../../..", import.meta.url))
 )

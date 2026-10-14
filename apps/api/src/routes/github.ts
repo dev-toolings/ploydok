@@ -29,6 +29,7 @@ import {
   encryptField,
 } from "../github/app-credentials"
 import { buildManifest } from "../github/manifest"
+import { signAppJwt } from "../github/jwt"
 import { childLogger } from "../logger"
 import { GitHubCache } from "../github/cache"
 import { GitHubProvider } from "../github/client"
@@ -1274,6 +1275,89 @@ githubRouter.post("/app/import", async (c) => {
     )
   }
 
+  const currentConfig = await getGitHubAppConfig(db)
+  if (currentConfig && currentConfig.app_id !== parsed.data.appId) {
+    return c.json(
+      {
+        error: "github_app_mismatch",
+        message:
+          "Reconnect the currently configured GitHub App using its original App ID.",
+      },
+      409
+    )
+  }
+
+  let jwt: string
+  try {
+    jwt = signAppJwt(privateKey, parsed.data.appId)
+  } catch {
+    return c.json(
+      {
+        error: "invalid_private_key",
+        message: "The private key must be a valid RSA PEM key.",
+      },
+      400
+    )
+  }
+
+  let verifiedApp: { id: number; client_id: string; slug: string; name: string }
+  try {
+    const response = await fetch("https://api.github.com/app", {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${jwt}`,
+        "User-Agent": "ploydok",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      response.status === 404
+    ) {
+      return c.json(
+        {
+          error: "github_app_credentials_invalid",
+          message:
+            "GitHub rejected the App ID or private key. The existing configuration was preserved.",
+        },
+        422
+      )
+    }
+    if (!response.ok)
+      throw new Error(`GitHub App verification returned ${response.status}`)
+    verifiedApp = z
+      .object({
+        id: z.number().int().positive(),
+        client_id: z.string().min(1),
+        slug: z.string().min(1),
+        name: z.string().min(1),
+      })
+      .parse(await response.json())
+  } catch {
+    return c.json(
+      {
+        error: "github_app_verification_failed",
+        message:
+          "Unable to verify the App with GitHub. The existing configuration was preserved. Retry later.",
+      },
+      502
+    )
+  }
+  if (
+    String(verifiedApp.id) !== parsed.data.appId ||
+    verifiedApp.client_id !== parsed.data.clientId
+  ) {
+    return c.json(
+      {
+        error: "github_app_mismatch",
+        message: "The App ID and Client ID must belong to the same GitHub App.",
+      },
+      422
+    )
+  }
+
   const [clientSecretResult, pemResult, webhookSecretResult] =
     await Promise.all([
       encryptField(parsed.data.clientSecret),
@@ -1284,8 +1368,8 @@ githubRouter.post("/app/import", async (c) => {
   await saveGitHubAppConfig(db, {
     app_id: parsed.data.appId,
     client_id: parsed.data.clientId,
-    slug: parsed.data.slug,
-    name: parsed.data.name,
+    slug: verifiedApp.slug,
+    name: verifiedApp.name,
     client_secret_enc: clientSecretResult.enc,
     client_secret_nonce: clientSecretResult.nonce,
     pem_enc: pemResult.enc,
@@ -1295,14 +1379,31 @@ githubRouter.post("/app/import", async (c) => {
   })
 
   const syncId = nanoid()
-  void enqueueProviderReposSync({ provider: "github", syncId }).catch((err) =>
+  evictAllInstallationTokens()
+  ghCache.invalidate()
+  const requestedBy = c.get("user")?.id
+  try {
+    await enqueueProviderReposSync({
+      provider: "github",
+      syncId,
+      ...(requestedBy ? { requestedBy } : {}),
+    })
+  } catch (err) {
     log.warn({ err, syncId }, "github app import sync enqueue failed")
-  )
+    return c.json(
+      {
+        error: "github_app_sync_failed",
+        message:
+          "The credentials were saved, but repository synchronization could not start. Retry the reconnection.",
+      },
+      503
+    )
+  }
 
   return c.json({
     configured: true,
-    name: parsed.data.name,
-    slug: parsed.data.slug,
+    name: verifiedApp.name,
+    slug: verifiedApp.slug,
     app_id: parsed.data.appId,
     install_url: `${getApiOrigin()}/github/installations/start`,
   })

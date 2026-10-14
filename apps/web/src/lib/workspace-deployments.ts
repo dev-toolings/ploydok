@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import { toast } from "sonner"
 import { apiFetch, invalidateGetCache } from "./api"
 import { useEventsSubscription } from "./events-provider"
@@ -218,6 +223,7 @@ export function useWorkspaceDeployments(
       ),
     enabled: Boolean(orgSlug),
     staleTime: 10_000,
+    placeholderData: keepPreviousData,
     refetchInterval: (query) =>
       hasActiveDeployments(query.state.data?.deployments) ? 3_000 : 30_000,
   })

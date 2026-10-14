@@ -6,12 +6,13 @@ import {
   BackendUnavailableError,
   SecondFactorRequiredError,
   SessionExpiredError,
+  apiErrorMessage,
 } from "./errors"
 import { apiBaseUrl } from "./base"
 import type { RefreshResult } from "./errors"
 
 // ---------------------------------------------------------------------------
-// Module-scope state — shared in both runtimes:
+// Module-scope state: shared in both runtimes:
 //   - On the client (single user, single process): correct.
 //   - On the SSR server: csrfToken/refreshPromise/getCache are not user-secret;
 //     refresh is rarely contended because each beforeLoad makes ~1 /me call.
@@ -176,7 +177,7 @@ async function buildSsrCookieHeader(): Promise<string> {
   try {
     overrides = await getExistingSsrOverrides()
   } catch {
-    // outside an SSR request context — proceed with base only
+    // outside an SSR request context: proceed with base only
   }
 
   const merged: Record<string, string> = {
@@ -218,7 +219,7 @@ async function applySsrSetCookies(setCookies: Array<string>): Promise<void> {
       else overrides.set(name, value)
     }
   } catch {
-    // no request context — ignore
+    // no request context: ignore
   }
 }
 
@@ -228,7 +229,10 @@ async function applySsrSetCookies(setCookies: Array<string>): Promise<void> {
 
 async function fetchCsrf(state: RuntimeState): Promise<string> {
   const res = await rawRequest("/auth/csrf", { method: "GET" })
-  if (!res.ok) throw new Error("Failed to fetch CSRF token")
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw responseError(res, data, "/auth/csrf", "GET")
+  }
   const data = (await res.json()) as { token: string }
   state.csrfToken = data.token
   return data.token
@@ -240,14 +244,15 @@ async function getCsrfToken(): Promise<string> {
   if (state.csrfPromise) return state.csrfPromise
   const promise = fetchCsrf(state)
   state.csrfPromise = promise
-  void promise.finally(() => {
+  try {
+    return await promise
+  } finally {
     if (state.csrfPromise === promise) state.csrfPromise = null
-  })
-  return promise
+  }
 }
 
 // ---------------------------------------------------------------------------
-// rawRequest — SSR forwards merged Cookie header (incoming + rotation overrides)
+// rawRequest: SSR forwards merged Cookie header (incoming + rotation overrides)
 // ---------------------------------------------------------------------------
 
 async function rawRequest(path: string, init: RequestInit): Promise<Response> {
@@ -270,11 +275,21 @@ async function rawRequest(path: string, init: RequestInit): Promise<Response> {
       ck.includes("ploydok_refresh=")
     )
   }
-  const res = await fetch(`${apiBaseUrl()}${path}`, {
-    credentials: "include",
-    ...init,
-    headers,
-  })
+  const url = `${apiBaseUrl()}${path}`
+  let res: Response
+  try {
+    res = await fetch(url, {
+      credentials: "include",
+      ...init,
+      headers,
+    })
+  } catch (cause) {
+    throw new BackendUnavailableError(
+      undefined,
+      { method: init.method ?? "GET", url },
+      cause
+    )
+  }
   if (typeof window === "undefined" && process.env["PLOYDOK_DEBUG_AUTH"]) {
     console.log("[ssr-auth] rawRequest", path, "→", res.status)
   }
@@ -287,7 +302,7 @@ function toBackendUnavailableError(error: unknown): BackendUnavailableError {
 }
 
 // ---------------------------------------------------------------------------
-// refreshSession — single-flight, typed result
+// refreshSession: single-flight, typed result
 // ---------------------------------------------------------------------------
 
 async function doRefresh(): Promise<RefreshResult> {
@@ -377,6 +392,50 @@ function isPreSessionPath(path: string): boolean {
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
+function responseError(
+  response: Response,
+  data: unknown,
+  path: string,
+  method: string
+): ApiError {
+  const payload = data as {
+    error?: {
+      code?: string
+      message?: string
+      fields?: Record<string, string>
+      req_id?: string
+    }
+  } | null
+  const code = payload?.error?.code ?? "UNKNOWN"
+  const request = {
+    method,
+    url: `${apiBaseUrl()}${path}`,
+    requestId:
+      payload?.error?.req_id ??
+      response.headers.get("x-request-id") ??
+      undefined,
+  }
+  const message = apiErrorMessage(
+    response.status,
+    code,
+    payload?.error?.message ?? response.statusText,
+    request
+  )
+  if (
+    response.status === 403 &&
+    (code === "SECOND_FACTOR_REQUIRED" || code === "totp_required")
+  ) {
+    return new SecondFactorRequiredError(message)
+  }
+  return new ApiError(
+    response.status,
+    code,
+    message,
+    payload?.error?.fields,
+    request
+  )
+}
+
 interface ApiRequestInit {
   method?: Method
   body?: unknown
@@ -431,22 +490,7 @@ async function apiFetchCore<T>(
   const data: unknown = await res.json().catch(() => ({}))
 
   if (!res.ok) {
-    const errData = data as {
-      error?: {
-        code?: string
-        message?: string
-        fields?: Record<string, string>
-      }
-    }
-    const code = errData.error?.code ?? "UNKNOWN"
-    const message = errData.error?.message ?? "An error occurred"
-    if (
-      res.status === 403 &&
-      (code === "SECOND_FACTOR_REQUIRED" || code === "totp_required")
-    ) {
-      throw new SecondFactorRequiredError(message)
-    }
-    throw new ApiError(res.status, code, message, errData.error?.fields)
+    throw responseError(res, data, path, method)
   }
 
   if (
