@@ -93,13 +93,16 @@ for image in "${images[@]}"; do
     --build-arg "PLOYDOK_BUILD_VERSION=$build_version" \
     --provenance=mode=max --sbom=true --tag "$target" \
     --output "type=oci,dest=$tmp/$image.tar" "$context"
+  # Trivy 0.67 accepts OCI layouts as directories, not OCI tar archives.
+  mkdir -p "$tmp/$image-oci"
+  tar -xf "$tmp/$image.tar" -C "$tmp/$image-oci"
   for platform in "${platforms[@]}"; do
     log "Scanning $image $platform"
     docker run --rm --user "$(id -u):$(id -g)" \
       -v "$tmp:/release" "$trivy" image \
       --db-repository ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2 \
       --no-progress --cache-dir /release/trivy-cache --platform "$platform" \
-      --exit-code 1 --ignore-unfixed --severity CRITICAL --input "/release/$image.tar"
+      --exit-code 1 --ignore-unfixed --severity CRITICAL --input "/release/$image-oci"
     log "PASS $image $platform"
   done
   if [[ "$image" == api && "$smoke" == 1 ]]; then

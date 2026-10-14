@@ -15,7 +15,7 @@ credential helpers must be available to skopeo if configured.
 The Dockerfiles, contexts, platforms, candidate build version, provenance and
 SBOM settings match the CI matrix in `.github/workflows/release-images.yml`.
 `--platform linux/amd64` selects the staging architecture; the default remains
-`linux/amd64,linux/arm64` as in CI. Each OCI archive is scanned for each selected platform with `aquasec/trivy:0.67.2`
+`linux/amd64,linux/arm64` as in CI. Each OCI archive is extracted to a temporary layout and scanned for each selected platform with `aquasec/trivy:0.67.2`
 and `image --exit-code 1 --ignore-unfixed --severity CRITICAL`. CI's
 `--ignore-unfixed` policy is retained; no vulnerability-specific exclusions
 are added. The official GHCR database registry is tried before the Google
