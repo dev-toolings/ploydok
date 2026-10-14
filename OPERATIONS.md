@@ -24,12 +24,16 @@ state and authenticated agent host statistics. Components: Prometheus,
 Alertmanager, Ploydok API, Postgres, Rust agent and the operator pager target.
 
 The installer must generate `PLOYDOK_METRICS_TOKEN` and configure the scrape
-without exposing the token or `/metrics` publicly. Stable installation requires
-an explicit alert receiver; a missing receiver is a release-gate failure. The
+without exposing the token or `/metrics` publicly. Installation supports
+an optional HTTPS alert receiver. Without one, installation and upgrades continue
+with a warning and Alertmanager uses a disabled receiver. Enable notifications
+by rerunning the installer with `--alert-webhook-url=<https-url>` or
+`PLOYDOK_ALERT_WEBHOOK_URL`; the URL is saved in
+`/var/lib/ploydok/secrets/alert-webhook-url`. The
 scrape uses authenticated HTTP only on the internal, non-attachable monitoring
 network. Only Alertmanager joins the separate egress-enabled alerting network.
-Every install and upgrade sends a labelled test notification and fails if the
-receiver does not accept it.
+When a receiver is configured, each install and upgrade sends a labelled test
+notification and fails if the receiver does not accept it.
 
 ## Initial service objectives
 

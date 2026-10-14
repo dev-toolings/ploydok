@@ -457,24 +457,45 @@ set -e
 [[ "$abort_status" -eq 2 ]] || { echo "abort mode returned $abort_status, expected 2" >&2; exit 1; }
 assert_not_exists "$TMP/abort-root/opt/ploydok/docker-compose.yml"
 
-set +e
-env -u PLOYDOK_ALERT_WEBHOOK_URL \
-  PLOYDOK_INSTALL_DRY_RUN=1 \
-  PLOYDOK_INSTALL_ROOT="$TMP/no-alert-root" \
-  bash "$ROOT/installer/install.sh" \
-    --mode=coexist \
-    --runtime=compose \
-    --public-host=ploydok.test \
-    --skip-docker-install \
-    --yes \
-    --version=test >/dev/null 2>&1
-missing_alert_status=$?
-set -e
-[[ "$missing_alert_status" -eq 2 ]] || {
-  echo "missing alert receiver returned $missing_alert_status, expected 2" >&2
-  exit 1
-}
-assert_not_exists "$TMP/no-alert-root/opt/ploydok/docker-compose.yml"
+for runtime in compose swarm; do
+  no_alert_output="$(
+    env -u PLOYDOK_ALERT_WEBHOOK_URL PLOYDOK_INSTALL_DRY_RUN=1 \
+      PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+      bash "$ROOT/installer/install.sh" --mode=coexist --runtime="$runtime" \
+        --public-host=ploydok.test --skip-docker-install --yes --version=test 2>&1
+  )"
+  assert_text_contains "$no_alert_output" "WARN: alerting disabled"
+  assert_text_contains "$no_alert_output" "--alert-webhook-url"
+  assert_contains "$TMP/no-alert-$runtime-root/var/lib/ploydok/config/alertmanager.yml" "receiver: disabled"
+  assert_text_not_contains "$(cat "$TMP/no-alert-$runtime-root/var/lib/ploydok/config/alertmanager.yml")" "url_file:"
+  upgrade_no_alert_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+    bash "$ROOT/installer/ploydok-cli" upgrade --version=test2 2>&1)"
+  assert_text_contains "$upgrade_no_alert_output" "WARN: alerting disabled"
+  PLOYDOK_ALERT_WEBHOOK_URL=https://alerts.example.test/enabled PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+    bash "$ROOT/installer/install.sh" --mode=coexist --runtime="$runtime" \
+      --public-host=ploydok.test --skip-docker-install --yes --version=test >/dev/null 2>&1
+  assert_contains "$TMP/no-alert-$runtime-root/var/lib/ploydok/config/alertmanager.yml" "url_file:"
+  preserved_output="$(env -u PLOYDOK_ALERT_WEBHOOK_URL PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+    bash "$ROOT/installer/install.sh" --mode=coexist --runtime="$runtime" \
+      --public-host=ploydok.test --skip-docker-install --yes --version=test 2>&1)"
+  assert_text_not_contains "$preserved_output" "alerting disabled"
+  assert_contains "$TMP/no-alert-$runtime-root/var/lib/ploydok/secrets/alert-webhook-url" "https://alerts.example.test/enabled"
+done
+
+for receiver in 'http://alerts.test' $'https://alerts.test\ninvalid'; do
+  set +e
+  invalid_alert_output="$(PLOYDOK_ALERT_WEBHOOK_URL="$receiver" PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/invalid-alert-root" \
+    bash "$ROOT/installer/install.sh" --mode=coexist --runtime=compose \
+      --public-host=ploydok.test --skip-docker-install --yes --version=test 2>&1)"
+  invalid_alert_status=$?
+  set -e
+  [[ "$invalid_alert_status" -eq 2 ]] || { echo "invalid alert receiver accepted" >&2; exit 1; }
+  assert_text_contains "$invalid_alert_output" "must be an HTTPS Alertmanager-compatible receiver"
+  assert_not_exists "$TMP/invalid-alert-root/opt/ploydok/docker-compose.yml"
+done
 
 bash "$ROOT/installer/tests/bootstrap.sh"
 bash "$ROOT/installer/tests/disaster-recovery.sh"

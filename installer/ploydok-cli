@@ -224,7 +224,10 @@ require_monitoring_assets() {
 test_alert_receiver() {
   local receiver_file payload api_payload runtime descriptor env_file compose alertmanager_id prometheus_id
   receiver_file="$(real_path "$DATA_DIR/secrets/alert-webhook-url")"
-  [[ -f "$receiver_file" ]] || return 1
+  if [[ ! -f "$receiver_file" ]] || ! grep -q '[^[:space:]]' "$receiver_file"; then
+    echo "[ploydok-cli] WARN: alerting disabled; rerun the installer with --alert-webhook-url or PLOYDOK_ALERT_WEBHOOK_URL to enable alerts" >&2
+    return 0
+  fi
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "[ploydok-cli] dry-run: send explicit test notification to the configured alert receiver"
     return 0

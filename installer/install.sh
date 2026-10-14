@@ -48,7 +48,7 @@ Options:
   --public-scheme=http|https
   --public-port=<port>
   --domain-base=<default-app-domain-suffix>
-  --alert-webhook-url=<https-url> (required alert receiver for production)
+  --alert-webhook-url=<https-url> (optional HTTPS alert receiver; alerts are disabled when omitted)
   --skip-docker-install
   --manage-firewall
   --yes
@@ -120,10 +120,29 @@ real_path() {
 }
 
 validate_alerting() {
+  if [[ -z "$ALERT_WEBHOOK_URL" ]]; then
+    warn "alerting disabled: rerun with --alert-webhook-url=<https-url> or PLOYDOK_ALERT_WEBHOOK_URL to enable alerts (saved in $DATA_DIR/secrets/alert-webhook-url)"
+    return 0
+  fi
   [[ "$ALERT_WEBHOOK_URL" =~ ^https://[^[:space:]]+$ ]] ||
     die "--alert-webhook-url (or PLOYDOK_ALERT_WEBHOOK_URL) must be an HTTPS Alertmanager-compatible receiver" 2
   [[ "$ALERT_WEBHOOK_URL" != *$'\n'* && "$ALERT_WEBHOOK_URL" != *$'\r'* ]] ||
     die "alert webhook URL contains an invalid newline" 2
+}
+
+render_alertmanager() {
+  if [[ -n "$ALERT_WEBHOOK_URL" ]]; then
+    render_template alertmanager.yml
+  else
+    cat <<'YAML'
+# ploydok-monitoring-schema: 1
+# Alerting disabled; monitoring remains available.
+route:
+  receiver: disabled
+receivers:
+  - name: disabled
+YAML
+  fi
 }
 
 load_existing_alerting() {
@@ -834,7 +853,7 @@ write_templates() {
   render_template buildkitd.toml | write_file "$DATA_DIR/config/buildkitd.toml" 0644 ploydok:ploydok
   render_template prometheus.yml | write_file "$DATA_DIR/config/prometheus.yml" 0644 ploydok:ploydok
   render_template ploydok-alerts.yml | write_file "$DATA_DIR/config/ploydok-alerts.yml" 0644 ploydok:ploydok
-  render_template alertmanager.yml | write_file "$DATA_DIR/config/alertmanager.yml" 0644 ploydok:ploydok
+  render_alertmanager | write_file "$DATA_DIR/config/alertmanager.yml" 0644 ploydok:ploydok
   render_template ploydok.target | write_file "/etc/systemd/system/ploydok.target" 0644
   if [[ "$MODE" == "coexist" ]]; then
     render_template nginx-ploydok.conf | write_file "/etc/nginx/snippets/ploydok.conf" 0644
@@ -1030,6 +1049,7 @@ wait_monitoring_pipeline_swarm() {
 }
 
 test_alert_receiver() {
+  [[ -n "$ALERT_WEBHOOK_URL" ]] || return 0
   local payload api_payload alertmanager_id prometheus_id compose
   if [[ "$DRY_RUN" == "1" ]]; then
     log "dry-run: send explicit test notification to the configured alert receiver"
