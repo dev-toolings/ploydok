@@ -35,7 +35,7 @@ const input = {
   templateVersion: "1",
   name: "Fixture",
   compose:
-    "services:\n  first:\n    image: alpine:3.20\n    ports: ['8080:80']\n    environment:\n      DOMAIN: ${domain}\n      PASSWORD: ${password}\n  second:\n    image: alpine:3.20\n    depends_on: [first]\n",
+    "services:\n  first:\n    image: alpine:3.20\n    expose: [80]\n    environment:\n      DOMAIN: ${domain}\n      PASSWORD: ${password}\n  second:\n    image: alpine:3.20\n",
 }
 
 async function isolated(run: (db: Db) => Promise<void>) {

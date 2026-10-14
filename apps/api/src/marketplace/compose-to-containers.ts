@@ -3,6 +3,7 @@ import { parse } from "yaml"
 
 export interface ComposeToContainersInput {
   compose: string
+  runtime?: "swarm" | "docker"
   servicePrefix: string
   network: string
   labels?: Record<string, string>
@@ -22,6 +23,7 @@ export interface ComposeContainer {
   }>
   restartPolicy: "no" | "always" | "unless-stopped" | "on-failure"
   command: string[]
+  user?: string
   dependsOn: string[]
   composeName?: string
   healthcheck?: {
@@ -35,9 +37,25 @@ export interface ComposeContainer {
 }
 
 export class UnsupportedComposeFeatureError extends Error {
+  readonly code = "VALIDATION_ERROR"
   constructor(message: string) {
     super(message)
     this.name = "UnsupportedComposeFeatureError"
+  }
+}
+
+export const ACCEPTED_COMPOSE_SUBSET = Object.freeze({
+  topLevel: ["services", "volumes", "version"],
+  service: ["image", "environment", "labels", "volumes", "command", "user", "healthcheck", "expose"],
+  legacyOnly: ["ports", "restart", "depends_on"],
+  healthcheck: ["test", "interval", "timeout", "retries", "start_period"],
+})
+// x-* extension metadata is permitted but never affects runtime behavior.
+function assertFields(raw: Record<string, unknown>, allowed: readonly string[], context: string) {
+  for (const key of Object.keys(raw)) {
+    if (!allowed.includes(key) && !key.startsWith("x-")) {
+      throw new UnsupportedComposeFeatureError(`${context}: "${key}" is not supported; refusing before resource creation`)
+    }
   }
 }
 
@@ -69,10 +87,10 @@ function parseEnv(raw: unknown, serviceName: string): Record<string, string> {
   if (Array.isArray(raw)) {
     const result: Record<string, string> = {}
     for (const item of raw) {
-      if (typeof item !== "string") continue
+      if (typeof item !== "string") throw new UnsupportedComposeFeatureError("environment entries must be strings")
       const idx = item.indexOf("=")
       if (idx === -1) {
-        result[item] = ""
+        throw new UnsupportedComposeFeatureError("environment inheritance is not supported; provide KEY=value")
       } else {
         result[item.slice(0, idx)] = item.slice(idx + 1)
       }
@@ -82,7 +100,8 @@ function parseEnv(raw: unknown, serviceName: string): Record<string, string> {
   if (typeof raw === "object" && raw !== null) {
     const result: Record<string, string> = {}
     for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      result[k] = v === null || v === undefined ? "" : String(v)
+      if (v === null || v === undefined) throw new UnsupportedComposeFeatureError("environment inheritance is not supported; provide explicit values")
+      result[k] = String(v)
     }
     return result
   }
@@ -122,7 +141,8 @@ function parseVolumes(
   servicePrefix: string,
   namedVolumes: Set<string>
 ): Array<{ hostPath: string; containerPath: string; readOnly: boolean }> {
-  if (!raw || !Array.isArray(raw)) return []
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) throw new UnsupportedComposeFeatureError(`Service "${serviceName}": volumes must be a list`)
   const result: Array<{
     hostPath: string
     containerPath: string
@@ -139,6 +159,7 @@ function parseVolumes(
       }
       const src = parts[0] ?? ""
       const dst = parts[1] ?? ""
+      if (parts.length > 3 || (parts[2] !== undefined && !["ro", "rw"].includes(parts[2]))) throw new UnsupportedComposeFeatureError(`Service "${serviceName}": unsupported volume options`)
       const mode = parts[2]
       const readOnly = mode === "ro"
       const hostPath = resolveHostPath(
@@ -150,6 +171,8 @@ function parseVolumes(
       result.push({ hostPath, containerPath: dst, readOnly })
     } else if (typeof item === "object" && item !== null) {
       const v = item as Record<string, unknown>
+      assertFields(v, ["source", "target", "read_only", "type"], `Service "${serviceName}" volume`)
+      if (v.type !== undefined && !["bind", "volume"].includes(String(v.type))) throw new UnsupportedComposeFeatureError("Unsupported volume type")
       const src = String(v.source ?? "")
       const dst = String(v.target ?? "")
       const readOnly = v.read_only === true
@@ -219,13 +242,14 @@ function parsePorts(
         proto = slashParts[1] === "udp" ? "udp" : "tcp"
       }
       const parts = spec.split(":")
+      if (parts.length > 3) throw new UnsupportedComposeFeatureError(`Service "${serviceName}": address-specific port publication is not supported`)
       // parts may be [ip, hostPort, containerPort] or [hostPort, containerPort] or [containerPort]
       let hostPort: number
       let containerPort: number
       if (parts.length === 3) {
-        // IP:host:container
-        hostPort = parseInt(parts[1] ?? "", 10)
-        containerPort = parseInt(parts[2] ?? "", 10)
+        throw new UnsupportedComposeFeatureError(
+          `Service "${serviceName}": address-specific port publication "${item}" cannot preserve host IP in Swarm`
+        )
       } else if (parts.length === 2) {
         hostPort = parseInt(parts[0] ?? "", 10)
         containerPort = parseInt(parts[1] ?? "", 10)
@@ -241,6 +265,7 @@ function parsePorts(
       result.push({ containerPort, hostPort, proto })
     } else if (typeof item === "object" && item !== null) {
       const p = item as Record<string, unknown>
+      assertFields(p, ["target", "published", "protocol"], `Service "${serviceName}" port`)
       result.push({
         containerPort: Number(p.target ?? 0),
         hostPort: Number(p.published ?? p.target ?? 0),
@@ -253,21 +278,38 @@ function parsePorts(
 }
 
 function parseCommand(raw: unknown): string[] {
-  if (!raw) return []
-  if (Array.isArray(raw)) return raw.map(String)
-  if (typeof raw === "string") {
-    // Simple space-split — does not handle quoted strings
-    return raw.trim().split(/\s+/)
+  if (raw === undefined || raw === null || raw === "") return []
+  if (Array.isArray(raw) && raw.every(value => typeof value === "string")) return raw
+  if (typeof raw !== "string") throw new UnsupportedComposeFeatureError("command must be a string or string list")
+  const args: string[] = []
+  let value = "", quote = "", started = false
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw[i]!
+    if (char === "\\" && quote !== "'") {
+      const next = raw[++i]
+      if (next === undefined) throw new UnsupportedComposeFeatureError("command has an unfinished escape")
+      // Within double quotes only shell-special characters lose their backslash.
+      value += quote === '"' && !['$', '`', '"', "\\", "\n"].includes(next) ? "\\" + next : next
+      started = true
+    } else if (quote) {
+      if (char === quote) quote = ""
+      else value += char
+    } else if (char === '"' || char === "'") {
+      quote = char; started = true
+    } else if (/\s/.test(char)) {
+      if (started) { args.push(value); value = ""; started = false }
+    } else { value += char; started = true }
   }
-  return []
+  if (quote) throw new UnsupportedComposeFeatureError("command has an unterminated quote")
+  if (started) args.push(value)
+  return args
 }
 
 function parseDependsOn(raw: unknown): string[] {
   if (!raw) return []
   if (Array.isArray(raw)) return raw.map(String)
   if (typeof raw === "object" && raw !== null) {
-    // Map form: { "db": { condition: "service_healthy" } } — keep keys only
-    return Object.keys(raw as Record<string, unknown>)
+    throw new UnsupportedComposeFeatureError("depends_on conditions (including service_healthy) are not supported")
   }
   return []
 }
@@ -275,8 +317,10 @@ function parseDependsOn(raw: unknown): string[] {
 function parseHealthcheck(
   raw: unknown
 ): ComposeContainer["healthcheck"] | undefined {
-  if (!raw || typeof raw !== "object") return undefined
+  if (raw === undefined) return undefined
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new UnsupportedComposeFeatureError("healthcheck must be a map")
   const h = raw as Record<string, unknown>
+  assertFields(h, ACCEPTED_COMPOSE_SUBSET.healthcheck, "healthcheck")
 
   const testRaw = h.test
   let test: string[] = []
@@ -286,6 +330,12 @@ function parseHealthcheck(
     test = ["CMD-SHELL", testRaw]
   }
 
+  if (!test.length || !["CMD", "CMD-SHELL", "NONE"].includes(test[0]!)) throw new UnsupportedComposeFeatureError("healthcheck requires a CMD, CMD-SHELL or NONE test")
+  for (const field of ["interval", "timeout", "start_period"]) {
+    if (h[field] !== undefined && (!/^\d+(s|m|h)?$/.test(String(h[field])) || parseDuration(h[field]) === undefined))
+      throw new UnsupportedComposeFeatureError(`healthcheck ${field} requires whole-second precision`)
+  }
+  if (h.retries !== undefined && (!Number.isSafeInteger(h.retries) || Number(h.retries) < 0)) throw new UnsupportedComposeFeatureError("healthcheck retries must be a nonnegative integer")
   const hc: NonNullable<ComposeContainer["healthcheck"]> = { test }
   const interval = parseDuration(h.interval)
   const timeout = parseDuration(h.timeout)
@@ -414,6 +464,7 @@ export function composeToContainers(
   }
 
   assertNoUnsupportedTopLevel(doc)
+  assertFields(doc, ACCEPTED_COMPOSE_SUBSET.topLevel, "Compose")
 
   if (doc.include !== undefined) {
     throw new UnsupportedComposeFeatureError(
@@ -431,6 +482,8 @@ export function composeToContainers(
   const namedVolumes = new Set<string>()
   if (doc.volumes && typeof doc.volumes === "object") {
     for (const key of Object.keys(doc.volumes as Record<string, unknown>)) {
+      const definition = (doc.volumes as Record<string, unknown>)[key]
+      if (definition && Object.keys(definition as object).length) throw new UnsupportedComposeFeatureError(`Volume "${key}": driver/external/options definitions are not supported`)
       namedVolumes.add(key)
     }
   }
@@ -442,7 +495,22 @@ export function composeToContainers(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const svc = svcRaw as any
 
+    if (!svc || typeof svc !== "object" || Array.isArray(svc)) throw new UnsupportedComposeFeatureError(`Service "${svcName}" must be a map`)
     assertNoUnsupportedServiceFeatures(svcName, svc)
+    assertFields(svc, [...ACCEPTED_COMPOSE_SUBSET.service, ...ACCEPTED_COMPOSE_SUBSET.legacyOnly], `Service "${svcName}"`)
+    if (input.runtime === "swarm") {
+      if (svc.command === "" || (Array.isArray(svc.command) && svc.command.length === 0))
+        throw new UnsupportedComposeFeatureError("Empty command override cannot be preserved by the Swarm contract")
+      // The agent has no faithful published-port/restart/dependency contract.
+      if (svc.ports !== undefined) {
+        parsePorts(svc.ports, svcName) // Give IP bindings their precise diagnostic.
+        throw new UnsupportedComposeFeatureError(`Service "${svcName}": ports publication is not supported by the Swarm contract; use expose for internal ports and Caddy ingress`)
+      }
+      for (const field of ["restart", "depends_on"]) if (svc[field] !== undefined)
+        throw new UnsupportedComposeFeatureError(`Service "${svcName}": ${field} cannot preserve its Compose semantics in Swarm (including service_healthy); refusing before creation`)
+    }
+    if (svc.user !== undefined && typeof svc.user !== "string" && typeof svc.user !== "number")
+      throw new UnsupportedComposeFeatureError(`Service "${svcName}": user must be a string or numeric UID`)
 
     if (!svc.image) {
       throw new Error(`Service "${svcName}": "image" is required`)
@@ -463,7 +531,9 @@ export function composeToContainers(
     const restartPolicy = parseRestartPolicy(svc.restart)
     const healthcheck = parseHealthcheck(svc.healthcheck)
     const containerName = `${servicePrefix}-${svcName}`
-    const exposedPort = ports[0]?.containerPort
+    if (svc.expose !== undefined && (!Array.isArray(svc.expose) || svc.expose.some((port: unknown) => !/^\d+$/.test(String(port)) || Number(port) < 1 || Number(port) > 65535)))
+      throw new UnsupportedComposeFeatureError(`Service "${svcName}": expose must contain valid TCP port numbers`)
+    const exposedPort = svc.expose?.length ? Number(svc.expose[0]) : ports[0]?.containerPort
 
     const entry: ComposeContainer & { _composeName: string } = {
       _composeName: svcName,
@@ -477,6 +547,7 @@ export function composeToContainers(
       ports,
       restartPolicy,
       command,
+      ...(svc.user !== undefined ? { user: String(svc.user) } : {}),
       dependsOn,
     }
     if (healthcheck !== undefined) entry.healthcheck = healthcheck

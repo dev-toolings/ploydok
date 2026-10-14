@@ -266,7 +266,7 @@ describe("installFromTemplate", () => {
       name: "My PB",
       // compose with ${domain} DSL + a port so the entrypoint heuristic succeeds
       compose:
-        'services:\n  app:\n    image: pocketbase:latest\n    ports:\n      - "8080:8080"\n    environment:\n      DOMAIN: ${domain}\n',
+        'services:\n  app:\n    image: pocketbase:latest\n    expose: [8080]\n    environment:\n      DOMAIN: ${domain}\n',
     })
 
 
@@ -513,7 +513,7 @@ describe("deleteService", () => {
 
 describe("marketplace project isolation", () => {
   it("plans only its own project network, with a reachable ingress upstream", () => {
-    const compose_raw = 'services:\n  web:\n    image: nginx:alpine\n    ports: ["80:80"]\n';
+    const compose_raw = 'services:\n  web:\n    image: nginx:alpine\n    expose: [80]\n';
     const plans = ["one", "two"].map(id => planServiceStack(
       { id, slug: "demo", compose_raw }, `ploydok-swarm-proj-${id}`, "owner"
     ));
@@ -524,4 +524,19 @@ describe("marketplace project isolation", () => {
     }
     expect(plans[0]!.services[0]!.networks).not.toEqual(plans[1]!.services[0]!.networks);
   });
+});
+
+it("rejects unsupported Compose before durable acceptance or resource creation", async () => {
+  const db = makeDb();
+  (db.select as any).mockImplementation(() => ({
+    from: () => ({ where: () => ({ limit: async () => [{ id: "proj-1" }] }) }),
+  }));
+  const before = mockInsertService.mock.calls.length;
+  const agent = makeAgent();
+  await expect(installFromTemplate({ db, agent }, "user-1", {
+    projectId: "proj-1", name: "Bad", templateId: "fixture", templateVersion: "1",
+    compose: 'services:\n  app:\n    image: nginx\n    ports: ["127.0.0.1:8080:80"]',
+  })).rejects.toThrow(/host IP/);
+  expect(mockInsertService.mock.calls.length).toBe(before);
+  expect((agent.containerCreate as any).mock.calls).toHaveLength(0);
 });

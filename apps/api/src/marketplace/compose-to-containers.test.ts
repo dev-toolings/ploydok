@@ -178,19 +178,8 @@ services:
     })
   })
 
-  it("port format 127.0.0.1:5432:5432", () => {
-    const result = run(`
-services:
-  db:
-    image: postgres:16
-    ports:
-      - "127.0.0.1:5432:5432"
-`)
-    expect(result[0]!.ports[0]).toEqual({
-      containerPort: 5432,
-      hostPort: 5432,
-      proto: "tcp",
-    })
+  it("rejects address-specific port publication instead of widening it", () => {
+    expect(() => run('services:\n  db:\n    image: postgres:16\n    ports: ["127.0.0.1:5432:5432"]')).toThrow(/host IP/)
   })
 
   it("healthcheck with 30s/1m intervals", () => {
@@ -220,7 +209,7 @@ services:
     image: alpine
     command: sh -c "echo hello"
 `)
-    expect(result[0]!.command).toEqual(["sh", "-c", '"echo', 'hello"'])
+    expect(result[0]!.command).toEqual(["sh", "-c", "echo hello"])
   })
 
   it("command array is preserved", () => {
@@ -298,18 +287,8 @@ services:
     ).toThrow(/"image" is required/)
   })
 
-  it("depends_on as map (condition form)", () => {
-    const result = run(`
-services:
-  app:
-    image: myapp
-    depends_on:
-      db:
-        condition: service_healthy
-  db:
-    image: postgres:16
-`)
-    expect(result[1]!.dependsOn).toEqual(["db"])
+  it("rejects readiness dependency conditions", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    depends_on:\n      db:\n        condition: service_healthy\n  db:\n    image: postgres:16')).toThrow(/service_healthy/)
   })
 
   it("networks override → UnsupportedComposeFeatureError", () => {

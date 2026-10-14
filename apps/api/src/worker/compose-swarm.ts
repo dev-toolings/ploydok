@@ -48,6 +48,7 @@ export type PlannedSwarmService = {
   labels: Record<string, string>
   networks: string[]
   mounts: Array<{ hostPath: string; containerPath: string; readOnly: boolean }>
+  user?: string
   command: string[]
   healthcheck?: ComposeContainer["healthcheck"]
   replicas: number
@@ -103,6 +104,7 @@ export function planComposeSwarmDeploy(input: {
   const replicas = Math.max(1, input.replicas ?? 1)
   const containers = composeToContainers({
     compose: input.compose,
+    runtime: "swarm",
     servicePrefix: `tmp-${input.kindToken}`,
     network: input.network,
     labels: input.labels,
@@ -141,6 +143,7 @@ export function planComposeSwarmDeploy(input: {
         containerPath: volume.containerPath,
         readOnly: volume.readOnly,
       })),
+      ...(container.user !== undefined ? { user: container.user } : {}),
       command: container.command,
       replicas,
       runtimePort,
@@ -198,7 +201,7 @@ export function plannedServiceToSpec(
     mounts: service.mounts,
     resourceLimits: { cpu: 0, memoryBytes: 0, pidsLimit: 0 },
     command: service.command,
-    user: "",
+    user: service.user ?? "",
     healthcheck: service.healthcheck
       ? {
           test: service.healthcheck.test,
