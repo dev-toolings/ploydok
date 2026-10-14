@@ -229,8 +229,23 @@ The perceived wait ends when the next page paints, not when the request resolves
 
 Orca 1.4.224 refuses `orca orchestration` from the SSH host CLI
 (`forbidden: ... enable "Allow this host's orca CLI to control Orca"`), and
-that setting is not exposed in this version. Until it is, delegate to another
-agent's live Orca terminal with the terminal commands instead:
+that setting is not exposed in this version. Until it is, use one of two
+channels:
+
+- **Live terminal** (below): reuses a running session's context and the user
+  can watch it. Best for follow-ups to an agent already working here.
+- **Non-interactive run**: a fresh context per run, result on stdout or in a
+  file, scriptable and parallel in separate worktrees. Best for bounded
+  tasks. Launch it as a background command from a worktree on its own
+  branch, with the order in a file:
+  - Codex: `codex exec -C <worktree> -s workspace-write -o /tmp/<tag>.md "$(cat /tmp/order.txt)"`
+  - Claude: `claude -p "$(cat /tmp/order.txt)" --output-format json --permission-mode acceptEdits` (run from the worktree)
+  - Grok: `grok --cwd <worktree> --prompt-file /tmp/order.txt --output-format json --always-approve`
+
+  Each run counts as one worker in the subagent budget (at most 5 at once)
+  and must not delegate further: say so in the order.
+
+Live terminal procedure:
 
 1. Find the target: `orca terminal list` (the preview shows the Codex, Claude
    or Grok TUI and its cwd).
