@@ -30,6 +30,7 @@ mock.module("@ploydok/db/queries", () => ({
 }))
 
 mock.module("@ploydok/db", () => ({
+  audit_log: {},
   services: {},
   projects: {},
   createDb: mock(() => ({})),
@@ -338,3 +339,34 @@ describe("service PAT scopes", () => {
     expect((await app.request("/services/svc-1/start", { method: "POST" })).status).toBe(200)
   })
 })
+
+describe("service secret disclosure", () => {
+  it("masks generated values on ordinary consultation", async () => {
+    mockGetServiceForUser.mockResolvedValue({
+      id: "svc-1", compose_raw: "PASSWORD=legacy-secret", generated_env: { password: "legacy-secret" },
+    });
+    const res = await makeApp({} as Db).request("/services/svc-1");
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain("legacy-secret");
+  });
+});
+
+it("reveals only to owners with write scope and audits before returning plaintext", async () => {
+  const { protectServiceSecrets } = await import("../services/service-secrets");
+  const protectedValues = await protectServiceSecrets("TOKEN=secret-fixture", { token: "secret-fixture" });
+  mockGetServiceForOwner.mockResolvedValue({ id: "svc-1", ...protectedValues });
+  const audit: unknown[] = [];
+  const db = { insert: () => ({ values: async (value: unknown) => { audit.push(value); } }) } as unknown as Db;
+  let res = await makeApp(db, ["services:read"]).request("/services/svc-1/secrets/reveal", { method: "POST" });
+  expect(res.status).toBe(403);
+  expect(audit).toHaveLength(0);
+  res = await makeApp(db, ["services:write"]).request("/services/svc-1/secrets/reveal", { method: "POST" });
+  expect(res.status).toBe(200);
+  expect(audit).toHaveLength(1);
+  expect(audit[0]).toMatchObject({ action: "service.secrets.revealed", target_id: "svc-1" });
+  expect(res.headers.get("Cache-Control")).toBe("no-store");
+  expect((await res.json() as any).secrets.token).toBe("secret-fixture");
+  mockGetServiceForOwner.mockResolvedValue(null);
+  res = await makeApp(db, ["services:write"]).request("/services/svc-1/secrets/reveal", { method: "POST" });
+  expect(res.status).toBe(404);
+});
