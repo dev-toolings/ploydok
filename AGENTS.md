@@ -202,6 +202,8 @@ The perceived wait ends when the next page paints, not when the request resolves
   Local unsigned images additionally require `PLOYDOK_INSTALL_SKIP_COSIGN=1`
   in the root install environment (staging only). Forks set
   `PLOYDOK_IMAGE_REGISTRY` and `PLOYDOK_COSIGN_IDENTITY_REGEXP` explicitly.
+- Staging and production x86-64 hosts need AVX2 (Bun): Proxmox VMs use CPU
+  type `host` or `x86-64-v3`, never the default `kvm64`.
 - `--alert-webhook-url` is optional. Omission disables alerting with a WARN on
   fresh installs; configured receivers must use HTTPS. Recommend alerting for
   production. Keep the exact commands in README.md aligned with installer code.

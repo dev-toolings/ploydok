@@ -414,6 +414,12 @@ managed databases consume resources in addition to the control plane. A 4 GB
 swap file can absorb short peaks on an 8 GB host, but it is not a substitute
 for RAM under sustained load.
 
+The x86-64 CPU must expose AVX2 (x86-64-v3) to the guest: the API and web
+images run on Bun. On Proxmox, set the VM CPU type to `host` (or
+`x86-64-v3`); the default `kvm64` hides AVX2 and the Bun processes grow until
+the kernel OOM killer stops them. Check with
+`grep -o -w avx2 /proc/cpuinfo | head -1`.
+
 ### Install Modes
 
 | Mode             | Use when                                                                        |
