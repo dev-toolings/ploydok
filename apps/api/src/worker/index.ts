@@ -78,6 +78,7 @@ import { startAuditAnchorCron, stopAuditAnchorCron } from "./jobs/audit-anchor"
 import { handleSyncProviderRepos } from "./handlers/sync-provider-repos"
 import type { SyncProviderReposPayload } from "./handlers/sync-provider-repos"
 import { handlePreviewDeploy } from "./handlers/preview-deploy"
+import { resumeServiceCreation } from "../services/marketplace-orchestrator"
 import { handlePreviewTeardown } from "./handlers/preview-teardown"
 import { getSharedAgent } from "../debug/singletons"
 import type { Agent } from "../agent"
@@ -515,6 +516,17 @@ export function startWorker(
         logger.info({ jobId: job.id }, "preview.deploy job started")
         await handlePreviewDeploy(db, job.data)
         logger.info({ jobId: job.id }, "preview.deploy done")
+      },
+      { connection, concurrency: 1 }
+    ),
+
+    new Worker(
+      "service.install",
+      async (job) => {
+        if (typeof job.data?.serviceId !== "string" || !job.data.serviceId) {
+          throw new UnrecoverableError("Invalid service installation payload")
+        }
+        await resumeServiceCreation({ db, agent: getSharedAgent() }, job.data.serviceId)
       },
       { connection, concurrency: 1 }
     ),

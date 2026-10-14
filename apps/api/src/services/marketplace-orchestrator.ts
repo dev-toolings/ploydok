@@ -10,10 +10,22 @@ import {
   uniqueServiceSlug,
   getServiceForUser,
   hasRole,
+  getServiceById,
+  createCreationSaga,
+  claimCreationSaga,
+  fenceCreationSaga,
+  recordClaimedCreationSagaStep,
+  completeClaimedCreationSaga,
+  beginClaimedCreationSagaCompensation,
+  completeClaimedCreationSagaCompensation,
+  retryClaimedCreationSaga,
 } from "@ploydok/db/queries"
 import type { ServiceRow, Db } from "@ploydok/db"
 import { resolveTemplate } from "@ploydok/shared"
 import { childLogger } from "../logger"
+import { enqueueWithDbRow } from "../worker/queue-enqueue"
+import { serviceInstallQueue } from "../worker/queues"
+import { isNotFound, toAgentError } from "../agent"
 import type { Agent } from "../agent"
 import type { CaddyClient } from "../caddy/client.js"
 import { getSharedCaddy } from "../debug/singletons.js"
@@ -57,6 +69,7 @@ export interface OrchestratorDeps {
     | "containerStart"
     | "containerStop"
     | "containerRemove"
+    | "listContainers"
   >
   db: Db
   caddy?: Pick<CaddyClient, "upsertRoute" | "removeRoute">
@@ -81,8 +94,7 @@ export async function installFromTemplate(
     compose: string
   }
 ): Promise<ServiceRow> {
-  const { agent, db } = deps
-  const caddy = deps.caddy ?? getSharedCaddy()
+  const { db } = deps
 
   const projectRows = await db
     .select({ id: projects.id })
@@ -107,48 +119,167 @@ export async function installFromTemplate(
     }
   )
 
-  const containers = composeToContainers({
-    compose: composeResolved,
-    servicePrefix: `ploydok-svc-${slug}`,
-    network: "ploydok-public",
-    labels: {
-      "ploydok.kind": "service",
-      "ploydok.service_id": serviceId,
-    },
-  })
-  const deployOrder = topoOrder(containers)
-
-  const row = await insertService(db, {
+  // Validate before accepting the durable intention. The resolved input remains
+  // on the service row; the outbox contains only its identifier.
+  serviceContainers({
     id: serviceId,
-    project_id: input.projectId,
-    name: input.name,
     slug,
-    template_id: input.templateId,
-    template_version: input.templateVersion,
-    status: "pending",
     compose_raw: composeResolved,
-    generated_env: generatedVars,
-    domain,
-    container_ids: [],
+  } as ServiceRow)
+  const accepted = await enqueueWithDbRow({
+    db,
+    queue: serviceInstallQueue,
+    jobName: "service.install.requested",
+    insertRow: async (tx) => {
+      const row = await insertService(tx, {
+        id: serviceId,
+        project_id: input.projectId,
+        name: input.name,
+        slug,
+        template_id: input.templateId,
+        template_version: input.templateVersion,
+        status: "pending",
+        compose_raw: composeResolved,
+        generated_env: generatedVars,
+        domain,
+        container_ids: [],
+      })
+      await createCreationSaga(tx, {
+        resourceType: "service",
+        resourceId: serviceId,
+        projectId: input.projectId,
+        requestedByUserId: userId,
+        completedSteps: ["service_persisted"],
+      })
+      return row
+    },
+    buildPayload: (row) => ({ serviceId: row.id }),
   })
+  return accepted.row
+}
 
-  // Fire-and-forget: pull → create → start each container in topological order
-  ;(async () => {
-    try {
-      const containerIds: string[] = []
+function serviceContainers(service: Pick<ServiceRow, "id" | "compose_raw">): ComposeContainer[] {
+  return composeToContainers({
+    compose: service.compose_raw,
+    servicePrefix: `ploydok-svc-${service.id}`,
+    network: "ploydok-public",
+    labels: { "ploydok.kind": "service", "ploydok.service_id": service.id },
+  })
+}
 
-      for (const containerName of deployOrder) {
-        const spec = containers.find((c) => c.name === containerName)
-        if (!spec) continue
-
+/** Shared by the outbox worker and the existing resource creation reconciler. */
+export async function resumeServiceCreation(
+  deps: OrchestratorDeps,
+  serviceId: string
+): Promise<boolean> {
+  const { db, agent } = deps
+  const caddy = deps.caddy ?? getSharedCaddy()
+  const claim = await claimCreationSaga(db, "service", serviceId)
+  if (!claim) return false
+  const token = claim.token
+  let compensating = claim.saga.state === "compensating"
+  async function fence() {
+    if (!(await fenceCreationSaga(db, "service", serviceId, token))) {
+      throw new Error("service creation saga lease lost")
+    }
+  }
+  try {
+    const service = await getServiceById(db, serviceId)
+    const snapshot = await agent.listContainers({ kindFilter: "service" })
+    const discovered = snapshot.containers.filter(
+      (c) => c.serviceId === serviceId
+    )
+    const containerIds = [
+      ...new Set([
+        ...(service?.container_ids ?? []),
+        ...(claim.saga.owned_resources.containerIds ?? []),
+        ...discovered.map((c) => c.id),
+      ]),
+    ]
+    compensating ||=
+      !service ||
+      service.status === "deleting" ||
+      !claim.saga.requested_by_user_id ||
+      claim.saga.attempt_count >= claim.saga.max_attempts
+    if (compensating) {
+      if (
+        !(await beginClaimedCreationSagaCompensation(
+          db,
+          "service",
+          serviceId,
+          token
+        ))
+      )
+        throw new Error("service compensation lease lost")
+      await fence()
+      await removeServiceRoute(caddy, serviceId)
+      for (const containerId of [...containerIds].reverse()) {
+        await fence()
+        try {
+          await agent.containerRemove({
+            containerId,
+            force: true,
+            removeVolumes: false,
+          })
+        } catch (error) {
+          if (!isNotFound(toAgentError(error))) throw error
+        }
+      }
+      await db.transaction(async (tx) => {
+        if (!(await fenceCreationSaga(tx, "service", serviceId, token)))
+          throw new Error("service compensation lease lost")
+        if (service) {
+          await updateServiceContainers(tx as unknown as Db, serviceId, [])
+          await updateServiceStatus(tx as unknown as Db, serviceId, "failed")
+        }
+        if (
+          !(await completeClaimedCreationSagaCompensation(
+            tx,
+            "service",
+            serviceId,
+            token,
+            "service creation compensated"
+          ))
+        )
+          throw new Error("service compensation lease lost")
+      })
+      return true
+    }
+    const containers = serviceContainers(service!)
+    async function recordContainer(containerId: string, name: string) {
+      if (!containerIds.includes(containerId)) containerIds.push(containerId)
+      await db.transaction(async (tx) => {
+        if (
+          !(await recordClaimedCreationSagaStep(
+            tx,
+            "service",
+            serviceId,
+            token,
+            `container:${name}`,
+            { containerIds }
+          ))
+        )
+          throw new Error(
+            "service creation saga lease lost while recording container"
+          )
+        await updateServiceContainers(tx as unknown as Db, serviceId, [
+          ...containerIds,
+        ])
+      })
+    }
+    for (const name of topoOrder(containers)) {
+      const spec = containers.find((c) => c.name === name)!
+      await fence()
+      const existing = discovered.find((c) => c.name === name)
+      let containerId = existing?.id
+      if (!containerId) {
         for await (const _progress of agent.imagePull({
           image: spec.image,
           registryAuth: undefined,
-        })) {
-          // drain progress stream
-        }
-
-        const createRes = await agent.containerCreate({
+        }))
+          await fence()
+        await fence()
+        const created = await agent.containerCreate({
           name: spec.name,
           image: spec.image,
           env: spec.env,
@@ -160,6 +291,7 @@ export async function installFromTemplate(
           command: spec.command,
           restartPolicy: spec.restartPolicy,
           resourceLimits: undefined,
+          user: "",
           healthcheck: spec.healthcheck
             ? {
                 test: spec.healthcheck.test,
@@ -169,51 +301,46 @@ export async function installFromTemplate(
                 startPeriodSeconds: spec.healthcheck.startPeriodSeconds ?? 0,
               }
             : undefined,
-          user: "",
         })
-
-        containerIds.push(createRes.containerId)
-        await agent.containerStart({ containerId: createRes.containerId })
+        containerId = created.containerId
       }
-
-      await updateServiceContainers(db, serviceId, containerIds)
-      await updateServiceStatus(db, serviceId, "running")
-
-      if (domain && containers.length > 0) {
-        try {
-          await upsertServiceRoute(caddy, {
-            serviceId,
-            domain,
-            containers,
-          })
-        } catch (err) {
-          if (err instanceof ServiceHasNoEntrypointError) {
-            log.warn(
-              { serviceId, domain },
-              "service deployed but no entrypoint port found — skipping Caddy route"
-            )
-          } else {
-            log.warn({ err, serviceId, domain }, "Caddy route upsert failed")
-          }
-        }
-      }
-
-      log.info(
-        { serviceId, slug, containerCount: containerIds.length },
-        "service deployed"
-      )
-    } catch (err) {
-      log.error({ err, serviceId }, "service install failed")
-      await updateServiceStatus(db, serviceId, "failed").catch((e) =>
-        log.error(
-          { e },
-          "failed to update service status after install failure"
-        )
-      )
+      await recordContainer(containerId, name)
+      await fence()
+      await agent.containerStart({ containerId })
     }
-  })()
-
-  return row
+    if (service!.domain && containers.length) {
+      await fence()
+      try {
+        await upsertServiceRoute(caddy, {
+          serviceId,
+          domain: service!.domain,
+          containers,
+        })
+      } catch (error) {
+        if (!(error instanceof ServiceHasNoEntrypointError)) throw error
+      }
+    }
+    await db.transaction(async (tx) => {
+      if (!(await fenceCreationSaga(tx, "service", serviceId, token)))
+        throw new Error("service creation saga lease lost at completion")
+      await updateServiceStatus(tx as unknown as Db, serviceId, "running")
+      if (!(await completeClaimedCreationSaga(tx, "service", serviceId, token)))
+        throw new Error("service creation saga lease lost at completion")
+    })
+    return true
+  } catch (error) {
+    await retryClaimedCreationSaga(
+      db,
+      "service",
+      serviceId,
+      token,
+      error,
+      new Date(Date.now() + 5_000),
+      new Date(),
+      compensating ? "compensating" : "failed"
+    )
+    throw error
+  }
 }
 
 export async function startService(

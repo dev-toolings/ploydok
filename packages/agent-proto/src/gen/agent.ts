@@ -374,6 +374,8 @@ export interface ContainerSnapshot {
   lastPingOk: boolean;
   /** Unix millis of last seen */
   lastSeenMs: number;
+  /** Label "ploydok.service_id" for marketplace containers. */
+  serviceId: string;
 }
 
 export interface ListContainersRequest {
@@ -4070,6 +4072,7 @@ function createBaseContainerSnapshot(): ContainerSnapshot {
     lastPingMs: 0,
     lastPingOk: false,
     lastSeenMs: 0,
+    serviceId: "",
   };
 }
 
@@ -4119,6 +4122,9 @@ export const ContainerSnapshot: MessageFns<ContainerSnapshot> = {
     }
     if (message.lastSeenMs !== 0) {
       writer.uint32(120).uint64(message.lastSeenMs);
+    }
+    if (message.serviceId !== "") {
+      writer.uint32(130).string(message.serviceId);
     }
     return writer;
   },
@@ -4250,6 +4256,14 @@ export const ContainerSnapshot: MessageFns<ContainerSnapshot> = {
           message.lastSeenMs = longToNumber(reader.uint64());
           continue;
         }
+        case 16: {
+          if (tag !== 130) {
+            break;
+          }
+
+          message.serviceId = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -4312,6 +4326,11 @@ export const ContainerSnapshot: MessageFns<ContainerSnapshot> = {
         : isSet(object.last_seen_ms)
         ? globalThis.Number(object.last_seen_ms)
         : 0,
+      serviceId: isSet(object.serviceId)
+        ? globalThis.String(object.serviceId)
+        : isSet(object.service_id)
+        ? globalThis.String(object.service_id)
+        : "",
     };
   },
 
@@ -4362,6 +4381,9 @@ export const ContainerSnapshot: MessageFns<ContainerSnapshot> = {
     if (message.lastSeenMs !== 0) {
       obj.lastSeenMs = Math.round(message.lastSeenMs);
     }
+    if (message.serviceId !== "") {
+      obj.serviceId = message.serviceId;
+    }
     return obj;
   },
 
@@ -4385,6 +4407,7 @@ export const ContainerSnapshot: MessageFns<ContainerSnapshot> = {
     message.lastPingMs = object.lastPingMs ?? 0;
     message.lastPingOk = object.lastPingOk ?? false;
     message.lastSeenMs = object.lastSeenMs ?? 0;
+    message.serviceId = object.serviceId ?? "";
     return message;
   },
 };

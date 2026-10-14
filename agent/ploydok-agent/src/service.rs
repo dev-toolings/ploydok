@@ -1688,7 +1688,14 @@ impl Agent for AgentService {
         request: Request<ListContainersRequest>,
     ) -> Result<Response<ListContainersResponse>, Status> {
         let req = request.into_inner();
-        let resp = self.monitor.list(&req).await;
+        let resp = if req.kind_filter == "service" {
+            self.monitor
+                .list_services()
+                .await
+                .map_err(|e| bollard_err("list_service_containers", e))?
+        } else {
+            self.monitor.list(&req).await
+        };
         Ok(Response::new(resp))
     }
 

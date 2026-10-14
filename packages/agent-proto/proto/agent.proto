@@ -297,6 +297,8 @@ message ContainerSnapshot {
   bool   last_ping_ok = 14;
   // Unix millis of last seen
   uint64 last_seen_ms = 15;
+  // Label "ploydok.service_id" for marketplace containers.
+  string service_id = 16;
 }
 
 message ListContainersRequest {
