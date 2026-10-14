@@ -429,6 +429,9 @@ the kernel OOM killer stops them. Check with
 | `bootstrap-http` | Temporary first setup over HTTP from a controlled VPS security group.           |
 | `abort`          | Preflight only. Prints what would happen and exits.                             |
 
+`--unattended` implies `--yes` and defaults to `coexist` when no `--mode` is
+given. An explicit `--mode` takes precedence regardless of argument order.
+
 Useful flags:
 
 ```bash
