@@ -230,13 +230,19 @@ The perceived wait ends when the next page paints, not when the request resolves
 Orca 1.4.224 refuses `orca orchestration` from the SSH host CLI
 (`forbidden: ... enable "Allow this host's orca CLI to control Orca"`), and
 that setting is not exposed in this version. Until it is, use one of two
-channels:
+channels, and pick them in this order:
 
-- **Live terminal** (below): reuses a running session's context and the user
-  can watch it. Best for follow-ups to an agent already working here.
-- **Non-interactive run**: a fresh context per run, result on stdout or in a
-  file, scriptable and parallel in separate worktrees. Best for bounded
-  tasks. Launch it as a background command from a worktree on its own
+- **Live terminal first** (below): run `orca terminal list` before any
+  delegation. If a Codex session is open on this repository (cwd
+  `/home/kev/lab/tools/ploydok` or one of its worktrees), every Codex task
+  goes to that terminal, bounded or not, with the worktree path to work in.
+  The user watches it there. If a non-interactive run was started before the
+  terminal was noticed, stop it and hand its worktree state to the live
+  session.
+- **Non-interactive run, fallback only**: when no Codex terminal is open on
+  this repository, or when it is busy with a task you must not interrupt.
+  A fresh context per run, result on stdout or in a file, scriptable and
+  parallel in separate worktrees. Launch it as a background command from a worktree on its own
   branch, with the order in a file:
   - Codex: `codex exec -C <worktree> -s workspace-write -o /tmp/<tag>.md "$(cat /tmp/order.txt)"`
   - Claude: `claude -p "$(cat /tmp/order.txt)" --output-format json --permission-mode acceptEdits` (run from the worktree)
