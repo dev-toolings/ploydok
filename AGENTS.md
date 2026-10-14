@@ -160,9 +160,65 @@ The perceived wait ends when the next page paints, not when the request resolves
 - If a schema object was added in a migration whose journal `when` is older than already-applied migrations, add a new idempotent drift-repair migration instead of editing history that may already be applied elsewhere.
 - For API routes that select whole tables, test at least one real query path after migration; missing columns should be caught before handing back UI work.
 
+## Git Workflow (develop-based)
+
+```text
+.---------------------------.
+|  main : release branch    |
+|  CI on, no direct work    |
+'-------------+-------------'
+              ^
+              | merge develop, only on explicit release request
+              |
+.-------------+-------------.
+| develop : integration     |
+| CI OFF for now            |
+'-------------+-------------'
+       ^                ^
+       | merge --no-ff  | merge --no-ff
+       |                |
+.------+--------.  .----+------------.
+| feat/DEV-333- |  | fix/<slug>      |
+| <slug>        |  | docs/<slug> ... |
+| (OpenTrack)   |  | (custom)        |
+'---------------'  '-----------------'
+```
+
+- Never commit on `main`. `main` only receives `develop` when the user asks
+  for a release. CI (`ci.yml`, `ci-integration.yml`, `release-images.yml`)
+  runs on `main` only.
+- Start every task from an up-to-date `develop`
+  (`git fetch origin && git switch develop && git pull --ff-only`), then
+  create a dedicated branch. Do not commit directly on `develop` either.
+- Branch names, always created from `develop`:
+  - OpenTrack issue: `<type>/DEV-<n>-<short-slug>`, e.g.
+    `fix/DEV-333-backup-schedule`. Reference the issue in the commit body
+    (`Refs DEV-333`).
+  - Work without an issue: `<type>/<short-slug>`, e.g. `docs/git-workflow`.
+  - `<type>` is the Conventional Commit type: `feat`, `fix`, `chore`,
+    `docs`, `refactor`, `test`, `perf`, `ci`.
+  - A problem found along the way gets its own `fix/<slug>` branch from
+    `develop`, never folded into the current branch.
+- CI does not run on `develop` yet, so local validation is the merge gate.
+  Before merging a branch into `develop`, run the checks for what it touches
+  (see Validation Commands and `.claude/rules/testing.md`): API tests one
+  file per process (`bun run test` in `apps/api`), `tsc` for api/web,
+  `bun run check:spdx`, `bun run scripts/check-migrations.ts`, `cargo test`
+  for `agent/`. Report what ran and what did not.
+- Integrate with `git merge --no-ff <branch>` into `develop` (or a PR into
+  `develop`). Never rebase or force-push a shared branch.
+- Pushing: work branches and `develop` may be pushed once validated and the
+  user asked to push. `main` is pushed only as part of a release request.
+- After merge, delete the local branch; delete the remote branch once the
+  user no longer needs it. Remove temporary worktrees.
+- Migrations from two branches: when the target already has the same
+  `NNNN` index, renumber the incoming migrations after the target's last
+  journal entry with a strictly newer `when`, and keep them idempotent.
+  Never renumber migrations already merged into `develop` or `main`.
+
 ## Git And Delivery Rules
 
-- Do not create branches unless the user explicitly asks.
+- Branches follow the Git Workflow above; do not create branches outside it.
 - Do not amend existing commits unless explicitly asked.
 - Do not revert unrelated user changes.
 - Keep the worktree intentional and easy to review.

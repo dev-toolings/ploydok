@@ -51,9 +51,18 @@ Every source file (`.ts`, `.tsx`, `.rs`) must start with:
 
 The `scripts/check-spdx.ts` linter enforces this in CI. Run it locally with `bun run check:spdx`.
 
+## Branches
+
+- `develop` is the integration branch. Branch from it and open PRs against it.
+- `main` is the release branch: it only receives `develop` at release time.
+- Name branches `<type>/<issue>-<short-slug>` (for example
+  `fix/DEV-333-backup-schedule`) or `<type>/<short-slug>` without an issue.
+- CI currently runs on `main` only. On `develop`, list the local checks you
+  ran in the PR's test plan.
+
 ## Pull requests
 
-- Open one PR per focused change
+- Open one PR per focused change, targeting `develop`
 - Ensure `bun run lint`, `bun run typecheck`, `bun test`, and
   `bun run check:spdx` all pass
 - Update docs when behavior changes

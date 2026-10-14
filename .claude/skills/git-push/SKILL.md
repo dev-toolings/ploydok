@@ -17,6 +17,9 @@ Every other rule in `.claude/rules/commits.md` still applies.
 ## Boundaries
 
 - Run from the repository root (`/home/kev/lab/tools/ploydok`).
+- Refuse on `main` and on `develop`: work happens on a dedicated branch
+  created from `develop` (see `AGENTS.md` § Git Workflow). Stop and report
+  the current branch instead of committing.
 - Before staging, read `git status --porcelain`. Stop and report, without
   committing, if it lists anything that must never be committed: `.env*`
   files other than `.env.example`, `test-results/`, `playwright-report/`,
