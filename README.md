@@ -196,7 +196,7 @@ and `latest` are the mutable channel aliases.
 
 ```text
 .------------------------------------.
-| Select ref, version and gate policy |
+|  Select ref, version, gate policy  |
 '------------------+-----------------'
                    |
                    v
@@ -207,7 +207,7 @@ and `latest` are the mutable channel aliases.
                    |
                    v
 .------------------+-----------------.
-| Build, Trivy, sign, digest manifest |
+|    Build, Trivy, sign, manifest    |
 '------------------+-----------------'
                    |
                    v
