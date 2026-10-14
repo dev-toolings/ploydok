@@ -225,6 +225,34 @@ The perceived wait ends when the next page paints, not when the request resolves
 - If you used a temporary Claude/Codex worktree under `.claude/worktrees/*` for implementation, remove it once the work is finished and no handoff still depends on it.
 - If you are preparing code for handoff, summarize exactly what was validated and what was not.
 
+## Cross-Agent Delegation (Claude, Codex, Grok)
+
+Orca 1.4.224 refuses `orca orchestration` from the SSH host CLI
+(`forbidden: ... enable "Allow this host's orca CLI to control Orca"`), and
+that setting is not exposed in this version. Until it is, delegate to another
+agent's live Orca terminal with the terminal commands instead:
+
+1. Find the target: `orca terminal list` (the preview shows the Codex, Claude
+   or Grok TUI and its cwd).
+2. Write the order to a file, then send it:
+   `orca terminal send --terminal <handle> --enter --wait-submit 10 --text "$(cat /tmp/order.txt)"`.
+   The order states who sends it and on whose behalf, the ordered tasks, the
+   rules (Git Workflow above, validations, no push), the report format, and
+   ends by asking for a sentinel line such as `FIN-<TAG>`.
+3. Wait in the background:
+   `orca terminal wait --terminal <handle> --for tui-idle --timeout-ms <ms>`.
+4. Read: `orca terminal read --terminal <handle> --limit 1000` and look for
+   the sentinel. The screen history is bounded: ask for a compact final
+   report, and ask the agent to re-print a section that got cut.
+5. Verify before accepting: read the diffs, rerun the validations, then
+   integrate and push yourself. The sender stays the only coordinator.
+
+Rules: one transport per task, never a second prompt into a busy agent
+(short notices excepted), and tasks run one after another when agents share
+this checkout. Never switch branches in a checkout another agent is working
+in: use a worktree under `.claude/worktrees/`. Once Orca exposes the setting,
+prefer `orca orchestration` (Run, `dispatch --inject`, `worker_done`).
+
 ## Repo-Specific References
 
 - Read these only when relevant to the task:
