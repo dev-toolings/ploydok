@@ -1,113 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { beforeEach, describe, expect, it, mock } from "bun:test"
-
-const getAppByRepoAndOwnerMock = mock(async (): Promise<unknown> => null)
-const getPreviewDeploymentByAppAndPrMock = mock(
-  async (): Promise<unknown> => undefined
-)
-const updatePreviewDeploymentMock = mock(async () => undefined)
-const insertPreviewDeploymentMock = mock(async () => undefined)
-const previewDeployAddMock = mock(async () => undefined)
-const previewTeardownAddMock = mock(async () => undefined)
-
-mock.module("@ploydok/db/queries", () => ({
-  getAppByRepoAndOwner: getAppByRepoAndOwnerMock,
-  getPreviewDeploymentByAppAndPr: getPreviewDeploymentByAppAndPrMock,
-  updatePreviewDeployment: updatePreviewDeploymentMock,
-  insertPreviewDeployment: insertPreviewDeploymentMock,
-}))
-
+import { beforeEach, expect, test, mock } from "bun:test"
+const app = mock(async (): Promise<unknown> => null)
+const enqueue = mock(async (..._args: any[]) => ({}))
+mock.module("@ploydok/db/queries", () => ({ getAppByRepoAndOwner: app }))
 mock.module("../worker/queues", () => ({
-  previewDeploy: { add: previewDeployAddMock },
-  previewTeardown: { add: previewTeardownAddMock },
+  previewDeploy: { name: "preview.deploy" }, previewTeardown: { name: "preview.teardown" },
 }))
-
-import { handlePullRequest } from "./pull-request"
-
-const db = {} as Parameters<typeof handlePullRequest>[0]
-
-const previewEnabledApp = {
-  id: "app-preview-1",
-  slug: "docs",
-  preview_enabled: true,
-  preview_wildcard: "preview.example.com",
-  preview_ttl_days: 5,
-}
-
-beforeEach(() => {
-  getAppByRepoAndOwnerMock.mockReset()
-  getPreviewDeploymentByAppAndPrMock.mockReset()
-  updatePreviewDeploymentMock.mockReset()
-  insertPreviewDeploymentMock.mockReset()
-  previewDeployAddMock.mockReset()
-  previewTeardownAddMock.mockReset()
-})
-
-describe("handlePullRequest", () => {
-  it("creates a preview row and enqueues preview deploy on PR opened", async () => {
-    getAppByRepoAndOwnerMock.mockResolvedValue(previewEnabledApp)
-    getPreviewDeploymentByAppAndPrMock.mockResolvedValue(undefined)
-
-    await handlePullRequest(
-      db,
-      {
-        action: "opened",
-        pull_request: { number: 42, head: { sha: "deadbeef" } },
-        repository: { full_name: "acme/docs" },
-        installation: { id: 7 },
-      },
-      "delivery-opened"
-    )
-
-    expect(getAppByRepoAndOwnerMock).toHaveBeenCalledWith(db, "acme/docs")
-    expect(insertPreviewDeploymentMock).toHaveBeenCalledTimes(1)
-    expect(updatePreviewDeploymentMock).not.toHaveBeenCalled()
-    const insertCall = insertPreviewDeploymentMock.mock.calls[0] as unknown as [
-      unknown,
-      Record<string, unknown>,
-    ]
-    expect(insertCall[1]).toMatchObject({
-      id: "app-preview-1:pr-42",
-      app_id: "app-preview-1",
-      pr_number: 42,
-      head_sha: "deadbeef",
-      domain: "pr-42.preview.example.com",
-      status: "pending",
-    })
-    expect(previewDeployAddMock).toHaveBeenCalledWith("preview.deploy", {
-      appId: "app-preview-1",
-      prNumber: 42,
-      headSha: "deadbeef",
-    })
+mock.module("../worker/preview-intents", () => ({ enqueuePreviewIntent: enqueue }))
+const { handlePullRequest } = await import("./pull-request")
+beforeEach(() => { app.mockReset(); enqueue.mockClear() })
+const fixture = { id: "app-fixture", slug: "docs", preview_enabled: true, preview_wildcard: "preview.example.test", preview_ttl_days: 5 }
+const request = (action: string) => ({ action, pull_request: { number: 42, head: { sha: "sha-one" } }, repository: { full_name: "acme/docs" } })
+test("opened enqueues the preview row and immutable deploy intent together", async () => {
+  app.mockResolvedValue(fixture)
+  await handlePullRequest({} as never, request("opened"), "delivery-one")
+  expect(enqueue).toHaveBeenCalledTimes(1)
+  expect(enqueue.mock.calls[0]![2]).toMatchObject({
+    action: "deploy", appId: "app-fixture", prNumber: 42, headSha: "sha-one",
+    domain: "pr-42.preview.example.test", source: "webhook:pull_request",
   })
-
-  it("enqueues preview teardown on PR closed even if previews are now disabled", async () => {
-    getAppByRepoAndOwnerMock.mockResolvedValue({
-      ...previewEnabledApp,
-      preview_enabled: false,
-    })
-
-    await handlePullRequest(
-      db,
-      {
-        action: "closed",
-        pull_request: { number: 42, head: { sha: "deadbeef" } },
-        repository: { full_name: "acme/docs" },
-        installation: { id: 7 },
-      },
-      "delivery-closed"
-    )
-
-    expect(previewDeployAddMock).not.toHaveBeenCalled()
-    expect(previewTeardownAddMock).toHaveBeenCalledWith("preview.teardown", {
-      appId: "app-preview-1",
-      prNumber: 42,
-    })
-    expect(insertPreviewDeploymentMock).not.toHaveBeenCalled()
-    expect(updatePreviewDeploymentMock).toHaveBeenCalledWith(
-      db,
-      "app-preview-1:pr-42",
-      { status: "tearing_down" }
-    )
+})
+test("closed retains durable teardown even after previews are disabled", async () => {
+  app.mockResolvedValue({ ...fixture, preview_enabled: false })
+  await handlePullRequest({} as never, request("closed"), "delivery-two")
+  expect(enqueue.mock.calls[0]![2]).toEqual({
+    action: "teardown", appId: "app-fixture", prNumber: 42, source: "webhook:pull_request",
   })
 })

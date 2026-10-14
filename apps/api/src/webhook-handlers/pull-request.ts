@@ -3,10 +3,8 @@ import type { Db } from "@ploydok/db"
 import { childLogger } from "../logger"
 import {
   getAppByRepoAndOwner,
-  getPreviewDeploymentByAppAndPr,
-  updatePreviewDeployment,
-  insertPreviewDeployment,
 } from "@ploydok/db/queries"
+import { enqueuePreviewIntent } from "../worker/preview-intents"
 import { previewDeploy, previewTeardown } from "../worker/queues"
 
 const log = childLogger("webhook:pull-request")
@@ -76,40 +74,10 @@ export async function handlePullRequest(
         "enqueuing preview deploy"
       )
 
-      const previewId = `${app.id}:pr-${prNumber}`
       const domain = `pr-${prNumber}.${app.preview_wildcard || `preview.${app.slug}`}`
-      const existingPreview = await getPreviewDeploymentByAppAndPr(
-        db,
-        app.id,
-        prNumber
-      )
-
-      if (existingPreview) {
-        await updatePreviewDeployment(db, previewId, {
-          head_sha: headSha,
-          domain,
-          status: "pending",
-          expires_at: expiresAt,
-          updated_at: now,
-        })
-      } else {
-        await insertPreviewDeployment(db, {
-          id: previewId,
-          app_id: app.id,
-          pr_number: prNumber,
-          head_sha: headSha,
-          domain,
-          status: "pending",
-          expires_at: expiresAt,
-          created_at: now,
-          updated_at: now,
-        })
-      }
-
-      await previewDeploy.add("preview.deploy", {
-        appId: app.id,
-        prNumber,
-        headSha,
+      await enqueuePreviewIntent(db, previewDeploy, {
+        action: "deploy", appId: app.id, prNumber, headSha, domain, expiresAt,
+        source: "webhook:pull_request",
       })
       break
     }
@@ -120,10 +88,8 @@ export async function handlePullRequest(
         "enqueuing preview teardown"
       )
 
-      await updatePreviewDeployment(db, `${app.id}:pr-${prNumber}`, { status: "tearing_down" })
-      await previewTeardown.add("preview.teardown", {
-        appId: app.id,
-        prNumber,
+      await enqueuePreviewIntent(db, previewTeardown, {
+        action: "teardown", appId: app.id, prNumber, source: "webhook:pull_request",
       })
       break
     }

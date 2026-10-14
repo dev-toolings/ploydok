@@ -77,6 +77,7 @@ import {
 import { startAuditAnchorCron, stopAuditAnchorCron } from "./jobs/audit-anchor"
 import { handleSyncProviderRepos } from "./handlers/sync-provider-repos"
 import type { SyncProviderReposPayload } from "./handlers/sync-provider-repos"
+import { loadPreviewIntentPayload, completePreviewIntent } from "./preview-intents"
 import { handlePreviewDeploy } from "./handlers/preview-deploy"
 import { resumeServiceCreation } from "../services/marketplace-orchestrator"
 import { handlePreviewTeardown } from "./handlers/preview-teardown"
@@ -514,7 +515,9 @@ export function startWorker(
       "preview.deploy",
       async (job) => {
         logger.info({ jobId: job.id }, "preview.deploy job started")
-        await handlePreviewDeploy(db, job.data)
+        const payload = await loadPreviewIntentPayload(db, job.data, "deploy")
+        if (payload) await handlePreviewDeploy(db, payload)
+        await completePreviewIntent(db, job.data)
         logger.info({ jobId: job.id }, "preview.deploy done")
       },
       { connection, concurrency: 1 }
@@ -535,7 +538,9 @@ export function startWorker(
       "preview.teardown",
       async (job) => {
         logger.info({ jobId: job.id }, "preview.teardown job started")
-        await handlePreviewTeardown(db, job.data)
+        const payload = await loadPreviewIntentPayload(db, job.data, "teardown")
+        if (payload) await handlePreviewTeardown(db, payload)
+        await completePreviewIntent(db, job.data)
         logger.info({ jobId: job.id }, "preview.teardown done")
       },
       { connection, concurrency: 1 }

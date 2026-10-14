@@ -2,8 +2,8 @@
 import type { Db } from "@ploydok/db"
 import {
   listExpiredPreviews,
-  updatePreviewDeploymentStatus,
 } from "@ploydok/db/queries"
+import { enqueuePreviewIntent } from "../preview-intents"
 import { previewTeardown } from "../queues"
 import { workerLog } from "../logger"
 
@@ -29,10 +29,9 @@ export async function cleanupExpiredPreviews(db: Db): Promise<void> {
         { previewId: preview.id, appId: preview.app_id },
         "enqueuing teardown"
       )
-      await updatePreviewDeploymentStatus(db, preview.id, "tearing_down")
-      await previewTeardown.add("preview.teardown", {
-        appId: preview.app_id,
-        prNumber: preview.pr_number,
+      await enqueuePreviewIntent(db, previewTeardown, {
+        action: "teardown", appId: preview.app_id, prNumber: preview.pr_number,
+        source: "cron:preview",
       })
     }
 
