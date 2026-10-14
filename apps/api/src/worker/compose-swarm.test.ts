@@ -136,13 +136,21 @@ describe("faithful Swarm Compose contract", () => {
     for (const body of [
       '    ports: ["127.0.0.1:8080:80"]',
       '    ports: [{host_ip: "127.0.0.1", published: 8080, target: 80}]',
-      '    ports: ["8080:80"]',
       '    depends_on: {db: {condition: service_healthy}}',
-      '    restart: always', '    mem_limit: 512m', '    entrypoint: sh',
+      '    restart: "no"', '    restart: on-failure', '    mem_limit: 512m', '    entrypoint: sh',
       '    healthcheck: {test: ["CMD", "true"], disable: true}',
       '    volumes: [{source: data, target: /data, volume: {nocopy: true}}]',
       '    command: ""',
     ]) expect(() => plan(body)).toThrow(/not supported|cannot preserve|unsupported|cannot be preserved/);
+  });
+  it("keeps fields whose meaning Swarm preserves: internal ports, restart always, creation order", () => {
+    for (const body of [
+      '    ports: ["8080:80"]',
+      '    restart: always',
+      '    restart: unless-stopped',
+      '    depends_on: [db]\n  db:\n    image: postgres:16',
+      '    depends_on: {db: {condition: service_started}}\n  db:\n    image: postgres:16',
+    ]) expect(() => plan(body)).not.toThrow();
   });
   it("preserves empty quoted arguments, escapes and rejects unfinished quoting", () => {
     expect(plan(`    command: >-\n      echo "" 'two words' escaped\\ space\n`).services[0]!.command)

@@ -15,18 +15,22 @@ shell expansion; explicit empty overrides are rejected because the agent cannot
 distinguish clearing a command from inheriting the image command.
 
 expose declares internal TCP ports; the first selects the Caddy ingress upstream.
-Swarm published ports are not carried by the existing agent contract, so ports
-is rejected, including host_ip and address-specific short forms. Replace ports
-with expose only when internal access/Caddy is actually the intended behavior.
-No requested publication is silently widened or silently discarded.
+Marketplace services are never published on the host: ingress goes through
+Caddy. ports entries without an address are therefore kept as internal ports
+only (the first one can select the upstream when expose is absent); this is a
+documented rule of the product, not a silent loss. An address-specific binding
+(127.0.0.1:8080:80, host_ip) is refused, so a restriction is never widened.
 
-restart and depends_on are rejected in Swarm: its fixed restart policy and
-asynchronous scheduling cannot preserve Compose startup/readiness semantics.
+restart: Swarm restarts a task on any exit. always and unless-stopped keep that
+meaning and are accepted; no and on-failure would change it and are refused.
+depends_on keeps creation order only (list form, or condition service_started);
+service_healthy and service_completed_successfully cannot be awaited and are
+refused before any resource exists.
 Unknown service/root/nested fields are rejected (including resource limits,
 entrypoint, external network/volume definitions, build, secrets and configs).
 Healthcheck supports test, interval, timeout, retries, start_period with whole
 seconds. Volumes retain the existing local storage mapping under
 /var/lib/ploydok/volumes; options beyond source/target/type/read_only or ro/rw
 are refused. Existing templates using rejected fields need explicit adaptation.
-Legacy Docker parsing retains its documented ports/restart/list-dependency
-support; address-specific ports and readiness conditions are still refused.
+Legacy Docker parsing retains its documented ports/restart/dependency support;
+address-specific ports and readiness conditions are refused there too.
