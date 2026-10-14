@@ -5,6 +5,8 @@ import { toast } from "sonner"
 import { Alert, AlertDescription } from "@workspace/ui/components/alert"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
+import { Field, FieldContent, FieldLabel } from "@workspace/ui/components/field"
+import { Input } from "@workspace/ui/components/input"
 import {
   Dialog,
   DialogContent,
@@ -12,8 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Field, FieldContent, FieldLabel } from "@workspace/ui/components/field"
-import { Input } from "@workspace/ui/components/input"
 import { useUpdateSecret } from "../../lib/secrets"
 import type { SecretMeta } from "../../lib/secrets"
 

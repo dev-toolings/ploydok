@@ -6,6 +6,7 @@ import {
   RiErrorWarningFill,
   RiRefreshLine,
 } from "@remixicon/react"
+import { Button } from "@workspace/ui/components/button"
 import {
   Dialog,
   DialogContent,
@@ -14,7 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../i18n/dialog"
-import { Button } from "@workspace/ui/components/button"
 
 // ---------------------------------------------------------------------------
 // Status semantics

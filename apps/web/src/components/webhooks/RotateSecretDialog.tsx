@@ -16,14 +16,6 @@ import {
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
-import {
   Field,
   FieldContent,
   FieldDescription,
@@ -37,6 +29,14 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@workspace/ui/components/input-group"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
 import { useTotpStatus } from "../../lib/totp"
 import { rotateWebhookSecret } from "../../lib/webhooks"
 import type { ApiError } from "../../lib/api"

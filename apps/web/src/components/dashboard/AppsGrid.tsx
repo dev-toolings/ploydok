@@ -2,6 +2,7 @@
 import * as React from "react"
 import { Link } from "@tanstack/react-router"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { useTranslation } from "react-i18next"
 import { AppStatusBadge } from "../apps/AppStatusBadge"
 import { AppIcon } from "../apps/AppIcon"
 import {
@@ -15,7 +16,6 @@ import {
   useCurrentOrganizationSlug,
 } from "../../lib/organizations"
 import type { AppHealth } from "../../lib/app-runtime"
-import { useTranslation } from "react-i18next"
 import type { AppListItem } from "../../lib/apps"
 
 // ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE,
-  type Locale,
   resolveSupportedLocale,
 } from "./locales"
+import type { Locale } from "./locales"
 
 function cookieLocale(): Locale | null {
   if (typeof document === "undefined") return null

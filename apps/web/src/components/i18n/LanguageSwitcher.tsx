@@ -4,7 +4,7 @@ import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
 import { changeLocale } from "../../lib/i18n/locale-store"
-import { LOCALES, type Locale } from "../../lib/i18n/locales"
+import { LOCALES } from "../../lib/i18n/locales"
 
 export function LanguageSwitcher({
   className,
@@ -15,7 +15,7 @@ export function LanguageSwitcher({
 }): React.JSX.Element {
   const { t, i18n } = useTranslation("common")
   const active = (LOCALES.find((locale) => i18n.language.startsWith(locale)) ??
-    "en") as Locale
+    "en")
 
   return (
     <fieldset className={cn("flex items-center gap-1", className)}>

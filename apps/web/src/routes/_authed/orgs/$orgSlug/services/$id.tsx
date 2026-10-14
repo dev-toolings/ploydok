@@ -10,6 +10,8 @@ import {
   RiStopLine,
 } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
+import { useTranslation } from "react-i18next"
 import {
   Dialog,
   DialogContent,
@@ -18,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../../../../components/i18n/dialog"
-import { Input } from "@workspace/ui/components/input"
 import {
   ShellPage,
   ShellPanel,
@@ -31,7 +32,6 @@ import {
   useStopService,
 } from "../../../../../lib/services"
 import { LogViewer } from "../../../../../components/apps/BuildLogViewer"
-import { useTranslation } from "react-i18next"
 import { useCurrentOrganization } from "../../../../../lib/organizations"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/services/$id")({

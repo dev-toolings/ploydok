@@ -18,6 +18,7 @@ import {
   RiStopCircleLine,
 } from "@remixicon/react"
 import { cn } from "@workspace/ui/lib/utils"
+import { useTranslation } from "react-i18next"
 import { useBuilds } from "../../lib/apps"
 import {
   useDeployApp,
@@ -25,7 +26,6 @@ import {
   useRollbackApp,
   useStopApp,
 } from "../../lib/apps-mutations"
-import { useTranslation } from "react-i18next"
 import type { AppDetail } from "../../lib/apps"
 import type { AppStatus } from "@ploydok/shared"
 

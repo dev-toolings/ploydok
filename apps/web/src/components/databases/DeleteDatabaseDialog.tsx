@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useTranslation } from "react-i18next"
+import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
+import { Label } from "@workspace/ui/components/label"
 import {
   Dialog,
   DialogContent,
@@ -9,9 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Button } from "@workspace/ui/components/button"
-import { Input } from "@workspace/ui/components/input"
-import { Label } from "@workspace/ui/components/label"
 import { useDeleteDatabase } from "../../lib/databases"
 import type { Database } from "../../lib/databases"
 

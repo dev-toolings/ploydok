@@ -59,7 +59,7 @@ function installMockEventSource(): void {
 beforeEach(() => {
   installMockEventSource()
   triggerRefreshCount = 0
-  ;(globalThis as { window?: unknown }).window = globalThis as unknown as Window
+  ;(globalThis as { window?: unknown }).window = globalThis
 })
 
 afterEach(() => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Link, Outlet, createFileRoute } from "@tanstack/react-router"
-import type * as React from "react"
 import { useCurrentPlanQuery } from "../../../../lib/billing"
+import type * as React from "react"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/settings")({
   component: SettingsLayout,

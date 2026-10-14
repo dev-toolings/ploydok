@@ -14,7 +14,7 @@ function diagnosticUrl(value: string): string {
     const url = new URL(value, "http://localhost")
     return `${url.origin}${url.pathname}`
   } catch {
-    return value.split(/[?#]/)[0]!.replace(/\/\/[^/]*@/, "//")
+    return value.split(/[?#]/)[0].replace(/\/\/[^/]*@/, "//")
   }
 }
 

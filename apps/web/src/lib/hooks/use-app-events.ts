@@ -64,7 +64,7 @@ export function buildAppEvent(
     id,
     type,
     timestamp: typeof payload.t === "number" ? payload.t : Date.now(),
-    data: payload as Record<string, unknown>,
+    data: payload,
   }
 }
 

@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { toast } from "sonner"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import {
@@ -16,6 +9,13 @@ import {
   FieldError,
   FieldLabel,
 } from "@workspace/ui/components/field"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
 import { useCreateSecret } from "../../lib/secrets"
 import type { SecretPhase, SecretScope } from "../../lib/secrets"
 

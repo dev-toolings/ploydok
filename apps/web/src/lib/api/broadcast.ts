@@ -43,7 +43,7 @@ export function subscribeAuthEvents(handlers: AuthEventHandlers): () => void {
   const listener = (e: MessageEvent<AuthEvent>): void => {
     const data: unknown = e.data
     if (!data || typeof data !== "object" || !("type" in data)) return
-    const type = (data as { type: unknown }).type
+    const type = (data).type
     if (type === "token_refreshed") handlers.onTokenRefreshed()
     else if (type === "logged_out") handlers.onLoggedOut()
   }

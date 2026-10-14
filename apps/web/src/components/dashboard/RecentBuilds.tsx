@@ -2,11 +2,11 @@
 import * as React from "react"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Link } from "@tanstack/react-router"
+import { useTranslation } from "react-i18next"
 import {
   organizationPath,
   useCurrentOrganizationSlug,
 } from "../../lib/organizations"
-import { useTranslation } from "react-i18next"
 import i18n from "../../lib/i18n"
 import type { BuildStatus } from "@ploydok/shared"
 
