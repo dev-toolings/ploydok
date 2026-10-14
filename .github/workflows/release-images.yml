@@ -12,6 +12,10 @@ on:
       version:
         description: "Immutable semver to publish (for example 1.2.3)"
         required: true
+      skip_quality_gates:
+        description: "Skip quality gates for develop prereleases only"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,7 +34,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate-policy:
+    name: validate-release-gate-policy
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.policy.outputs.skip }}
+    steps:
+      - name: Validate requested gate policy
+        id: policy
+        env:
+          SKIP_REQUESTED: ${{ inputs.skip_quality_gates || false }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          skip=false
+          if [[ "$SKIP_REQUESTED" == "true" ]]; then
+            if [[ "$EVENT_NAME" != "workflow_dispatch" || "$RELEASE_REF" == "refs/heads/main" || "$RELEASE_VERSION" != *-* ]]; then
+              echo "::error::skip_quality_gates is allowed only for workflow_dispatch on a non-main ref with a prerelease version (for example 0.1.0-rc.2)"
+              exit 2
+            fi
+            skip=true
+          fi
+          echo "skip=$skip" >>"$GITHUB_OUTPUT"
+
   quality:
+    needs: [gate-policy]
+    if: needs.gate-policy.outputs.skip != 'true'
     name: release-quality-gate
     runs-on: ubuntu-latest
     steps:
@@ -72,6 +103,8 @@ jobs:
         run: bash installer/tests/run.sh
 
   postgres-integration:
+    needs: [gate-policy]
+    if: needs.gate-policy.outputs.skip != 'true'
     name: release-postgres-gate
     runs-on: ubuntu-latest
     services:
@@ -155,7 +188,11 @@ jobs:
 
   build:
     name: build-${{ matrix.image }}
-    needs: [quality, postgres-integration]
+    needs: [gate-policy, quality, postgres-integration]
+    if: >-
+      always() && !cancelled() && needs.gate-policy.result == 'success' &&
+      ((needs.quality.result == 'success' && needs.postgres-integration.result == 'success') ||
+       (needs.gate-policy.outputs.skip == 'true' && needs.quality.result == 'skipped' && needs.postgres-integration.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: image-release
     strategy:
@@ -275,6 +312,7 @@ jobs:
   release-manifest:
     name: immutable-release-image-manifest
     needs: [build]
+    if: "!cancelled() && needs.build.result == 'success'"
     runs-on: ubuntu-latest
     steps:
       - name: Download exact build outputs
@@ -307,7 +345,8 @@ jobs:
 
   gitlab-browser:
     name: release-gitlab-browser-gate
-    needs: [release-manifest]
+    needs: [gate-policy, release-manifest]
+    if: needs.gate-policy.outputs.skip != 'true'
     runs-on: ubuntu-latest
     environment: image-release
     env:
@@ -388,7 +427,11 @@ jobs:
 
   promote:
     name: promote-${{ matrix.image }}
-    needs: [gitlab-browser]
+    needs: [gate-policy, release-manifest, gitlab-browser]
+    if: >-
+      always() && !cancelled() && needs.gate-policy.result == 'success' && needs.release-manifest.result == 'success' &&
+      (needs.gitlab-browser.result == 'success' ||
+       (needs.gate-policy.outputs.skip == 'true' && needs.gitlab-browser.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: image-release
     strategy:
