@@ -3,7 +3,7 @@
 # Build context must be the monorepo root.
 #   docker build -f apps/api/Dockerfile -t ghcr.io/makfly/ploydok-api:0.0.1 .
 
-FROM oven/bun:1.3-debian AS builder
+FROM oven/bun:1.3-debian AS dependencies
 WORKDIR /app
 
 RUN apt-get update \
@@ -19,7 +19,11 @@ COPY apps/api ./apps/api
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages ./packages
 
-RUN bun install --frozen-lockfile
+# Filter out web/UI runtime dependencies too: their production graph includes
+# bundlers. Boot migrations use drizzle-orm and the checked-in SQL files.
+RUN bun install --frozen-lockfile --production --filter '@ploydok/*' \
+ && rm -rf /root/.bun/install/cache /app/apps/web /app/packages/ui \
+ && test -z "$(find /app/node_modules -type f -name esbuild -print -quit)"
 
 FROM moby/buildkit:v0.29.0-rootless AS buildkit
 
@@ -46,6 +50,7 @@ ARG PLOYDOK_BUILD_VERSION=dev
 WORKDIR /app
 
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       git \
@@ -59,7 +64,7 @@ ENV NODE_ENV=prod \
 
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
 COPY --from=nixpacks /usr/local/bin/nixpacks /usr/local/bin/nixpacks
-COPY --from=builder /app /app
+COPY --from=dependencies /app /app
 
 EXPOSE 3335
 
