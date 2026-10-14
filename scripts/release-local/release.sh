@@ -4,12 +4,14 @@ set -Eeuo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 version= push=0 stable=0 smoke=0
+platform_csv=linux/amd64,linux/arm64
 images=()
 help() {
   cat <<'HELP'
 Usage: release.sh --version VERSION [--image api|web|agent|caddy|adminer]...
-                  [--root PATH] [--push] [--allow-stable] [--smoke-api]
-Build linux/amd64 and linux/arm64, scan both, then optionally push all.
+                  [--root PATH] [--platform PLATFORMS] [--push] [--allow-stable] [--smoke-api]
+Build and scan selected platforms, then optionally push all.
+Default platforms: linux/amd64,linux/arm64 (CI).
 Default: all five images. Requires Docker buildx; push also needs skopeo.
 Registry login is the caller's job. No signing or Git operations are performed.
 All temporary artifacts and the dedicated build cache are removed on exit.
@@ -20,11 +22,12 @@ die() { printf '\033[31m[release] %s\033[0m\n' "$*" >&2; exit 1; }
 while (($#)); do
   case "$1" in
     --help|-h) help; exit 0 ;;
-    --version|--root|--image)
+    --version|--root|--image|--platform)
       (($# >= 2)) || die "missing value for $1"
       case "$1" in
         --version) version="$2" ;;
         --root) root="$2" ;;
+        --platform) platform_csv="$2" ;;
         --image) images+=("${2#ploydok-}") ;;
       esac
       shift 2 ;;
@@ -40,6 +43,11 @@ done
 for image in "${images[@]}"; do
   case "$image" in api|web|agent|caddy|adminer) ;; *) die "unknown image: $image" ;; esac
 done
+[[ "$platform_csv" =~ ^linux/(amd64|arm64)(,linux/(amd64|arm64))*$ ]] || die 'platform must be linux/amd64 and/or linux/arm64'
+IFS=',' read -r -a platforms <<< "$platform_csv"
+if ((smoke)); then
+  [[ ",$platform_csv," == *,linux/amd64,* ]] || die '--smoke-api requires linux/amd64'
+fi
 for command in docker; do command -v "$command" >/dev/null || die "$command is required"; done
 if ((push)); then command -v skopeo >/dev/null || die 'skopeo is required for --push'; fi
 root="$(cd "$root" && pwd)"
@@ -79,20 +87,20 @@ for image in "${images[@]}"; do
     caddy|adminer) context="$root/infra/$image"; dockerfile="$context/Dockerfile" ;;
   esac
   target="ghcr.io/dev-toolings/ploydok-$image:$version"
-  log "Building $target for linux/amd64,linux/arm64"
+  log "Building $target for $platform_csv"
   docker buildx build --builder "$builder" --pull \
-    --platform linux/amd64,linux/arm64 --file "$dockerfile" \
+    --platform "$platform_csv" --file "$dockerfile" \
     --build-arg "PLOYDOK_BUILD_VERSION=$build_version" \
     --provenance=mode=max --sbom=true --tag "$target" \
     --output "type=oci,dest=$tmp/$image.tar" "$context"
-  for arch in amd64 arm64; do
-    log "Scanning $image linux/$arch"
+  for platform in "${platforms[@]}"; do
+    log "Scanning $image $platform"
     docker run --rm --user "$(id -u):$(id -g)" \
       -v "$tmp:/release" "$trivy" image \
       --db-repository ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2 \
-      --no-progress --cache-dir /release/trivy-cache --platform "linux/$arch" \
+      --no-progress --cache-dir /release/trivy-cache --platform "$platform" \
       --exit-code 1 --ignore-unfixed --severity CRITICAL --input "/release/$image.tar"
-    log "PASS $image linux/$arch"
+    log "PASS $image $platform"
   done
   if [[ "$image" == api && "$smoke" == 1 ]]; then
     tag="ploydok-release-smoke:$builder"

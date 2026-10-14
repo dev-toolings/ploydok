@@ -4,7 +4,7 @@ Run from any directory:
 
 ```sh
 scripts/release-local/release.sh --version 0.1.0-rc.2
-scripts/release-local/release.sh --version 0.1.0-rc.2 --image api --image web --smoke-api
+scripts/release-local/release.sh --version 0.1.0-rc.2 --image api --image web --platform linux/amd64 --smoke-api
 ```
 
 Requires Docker, buildx and support for both amd64 and arm64 builds
@@ -14,7 +14,8 @@ credential helpers must be available to skopeo if configured.
 
 The Dockerfiles, contexts, platforms, candidate build version, provenance and
 SBOM settings match the CI matrix in `.github/workflows/release-images.yml`.
-Each OCI archive is scanned for both platforms with `aquasec/trivy:0.67.2`
+`--platform linux/amd64` selects the staging architecture; the default remains
+`linux/amd64,linux/arm64` as in CI. Each OCI archive is scanned for each selected platform with `aquasec/trivy:0.67.2`
 and `image --exit-code 1 --ignore-unfixed --severity CRITICAL`. CI's
 `--ignore-unfixed` policy is retained; no vulnerability-specific exclusions
 are added. The official GHCR database registry is tried before the Google
