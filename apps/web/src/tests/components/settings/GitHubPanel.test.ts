@@ -19,14 +19,10 @@ import {
 import { invalidateGetCache, resetCsrfToken } from "../../../lib/api"
 
 type CredentialsStatus =
-  | "not_configured"
-  | "readable"
-  | "unreadable"
-  | undefined
+  "not_configured" | "readable" | "unreadable" | undefined
 
 let GitHubCredentialsRecovery: React.ComponentType<{
   unreadable: boolean
-  onImported: () => void
 }>
 let InstallationsCard: React.ComponentType<{
   role: "admin" | "member"
@@ -313,7 +309,6 @@ describe("GitHubPanel credentials guard", () => {
         { client: queryClient },
         React.createElement(GitHubCredentialsRecovery, {
           unreadable,
-          onImported: () => undefined,
         })
       )
 
@@ -327,11 +322,10 @@ describe("GitHubPanel credentials guard", () => {
     const recoveryDialog = view
       .getByText("GitHub App credentials need attention")
       .closest('[data-slot="alert-dialog-content"]')
-    expect(recoveryDialog?.className).toContain("max-w-[calc(100vw-2rem)]")
-    expect(recoveryDialog?.className).toContain("sm:max-w-xl")
+    expect(recoveryDialog?.className).toContain("w-[calc(100%-2rem)]")
+    expect(recoveryDialog?.className).toContain("sm:max-w-2xl")
     for (const action of recoveryDialog?.querySelectorAll("button") ?? []) {
       expect(action.className).toContain("w-full")
-      expect(action.className).toContain("sm:w-auto")
       expect(action.className).toContain("whitespace-normal")
     }
     fireEvent.click(view.getByRole("button", { name: "Later" }))
@@ -342,8 +336,49 @@ describe("GitHubPanel credentials guard", () => {
     )
 
     expect(view.getByRole("alert")).toBeTruthy()
-    fireEvent.click(view.getByRole("button", { name: "Reconnect GitHub App" }))
-    expect(view.getByLabelText("App ID")).toBeTruthy()
+    const requests: Array<{ url: string; body: string | null }> = []
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString()
+      requests.push({
+        url,
+        body: typeof init?.body === "string" ? init.body : null,
+      })
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            url.endsWith("/auth/csrf")
+              ? { token: "csrf-token" }
+              : {
+                  post_url: "https://github.com/settings/apps/new",
+                  manifest: { name: "Ploydok" },
+                }
+          ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    }) as typeof fetch
+    const originalSubmit = HTMLFormElement.prototype.submit
+    let submittedForm: HTMLFormElement | undefined
+    HTMLFormElement.prototype.submit = function () {
+      submittedForm = this
+    }
+    try {
+      fireEvent.click(
+        view.getByRole("button", { name: "Reconnect GitHub App" })
+      )
+      await waitFor(() =>
+        expect(submittedForm?.action).toBe(
+          "https://github.com/settings/apps/new"
+        )
+      )
+      expect(
+        requests.find(({ url }) => url.endsWith("/github/app/manifest"))?.body
+      ).toBe(JSON.stringify({ return_to: "/settings/git-providers/github" }))
+      expect(view.queryByLabelText("App ID")).toBeNull()
+    } finally {
+      HTMLFormElement.prototype.submit = originalSubmit
+      submittedForm?.remove()
+    }
     expect(view.queryByRole("button", { name: "Create GitHub App" })).toBeNull()
 
     view.rerender(renderRecovery(false))
@@ -360,7 +395,6 @@ describe("GitHubPanel credentials guard", () => {
         { client: queryClient },
         React.createElement(GitHubCredentialsRecovery, {
           unreadable: true,
-          onImported: () => undefined,
         })
       )
     )
@@ -382,7 +416,7 @@ describe("GitHubPanel credentials guard", () => {
     const resetDialog = view
       .getByText("Reset local GitHub configuration?")
       .closest('[data-slot="alert-dialog-content"]')
-    expect(resetDialog?.className).toContain("max-w-[calc(100vw-2rem)]")
+    expect(resetDialog?.className).toContain("w-[calc(100%-2rem)]")
     for (const action of resetDialog?.querySelectorAll("button") ?? []) {
       expect(action.className).toContain("w-full")
       expect(action.className).toContain("sm:w-auto")
@@ -392,7 +426,9 @@ describe("GitHubPanel credentials guard", () => {
     await waitFor(() =>
       expect(view.queryByText("Reset local GitHub configuration?")).toBeNull()
     )
-    expect(view.getByRole("alert")).toBeTruthy()
+    expect(view.getByRole("alertdialog")).toBeTruthy()
+    expect(view.getByText("GitHub App credentials need attention")).toBeTruthy()
+    expect(view.getByRole("alert", { hidden: true })).toBeTruthy()
   })
 
   it("keeps the reset confirmation open while pending and after an API error", async () => {
@@ -421,7 +457,6 @@ describe("GitHubPanel credentials guard", () => {
         { client: queryClient },
         React.createElement(GitHubCredentialsRecovery, {
           unreadable: true,
-          onImported: () => undefined,
         })
       )
     )
