@@ -107,6 +107,7 @@ mock.module("../nixpacks", () => ({
   nixpacksBuild: mock(async () => {}),
 }))
 mock.module("../../env", () => ({
+  defaultStateDir: (name: string) => `/tmp/ploydok-test/${name}`,
   env: {
     PLOYDOK_BUILD_DIR: "/tmp/ploydok-builds",
     PLOYDOK_REGISTRY_URL: "http://127.0.0.1:5000",
