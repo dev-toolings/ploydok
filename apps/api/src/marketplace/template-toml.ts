@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHmac, randomBytes } from "node:crypto"
 import { generateDomain, resolveTemplate } from "@ploydok/shared"
-import { parse, stringify } from "yaml"
+import { isScalar, parseDocument, visit } from "yaml"
 import { childLogger } from "../logger"
 import {
   composeRequiresContainerRuntime,
@@ -334,7 +334,7 @@ function interpolateCompose(compose: string, variables: Record<string, string>, 
       }
       if (depth) throw validationError("Unclosed Compose interpolation")
       const token = text.slice(i + 2, end - 1)
-      const helper = helperValue(token, context, true)
+      const helper = Object.hasOwn(variables, token) ? null : helperValue(token, context, true)
       if (helper !== null) { output += helper; i = end; continue }
       const match = /^([A-Za-z_][A-Za-z0-9_]*)(:?[-+?])?(.*)$/.exec(token)
       if (!match || (!match[2] && match[3])) throw validationError(`Invalid Compose interpolation: ${token}`)
@@ -354,25 +354,15 @@ function interpolateCompose(compose: string, variables: Record<string, string>, 
     }
     return output
   }
-  const resolved = interpolate(compose)
+  const document = parseDocument(compose)
+  if (document.errors.length) throw validationError(`Invalid Compose YAML: ${document.errors[0]!.message}`)
+  // Parse before interpolation so injected values remain strings, never YAML
+  // syntax. Scalars in keys, sequences and anchored nodes use the same rules.
+  visit(document, (_key, node) => {
+    if (isScalar(node) && typeof node.value === "string") node.value = interpolate(node.value)
+  })
   if (missing.size) log.warn({ names: [...missing].sort() }, "Compose variables missing without defaults; replaced with empty strings")
-  // Quote only empty environment scalars introduced by interpolation. Legacy
-  // environment inheritance remains rejected by the existing Compose validator.
-  const document = parse(resolved) as any
-  let original: any
-  try { original = parse(compose) } catch { original = {} }
-  let changed = false
-  for (const [name, service] of Object.entries(document?.services ?? {}) as Array<[string, any]>) {
-    const before = original?.services?.[name]?.environment
-    if (!service?.environment || Array.isArray(service.environment)) continue
-    for (const [key, value] of Object.entries(service.environment)) {
-      if (value === null && typeof before?.[key] === "string" && before[key].includes("$")) {
-        service.environment[key] = ""
-        changed = true
-      }
-    }
-  }
-  return changed ? stringify(document) : resolved
+  return document.toString({ lineWidth: 0 })
 }
 
 function processTemplateToml(

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { parse } from "yaml"
+import * as cryptoModule from "node:crypto"
+import { resolveServiceCompose } from "../services/service-secrets"
 import { createHmac } from "node:crypto"
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 import { prepareTemplateInstall } from "./template-toml"
 import { protectServiceSecrets } from "../services/service-secrets"
 
@@ -34,8 +36,8 @@ LIST_VALUE = 42
 
     expect(result.composeResolved).toContain("APP: overridden-name")
     expect(result.composeResolved).toContain("URL: https://example.test")
-    expect(result.composeResolved).toContain("OBJECT: true")
-    expect(result.composeResolved).toContain("LIST: 42")
+    expect(parse(result.composeResolved).services.web.environment.OBJECT).toBe("true")
+    expect(parse(result.composeResolved).services.web.environment.LIST).toBe("42")
     expect(result.runtimeMode).toBe("swarm")
   })
 
@@ -60,8 +62,8 @@ env = ["STRING=from-list", { NUMBER = 42, BOOLEAN = true }]
     })
 
     expect(result.composeResolved).toContain("STRING: from-list")
-    expect(result.composeResolved).toContain("NUMBER: 42")
-    expect(result.composeResolved).toContain("BOOLEAN: true")
+    expect(parse(result.composeResolved).services.web.environment.NUMBER).toBe("42")
+    expect(parse(result.composeResolved).services.web.environment.BOOLEAN).toBe("true")
   })
 
   it("applies Compose interpolation and keeps escaped dollars literal", () => {
@@ -141,7 +143,7 @@ LITERAL = "5678"
     expect(Number(result.generatedVars["PORT:randomPort"])).toBeLessThanOrEqual(65535)
     expect(result.generatedVars).toHaveProperty("password:8")
     expect(result.generatedVars).not.toHaveProperty("LITERAL")
-    expect(result.composeResolved).toContain("LITERAL: 5678")
+    expect(parse(result.composeResolved).services.web.environment.LITERAL).toBe("5678")
   })
 
   it("does not vault short literal environment values", async () => {
@@ -166,7 +168,7 @@ FLAG = "true"
     )
 
     expect(Object.keys(protectedValues.generated_env)).toEqual(["PASSWORD:password:16"])
-    expect(protectedValues.compose_raw).toContain("FLAG: true")
+    expect(parse(protectedValues.compose_raw).services.web.environment.FLAG).toBe("true")
   })
 
   it.each(["PAYLOAD", '{"sub":"demo"}'])("generates an HS256 JWT with a secret and payload %s", (payload) => {
@@ -294,7 +296,7 @@ host = "\${main_domain}"
   expect(result.composeResolved).not.toContain("${");
   const values = parse(result.composeResolved).services.n8n.environment;
   expect(values.N8N_HOST).toBe(result.domain);
-  expect(values.N8N_PORT).toBe(5678);
+  expect(values.N8N_PORT).toBe("5678");
   expect(result.declaredEntrypoint).toEqual({ serviceName: "n8n", port: 5678 });
   expect(Object.values(result.generatedVars)).not.toContain("5678");
 });
@@ -319,12 +321,84 @@ it("supports helper lengths, dated timestamps and unset versus empty operators",
   const values = parse(result.composeResolved).services.web.environment;
   expect(values.RAW).toMatch(/^[0-9a-f]{32}$/);
   expect(values.HASH).toMatch(/^demo-[0-9a-f]{6}$/);
-  expect(values.MS).toBe(Date.parse("2030-01-01T00:00:00Z"));
-  expect(values.SECONDS).toBe(1893456000);
+  expect(values.MS).toBe(String(Date.parse("2030-01-01T00:00:00Z")));
+  expect(values.SECONDS).toBe("1893456000");
   expect(values.DEFAULT).toBe("fallback");
   expect(values.EMPTY).toBe("");
   expect(values.PRESENT).toBe("present");
   expect(values.NONEMPTY).toBe("");
   expect(values.REQUIRED).toBe("");
   expect(values.DOMAIN_DEFAULT).toBe("fallback");
+});
+
+it("interpolates YAML string scalars and keys without interpreting injected syntax", () => {
+  const result = prepareTemplateInstall({
+    projectSlug: "demo", templateToml: `[variables]
+QUOTES = "''"
+FRONT = '\"http://example.test\"'
+PORT = "8000 # Do Not Alter"
+JSON = '{"headers":{"X-Test":"a: b"}}'
+KEY = "INTERPOLATED"
+`, compose: `services:
+  web:
+    image: nginx
+    environment:
+      QUOTES: \${QUOTES}
+      FRONT: \${FRONT}
+      PORT: \${PORT}
+      JSON: \${JSON}
+      "${"$"}KEY": literal
+      NUMBER: 123
+      BOOLEAN: true
+    command: ["echo", "\${JSON}"]
+` });
+  const service = parse(result.composeResolved).services.web;
+  expect(service.environment).toEqual({
+    QUOTES: "''", FRONT: '"http://example.test"', PORT: "8000 # Do Not Alter",
+    JSON: '{"headers":{"X-Test":"a: b"}}', INTERPOLATED: "literal", NUMBER: 123, BOOLEAN: true,
+  });
+  expect(service.command).toEqual(["echo", '{"headers":{"X-Test":"a: b"}}']);
+});
+
+it("uses interpolation env values before helper names, including empty values", () => {
+  const result = prepareTemplateInstall({ projectSlug: "demo",
+    templateToml: `[variables]
+domain = "chosen.example.test"
+password = ""
+hash = "chosen-hash"
+`, compose: `services:
+  web:
+    image: nginx
+    environment:
+      DOMAIN: \${domain}
+      PASSWORD: "\${password}"
+      DEFAULT: \${password:-fallback}
+      HASH: $hash
+      GENERATED: \${password:8}
+` });
+  const values = parse(result.composeResolved).services.web.environment;
+  expect(values.DOMAIN).toBe("chosen.example.test");
+  expect(values.PASSWORD).toBe("");
+  expect(values.DEFAULT).toBe("fallback");
+  expect(values.HASH).toBe("chosen-hash");
+  expect(values.GENERATED).toHaveLength(8);
+  expect(Object.keys(result.generatedVars)).toEqual(["password:8"]);
+});
+
+it("keeps generated base64 characters literal through YAML serialization and vault resolution", async () => {
+  const random = spyOn(cryptoModule, "randomBytes").mockImplementation(() => Buffer.from([251, 255]));
+  const result = (() => {
+    try {
+      return prepareTemplateInstall({ projectSlug: "demo",
+        templateToml: '[variables]\nTOKEN = "\${base64:2}"',
+        compose: 'services:\n  web:\n    image: nginx\n    environment:\n      TOKEN: ${TOKEN}\n',
+      });
+    } finally { random.mockRestore(); }
+  })();
+  expect(result.generatedVars["TOKEN:base64:2"]).toBe("+/8=");
+  expect(result.composeResolved).toContain("+/8=");
+  const protectedValues = await protectServiceSecrets(result.composeResolved, result.generatedVars);
+  expect(protectedValues.compose_raw).not.toContain("+/8=");
+  const resolved = await resolveServiceCompose(protectedValues);
+  expect(parse(resolved).services.web.environment.TOKEN).toBe("+/8=");
 });
