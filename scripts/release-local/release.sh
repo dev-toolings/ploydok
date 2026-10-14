@@ -10,7 +10,7 @@ help() {
 Usage: release.sh --version VERSION [--image api|web|agent|caddy|adminer]...
                   [--root PATH] [--push] [--allow-stable] [--smoke-api]
 Build linux/amd64 and linux/arm64, scan both, then optionally push all.
-Default: all five images. Requires Docker buildx, jq; push also needs skopeo.
+Default: all five images. Requires Docker buildx; push also needs skopeo.
 Registry login is the caller's job. No signing or Git operations are performed.
 All temporary artifacts and the dedicated build cache are removed on exit.
 HELP
@@ -89,7 +89,8 @@ for image in "${images[@]}"; do
     log "Scanning $image linux/$arch"
     docker run --rm --user "$(id -u):$(id -g)" \
       -v "$tmp:/release" "$trivy" image \
-      --cache-dir /release/trivy-cache --platform "linux/$arch" \
+      --db-repository ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2 \
+      --no-progress --cache-dir /release/trivy-cache --platform "linux/$arch" \
       --exit-code 1 --ignore-unfixed --severity CRITICAL --input "/release/$image.tar"
     log "PASS $image linux/$arch"
   done

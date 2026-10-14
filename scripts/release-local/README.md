@@ -17,7 +17,8 @@ SBOM settings match the CI matrix in `.github/workflows/release-images.yml`.
 Each OCI archive is scanned for both platforms with `aquasec/trivy:0.67.2`
 and `image --exit-code 1 --ignore-unfixed --severity CRITICAL`. CI's
 `--ignore-unfixed` policy is retained; no vulnerability-specific exclusions
-are added. Every selected image must pass before any upload starts.
+are added. The official GHCR database registry is tried before the Google
+mirror to avoid slow mirror downloads. Every selected image must pass before any upload starts.
 
 Authenticate yourself before adding `--push`:
 
