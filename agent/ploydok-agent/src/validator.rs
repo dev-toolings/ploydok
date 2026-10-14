@@ -16,6 +16,7 @@
 //   - `PermissiveValidator` : no-op, development only.
 //   - `StrictValidator`     : production allowlist enforcement (task 2.3).
 
+use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 
 use ploydok_proto::agent::{
@@ -593,6 +594,13 @@ impl Validator for StrictValidator {
             }
         }
 
+        // Explicit host bindings must be literal IPs. The API rejects
+        // wildcard bindings for marketplace services; the agent repeats that
+        // invariant because it is the final Docker boundary.
+        for port in &req.ports {
+            validate_host_ip(&port.host_ip)?;
+        }
+
         // 5. Healthcheck: if set, only Docker-supported modes and non-negative timings.
         if let Some(healthcheck) = &req.healthcheck {
             if healthcheck.test.is_empty() {
@@ -1152,6 +1160,27 @@ fn validate_container_id(container_id: &str) -> ValidatorResult {
     Ok(())
 }
 
+fn validate_host_ip(host_ip: &str) -> ValidatorResult {
+    if host_ip.is_empty() {
+        return Ok(());
+    }
+    let parsed = host_ip.parse::<IpAddr>().map_err(|_| {
+        deny(
+            tonic::Code::InvalidArgument,
+            "host_ip_literal",
+            serde_json::json!({ "host_ip": host_ip, "expected": "IPv4 or IPv6 literal" }),
+        )
+    })?;
+    if parsed.is_unspecified() {
+        return Err(deny(
+            tonic::Code::InvalidArgument,
+            "host_ip_wildcard_forbidden",
+            serde_json::json!({ "host_ip": host_ip }),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_browse_path(path: &str) -> ValidatorResult {
     if !path.starts_with('/') {
         return Err(deny(
@@ -1244,4 +1273,28 @@ fn looks_like_short_id(s: &str) -> bool {
 /// Returns true if `s` looks like a Docker network id (64 hex chars).
 fn looks_like_network_id(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_host_ip;
+
+    #[test]
+    fn host_ip_accepts_ipv4_and_ipv6_literals() {
+        assert!(validate_host_ip("127.0.0.1").is_ok());
+        assert!(validate_host_ip("::1").is_ok());
+        assert!(validate_host_ip("10.0.0.10").is_ok());
+    }
+
+    #[test]
+    fn host_ip_rejects_names_and_wildcards() {
+        assert!(validate_host_ip("localhost").is_err());
+        assert!(validate_host_ip("0.0.0.0").is_err());
+        assert!(validate_host_ip("::").is_err());
+    }
+
+    #[test]
+    fn empty_host_ip_keeps_legacy_requests_valid() {
+        assert!(validate_host_ip("").is_ok());
+    }
 }

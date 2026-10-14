@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test"
 import {
   UnsupportedComposeFeatureError,
+  composeRequiresContainerRuntime,
   composeToContainers,
 } from "./compose-to-containers"
 
@@ -178,8 +179,35 @@ services:
     })
   })
 
-  it("rejects address-specific port publication instead of widening it", () => {
-    expect(() => run('services:\n  db:\n    image: postgres:16\n    ports: ["127.0.0.1:5432:5432"]')).toThrow(/host IP/)
+  it("preserves explicit IPv4 and IPv6 host IPs", () => {
+    const result = run(`
+services:
+  v4:
+    image: nginx:alpine
+    ports: ["127.0.0.1:8080:80"]
+  v6:
+    image: nginx:alpine
+    ports:
+      - target: 80
+        published: 8081
+        host_ip: ::1
+`)
+    expect(result[0]!.ports[0]).toMatchObject({
+      containerPort: 80,
+      hostPort: 8080,
+      hostIp: "127.0.0.1",
+    })
+    expect(result[1]!.ports[0]).toMatchObject({
+      containerPort: 80,
+      hostPort: 8081,
+      hostIp: "::1",
+    })
+  })
+
+  it("rejects wildcard host IPs and selects Docker only for explicit bindings", () => {
+    expect(() => run('services:\n  db:\n    image: postgres:16\n    ports: ["0.0.0.0:5432:5432"]')).toThrow(/wildcard host IP/)
+    expect(composeRequiresContainerRuntime('services:\n  db:\n    image: postgres:16\n    ports: ["127.0.0.1:5432:5432"]')).toBe(true)
+    expect(composeRequiresContainerRuntime('services:\n  db:\n    image: postgres:16\n    ports: ["5432:5432"]')).toBe(false)
   })
 
   it("healthcheck with 30s/1m intervals", () => {

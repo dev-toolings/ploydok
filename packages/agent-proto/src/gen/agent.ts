@@ -100,6 +100,8 @@ export interface PortMapping {
   hostPort: number;
   /** "tcp" or "udp" — defaults to "tcp" if empty */
   proto: string;
+  /** Literal host IP to bind; empty preserves legacy behavior. */
+  hostIp: string;
 }
 
 /** CPU / memory / pids limits. Zero values mean "no limit". */
@@ -985,7 +987,7 @@ export const VolumeMount: MessageFns<VolumeMount> = {
 };
 
 function createBasePortMapping(): PortMapping {
-  return { containerPort: 0, hostPort: 0, proto: "" };
+  return { containerPort: 0, hostPort: 0, proto: "", hostIp: "" };
 }
 
 export const PortMapping: MessageFns<PortMapping> = {
@@ -998,6 +1000,9 @@ export const PortMapping: MessageFns<PortMapping> = {
     }
     if (message.proto !== "") {
       writer.uint32(26).string(message.proto);
+    }
+    if (message.hostIp !== "") {
+      writer.uint32(34).string(message.hostIp);
     }
     return writer;
   },
@@ -1033,6 +1038,14 @@ export const PortMapping: MessageFns<PortMapping> = {
           message.proto = reader.string();
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.hostIp = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1055,6 +1068,11 @@ export const PortMapping: MessageFns<PortMapping> = {
         ? globalThis.Number(object.host_port)
         : 0,
       proto: isSet(object.proto) ? globalThis.String(object.proto) : "",
+      hostIp: isSet(object.hostIp)
+        ? globalThis.String(object.hostIp)
+        : isSet(object.host_ip)
+        ? globalThis.String(object.host_ip)
+        : "",
     };
   },
 
@@ -1069,6 +1087,9 @@ export const PortMapping: MessageFns<PortMapping> = {
     if (message.proto !== "") {
       obj.proto = message.proto;
     }
+    if (message.hostIp !== "") {
+      obj.hostIp = message.hostIp;
+    }
     return obj;
   },
 
@@ -1080,6 +1101,7 @@ export const PortMapping: MessageFns<PortMapping> = {
     message.containerPort = object.containerPort ?? 0;
     message.hostPort = object.hostPort ?? 0;
     message.proto = object.proto ?? "";
+    message.hostIp = object.hostIp ?? "";
     return message;
   },
 };

@@ -14,6 +14,9 @@ export const services = pgTable("services", {
   status: text("status", {
     enum: ["created", "pending", "running", "stopped", "failed", "deleting"],
   }).default("created"),
+  runtime_mode: text("runtime_mode", { enum: ["docker", "swarm"] })
+    .notNull()
+    .default("swarm"),
   compose_raw: text("compose_raw").notNull(),
   generated_env: jsonb("generated_env").notNull().default({}),
   secrets_encrypted: boolean("secrets_encrypted").notNull().default(false),

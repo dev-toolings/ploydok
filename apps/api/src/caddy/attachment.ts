@@ -13,6 +13,7 @@ import type { Db } from "@ploydok/db"
 import type { Agent } from "../agent"
 import { isAlreadyExists, isNotFound, toAgentError } from "../agent/index.js"
 import { childLogger } from "../logger"
+import { projectNetworkName } from "../services/projects.js"
 
 function overlayNameForProject(projectId: string): string {
   return `ploydok-swarm-proj-${projectId.toLowerCase()}`
@@ -212,13 +213,19 @@ export async function reconcileCaddyAttachments(
 
   const publicServices = await db.select({
     project_id: projectsTable.id,
+    runtime_mode: servicesTable.runtime_mode,
+    network_name: projectsTable.network_name,
     swarm_network_name: projectsTable.swarm_network_name,
   }).from(servicesTable)
     .innerJoin(projectsTable, eq(servicesTable.project_id, projectsTable.id))
     .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
   const networks = [...new Set([
     ...networksToAttachForRunningApps(rows),
-    ...publicServices.map(row => row.swarm_network_name ?? overlayNameForProject(row.project_id)),
+    ...publicServices.map(row =>
+      row.runtime_mode === "docker"
+        ? row.network_name ?? projectNetworkName(row.project_id)
+        : row.swarm_network_name ?? overlayNameForProject(row.project_id)
+    ),
   ])]
   const result = { attached: 0, skipped: 0, failed: 0 }
   if (networks.length === 0) {

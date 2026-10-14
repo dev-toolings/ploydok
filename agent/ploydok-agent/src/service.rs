@@ -634,7 +634,14 @@ impl Agent for AgentService {
                 let proto = if p.proto.is_empty() { "tcp" } else { &p.proto };
                 let key = format!("{}/{}", p.container_port, proto);
                 let binding = PortBinding {
-                    host_ip: Some("0.0.0.0".into()),
+                    // Empty host_ip is the legacy contract for existing API
+                    // callers. Marketplace Docker services always send an
+                    // explicit literal IP for published ports.
+                    host_ip: Some(if p.host_ip.is_empty() {
+                        "0.0.0.0".to_string()
+                    } else {
+                        p.host_ip.clone()
+                    }),
                     host_port: Some(p.host_port.to_string()),
                 };
                 (key, Some(vec![binding]))

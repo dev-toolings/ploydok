@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { parse } from "yaml"
+import { isIP } from "node:net"
 
 export interface ComposeToContainersInput {
   compose: string
@@ -20,6 +21,7 @@ export interface ComposeContainer {
     containerPort: number
     hostPort: number
     proto: "tcp" | "udp"
+    hostIp?: string
   }>
   restartPolicy: "no" | "always" | "unless-stopped" | "on-failure"
   command: string[]
@@ -50,7 +52,8 @@ export const ACCEPTED_COMPOSE_SUBSET = Object.freeze({
   topLevel: ["services", "volumes", "version"],
   service: ["image", "environment", "labels", "volumes", "command", "user", "healthcheck", "expose"],
   // Swarm: ports are internal only (never published on the host, ingress is
-  // Caddy) and refused when bound to an IP; restart only always/unless-stopped.
+  // Caddy); an explicit host IP selects the Docker runtime. Restart only
+  // always/unless-stopped.
   // depends_on keeps creation order; conditions other than service_started are refused.
   legacyOnly: ["ports", "restart", "depends_on"],
   healthcheck: ["test", "interval", "timeout", "retries", "start_period"],
@@ -221,24 +224,49 @@ function resolveHostPath(
   return `${PLOYDOK_VOLUMES_ROOT}/${servicePrefix}/${relative}`
 }
 
+function validateHostIp(hostIp: string, serviceName: string): string {
+  if (isIP(hostIp) === 0) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${serviceName}": host IP "${hostIp}" must be an IPv4 or IPv6 literal`
+    )
+  }
+  if (hostIp === "0.0.0.0" || hostIp === "::") {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${serviceName}": wildcard host IP "${hostIp}" is forbidden; bind to an explicit interface`
+    )
+  }
+  return hostIp
+}
+
+function parsePortNumber(value: unknown, serviceName: string, field: string): number {
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${serviceName}": ${field} must be an integer between 1 and 65535`
+    )
+  }
+  return port
+}
+
 function parsePorts(
   raw: unknown,
   serviceName: string
-): Array<{ containerPort: number; hostPort: number; proto: "tcp" | "udp" }> {
+): Array<{ containerPort: number; hostPort: number; proto: "tcp" | "udp"; hostIp?: string }> {
   if (!raw || !Array.isArray(raw)) return []
   const result: Array<{
     containerPort: number
     hostPort: number
     proto: "tcp" | "udp"
+    hostIp?: string
   }> = []
 
   for (const item of raw) {
     if (typeof item === "number") {
-      result.push({ containerPort: item, hostPort: item, proto: "tcp" })
+      const port = parsePortNumber(item, serviceName, "port")
+      result.push({ containerPort: port, hostPort: port, proto: "tcp" })
       continue
     }
     if (typeof item === "string") {
-      // Strip optional IP binding: "127.0.0.1:5432:5432" or "5432:5432" or "5432:5432/udp"
       let spec = item
       let proto: "tcp" | "udp" = "tcp"
       if (spec.includes("/")) {
@@ -246,35 +274,60 @@ function parsePorts(
         spec = slashParts[0] ?? spec
         proto = slashParts[1] === "udp" ? "udp" : "tcp"
       }
-      const parts = spec.split(":")
-      if (parts.length > 3) throw new UnsupportedComposeFeatureError(`Service "${serviceName}": address-specific port publication is not supported`)
-      // parts may be [ip, hostPort, containerPort] or [hostPort, containerPort] or [containerPort]
+      let hostIp: string | undefined
+      let portSpec = spec
+      if (spec.startsWith("[")) {
+        const end = spec.indexOf("]")
+        if (end < 0) {
+          throw new UnsupportedComposeFeatureError(
+            `Service "${serviceName}": invalid IPv6 port mapping "${item}"`
+          )
+        }
+        hostIp = validateHostIp(spec.slice(1, end), serviceName)
+        portSpec = spec.slice(end + 1).replace(/^:/, "")
+      }
+      const parts = portSpec.split(":")
+      if (!hostIp && parts.length === 3) {
+        hostIp = validateHostIp(parts[0] ?? "", serviceName)
+        portSpec = parts.slice(1).join(":")
+      } else if (!hostIp && parts.length > 3) {
+        hostIp = validateHostIp(parts.slice(0, -2).join(":"), serviceName)
+        portSpec = parts.slice(-2).join(":")
+      }
+      const portParts = portSpec.split(":")
       let hostPort: number
       let containerPort: number
-      if (parts.length === 3) {
-        throw new UnsupportedComposeFeatureError(
-          `Service "${serviceName}": address-specific port publication "${item}" cannot preserve host IP in Swarm`
-        )
-      } else if (parts.length === 2) {
-        hostPort = parseInt(parts[0] ?? "", 10)
-        containerPort = parseInt(parts[1] ?? "", 10)
+      if (portParts.length === 2) {
+        hostPort = parsePortNumber(portParts[0], serviceName, "published port")
+        containerPort = parsePortNumber(portParts[1], serviceName, "target port")
       } else {
-        containerPort = parseInt(parts[0] ?? "", 10)
+        if (portParts.length !== 1) {
+          throw new UnsupportedComposeFeatureError(
+            `Service "${serviceName}": invalid port mapping "${item}"`
+          )
+        }
+        containerPort = parsePortNumber(portParts[0], serviceName, "target port")
         hostPort = containerPort
       }
-      if (isNaN(containerPort) || isNaN(hostPort)) {
-        throw new UnsupportedComposeFeatureError(
-          `Service "${serviceName}": invalid port mapping "${item}"`
-        )
-      }
-      result.push({ containerPort, hostPort, proto })
+      result.push({ containerPort, hostPort, proto, ...(hostIp ? { hostIp } : {}) })
     } else if (typeof item === "object" && item !== null) {
       const p = item as Record<string, unknown>
-      assertFields(p, ["target", "published", "protocol"], `Service "${serviceName}" port`)
+      assertFields(p, ["target", "published", "protocol", "host_ip"], `Service "${serviceName}" port`)
+      const hostIp =
+        p.host_ip === undefined || p.host_ip === null || p.host_ip === ""
+          ? undefined
+          : validateHostIp(String(p.host_ip), serviceName)
+      const containerPort = parsePortNumber(p.target, serviceName, "target port")
+      const hostPort = parsePortNumber(
+        p.published ?? p.target,
+        serviceName,
+        "published port"
+      )
       result.push({
-        containerPort: Number(p.target ?? 0),
-        hostPort: Number(p.published ?? p.target ?? 0),
+        containerPort,
+        hostPort,
         proto: p.protocol === "udp" ? "udp" : "tcp",
+        ...(hostIp ? { hostIp } : {}),
       })
     }
   }
@@ -318,8 +371,14 @@ function parseCommand(raw: unknown): string[] {
 function assertSwarmCompatible(svcName: string, svc: Record<string, unknown>) {
   if (svc.command === "" || (Array.isArray(svc.command) && svc.command.length === 0))
     throw new UnsupportedComposeFeatureError("Empty command override cannot be preserved by the Swarm contract")
-  // parsePorts refuses an IP binding; the remaining ports stay internal.
-  parsePorts(svc.ports, svcName)
+  // Swarm cannot bind a published port to a host IP. Marketplace selection
+  // routes such a Compose file to Docker before this validator is called.
+  const ports = parsePorts(svc.ports, svcName)
+  if (ports.some((port) => port.hostIp)) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${svcName}": address-specific port publication cannot be preserved in Swarm`
+    )
+  }
   if (svc.restart !== undefined && !SWARM_RESTART_EQUIVALENT.includes(String(svc.restart)))
     throw new UnsupportedComposeFeatureError(`Service "${svcName}": restart "${String(svc.restart)}" cannot be preserved by Swarm's restart-on-any-exit policy; use always or unless-stopped`)
 }
@@ -582,4 +641,39 @@ export function composeToContainers(
     const { _composeName, ...rest } = entry
     return { ...rest, composeName: _composeName }
   })
+}
+
+/**
+ * Return true when a Compose file explicitly asks Docker to publish a port
+ * on one literal host IP. Unbound ports stay internal and therefore remain
+ * eligible for the Swarm runtime.
+ */
+export function composeRequiresContainerRuntime(compose: string): boolean {
+  let doc: Record<string, unknown>
+  try {
+    const parsed = parse(compose)
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("Parsed compose is not an object")
+    }
+    doc = parsed as Record<string, unknown>
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`Invalid YAML: ${msg}`)
+  }
+
+  const rawServices = doc.services
+  if (!rawServices || typeof rawServices !== "object") {
+    throw new Error('Compose file must have a "services" key')
+  }
+  for (const [serviceName, rawService] of Object.entries(
+    rawServices as Record<string, unknown>
+  )) {
+    if (!rawService || typeof rawService !== "object" || Array.isArray(rawService)) {
+      throw new UnsupportedComposeFeatureError(`Service "${serviceName}" must be a map`)
+    }
+    if (parsePorts((rawService as Record<string, unknown>).ports, serviceName).some((port) => port.hostIp)) {
+      return true
+    }
+  }
+  return false
 }

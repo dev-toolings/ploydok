@@ -52,6 +52,7 @@ export interface ServiceForReconcile {
   compose_raw: string
   container_ids: string[] | null
   swarm_service_names: string[] | null
+  runtime_mode?: "docker" | "swarm" | null
 }
 
 export interface DatabaseProxyForReconcile {
@@ -103,6 +104,7 @@ export async function fetchRunningServicesForCaddy(
       compose_raw: servicesTable.compose_raw,
       container_ids: servicesTable.container_ids,
       swarm_service_names: servicesTable.swarm_service_names,
+      runtime_mode: servicesTable.runtime_mode,
     })
     .from(servicesTable)
     .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
@@ -182,10 +184,14 @@ export async function reconcileServiceRoutes(opts: {
         continue
       }
 
+      const runtimeMode =
+        service.runtime_mode ??
+        (swarmServiceNames.length > 0 ? "swarm" : "docker")
       const containers = composeToContainers({
         compose: service.compose_raw,
-        servicePrefix: `ploydok-svc-${service.slug}`,
-        network: "ploydok-public",
+        runtime: runtimeMode,
+        servicePrefix: `ploydok-svc-${service.id}`,
+        network: "ploydok-service-route",
         labels: {
           "ploydok.kind": "service",
           "ploydok.service_id": service.id,

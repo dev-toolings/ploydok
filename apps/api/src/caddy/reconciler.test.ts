@@ -386,6 +386,7 @@ services:
 `,
         container_ids: [],
         swarm_service_names: ["ploydok-app-svc-svc-1-demo-web"],
+        runtime_mode: "swarm",
       },
     ]
 
@@ -406,6 +407,40 @@ services:
         host: "demo.example.com",
         upstream: "ploydok-app-svc-svc-1-demo-web:80",
         appId: "svc-1",
+      },
+    ])
+  })
+
+  test("utilise le nom du conteneur Docker persiste avec le port Compose", async () => {
+    const { caddy, upserts } = createFakeServiceCaddy()
+    const services: ServiceForReconcile[] = [
+      {
+        id: "svc-docker",
+        slug: "demo",
+        domain: "docker.example.com",
+        compose_raw: `
+services:
+  web:
+    image: nginx:alpine
+    ports: ["127.0.0.1:8080:80"]
+`,
+        container_ids: ["ctr-1"],
+        swarm_service_names: [],
+        runtime_mode: "docker",
+      },
+    ]
+
+    await reconcileServiceRoutes({
+      caddy,
+      logger: silentLogger,
+      services,
+    })
+
+    expect(upserts).toEqual([
+      {
+        host: "docker.example.com",
+        upstream: "ploydok-svc-svc-docker-web:80",
+        appId: "svc-docker",
       },
     ])
   })

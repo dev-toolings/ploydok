@@ -14,6 +14,7 @@ const mockInsertService = mock(
     template_id: values["template_id"],
     template_version: values["template_version"],
     status: "pending",
+    runtime_mode: values["runtime_mode"],
     compose_raw: values["compose_raw"],
     generated_env: values["generated_env"],
     domain: values["domain"],
@@ -60,6 +61,7 @@ mock.module("@ploydok/db", () => ({
 }))
 
 mock.module("./projects.js", () => ({
+  ensureProjectNetwork: mock(async () => "ploydok-proj-proj-1"),
   ensureProjectSwarmNetwork: mock(async () => "ploydok-swarm-proj-proj-1"),
 }))
 
@@ -116,6 +118,7 @@ function makeAgent(
     containerStart: mock(async () => ({})),
     containerStop: mock(async () => ({})),
     containerRemove: mock(async () => ({})),
+    listContainers: mock(async () => ({ containers: [] })),
     ...overrides,
   }
 }
@@ -526,17 +529,19 @@ describe("marketplace project isolation", () => {
   });
 });
 
-it("rejects unsupported Compose before durable acceptance or resource creation", async () => {
+it("selects Docker mode for an explicit host IP before durable acceptance", async () => {
   const db = makeDb();
   (db.select as any).mockImplementation(() => ({
     from: () => ({ where: () => ({ limit: async () => [{ id: "proj-1" }] }) }),
   }));
-  const before = mockInsertService.mock.calls.length;
   const agent = makeAgent();
-  await expect(installFromTemplate({ db, agent }, "user-1", {
+  const row = await installFromTemplate({ db, agent }, "user-1", {
     projectId: "proj-1", name: "Bad", templateId: "fixture", templateVersion: "1",
     compose: 'services:\n  app:\n    image: nginx\n    ports: ["127.0.0.1:8080:80"]',
-  })).rejects.toThrow(/host IP/);
-  expect(mockInsertService.mock.calls.length).toBe(before);
+  });
+  expect(row.runtime_mode).toBe("docker");
+  expect(mockInsertService.mock.calls.at(-1)?.[1]).toMatchObject({
+    runtime_mode: "docker",
+  });
   expect((agent.containerCreate as any).mock.calls).toHaveLength(0);
 });
