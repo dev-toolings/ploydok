@@ -71,6 +71,7 @@ export const CreateServiceFromTemplateBody = z.object({
   templateVersion: z.string().min(1),
   name: z.string().min(1).max(64),
   compose: z.string().min(1).max(200_000),
+  templateToml: z.string().max(200_000).optional(),
 })
 export type CreateServiceFromTemplateBody = z.infer<
   typeof CreateServiceFromTemplateBody

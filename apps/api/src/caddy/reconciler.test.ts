@@ -444,4 +444,41 @@ services:
       },
     ])
   })
+
+  test.each(["docker", "swarm"] as const)("uses the declared entrypoint for a %s service route", async (runtime) => {
+    const { caddy, upserts } = createFakeServiceCaddy()
+    await reconcileServiceRoutes({
+      caddy,
+      logger: silentLogger,
+      services: [
+        {
+          id: "svc-declared",
+          slug: "demo",
+          domain: "declared.example.com",
+          compose_raw: `
+services:
+  worker:
+    image: alpine
+    expose: [9000]
+  web:
+    image: nginx:alpine
+    ports: ["__PLOYDOK_SECRET_0__:8080"]
+`,
+          container_ids: runtime === "docker" ? ["ctr-worker", "ctr-web"] : [],
+          swarm_service_names: runtime === "swarm" ? ["ploydok-app-svc-svc-declared-demo-worker", "ploydok-app-svc-svc-declared-demo-web"] : [],
+          runtime_mode: runtime,
+          entrypoint_service_name: "web",
+          entrypoint_port: 8088,
+        },
+      ],
+    })
+
+    expect(upserts).toEqual([
+      {
+        host: "declared.example.com",
+        upstream: runtime === "swarm" ? "ploydok-app-svc-svc-declared-demo-web:8088" : "ploydok-svc-svc-declared-web:8088",
+        appId: "svc-declared",
+      },
+    ])
+  })
 })

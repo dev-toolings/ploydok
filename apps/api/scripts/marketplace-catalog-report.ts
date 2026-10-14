@@ -10,12 +10,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
-import { resolveTemplate } from "@ploydok/shared"
-import {
-  composeRequiresContainerRuntime,
-  composeToContainers,
-} from "../src/marketplace/compose-to-containers.js"
-import { planComposeSwarmDeploy } from "../src/worker/compose-swarm.js"
+import { prepareTemplateInstall } from "../src/marketplace/template-toml.js"
 
 const BASE_URL = (
   process.env.PLOYDOK_MARKETPLACE_BASE_URL ?? "https://templates.dokploy.com"
@@ -46,23 +41,13 @@ async function cached(rel: string, url: string): Promise<string | null> {
   return text
 }
 
-function validate(id: string, compose: string): void {
-  const { composeResolved } = resolveTemplate(compose, { projectSlug: id })
-  if (composeRequiresContainerRuntime(composeResolved)) {
-    composeToContainers({
-      compose: composeResolved,
-      runtime: "docker",
-      servicePrefix: `ploydok-svc-${id}`,
-      network: "validation",
-    })
-  } else {
-    planComposeSwarmDeploy({
-      compose: composeResolved,
-      kindToken: `svc-${id}`.slice(0, 40),
-      network: "validation",
-      labels: {},
-    })
-  }
+function validate(id: string, compose: string, templateToml?: string): void {
+  prepareTemplateInstall({
+    compose,
+    ...(templateToml !== undefined ? { templateToml } : {}),
+    projectSlug: id,
+    serviceId: id,
+  })
 }
 
 function reasonKey(message: string): string {
@@ -86,12 +71,12 @@ async function worker(): Promise<void> {
         `${id}/docker-compose.yml`,
         `${BASE_URL}/blueprints/${id}/docker-compose.yml`
       )
-      await cached(
+      const templateToml = await cached(
         `${id}/template.toml`,
         `${BASE_URL}/blueprints/${id}/template.toml`
       )
       if (!compose) throw new Error("docker-compose.yml missing upstream")
-      validate(id, compose)
+      validate(id, compose, templateToml ?? undefined)
       results.push({ id, ok: true })
     } catch (err) {
       results.push({ id, ok: false, error: (err as Error).message })

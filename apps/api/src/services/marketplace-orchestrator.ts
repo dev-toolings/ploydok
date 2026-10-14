@@ -23,7 +23,6 @@ import {
   retryClaimedCreationSaga,
 } from "@ploydok/db/queries"
 import type { ServiceRow, Db } from "@ploydok/db"
-import { resolveTemplate } from "@ploydok/shared"
 import { childLogger } from "../logger"
 import { enqueueWithDbRow } from "../worker/queue-enqueue"
 import { serviceInstallQueue } from "../worker/queues"
@@ -40,10 +39,10 @@ import {
 import { ensureCaddyOnProjectNetwork } from "../caddy/attachment.js"
 import { ensureProjectNetwork, ensureProjectSwarmNetwork } from "./projects.js"
 import {
-  composeRequiresContainerRuntime,
   composeToContainers,
   type ComposeContainer,
 } from "../marketplace/compose-to-containers.js"
+import { prepareTemplateInstall } from "../marketplace/template-toml.js"
 import {
   deployPlannedComposeStack,
   planComposeSwarmDeploy,
@@ -138,6 +137,20 @@ function agentPortsForContainer(container: ComposeContainer) {
     .map((port) => ({ ...port, hostIp: port.hostIp! }))
 }
 
+function declaredRouteTarget(
+  serviceId: string,
+  serviceName: string | null | undefined,
+  port: number | null | undefined,
+  containers: Array<Pick<ComposeContainer, "name" | "composeName">>
+): { name: string; port: number } | undefined {
+  if (serviceName == null || port == null) return undefined
+  const container = containers.find((candidate) => candidate.composeName === serviceName)
+  if (!container) {
+    throw new ServiceHasNoEntrypointError(serviceId)
+  }
+  return { name: container.name, port }
+}
+
 export async function installFromTemplate(
   deps: OrchestratorDeps,
   userId: string,
@@ -147,6 +160,7 @@ export async function installFromTemplate(
     templateVersion: string
     name: string
     compose: string
+    templateToml?: string
   }
 ): Promise<ServiceRow> {
   const { db } = deps
@@ -167,31 +181,21 @@ export async function installFromTemplate(
   const baseSlug = slugify(input.name) || "service"
   const slug = await uniqueServiceSlug(db, input.projectId, baseSlug)
 
-  const { composeResolved, generatedVars, domain } = resolveTemplate(
-    input.compose,
-    {
-      projectSlug: slug,
-    }
-  )
-
-  const runtimeMode = composeRequiresContainerRuntime(composeResolved)
-    ? "docker"
-    : "swarm"
-  // Validate before accepting the durable intention. The resolved input remains
-  // on the service row; the outbox contains only its identifier.
-  if (runtimeMode === "docker") {
-    planServiceContainers(
-      { id: serviceId, compose_raw: composeResolved },
-      "validation",
-      userId
-    )
-  } else {
-    planServiceStack(
-      { id: serviceId, slug, compose_raw: composeResolved },
-      "validation",
-      userId
-    )
-  }
+  const prepared = prepareTemplateInstall({
+    compose: input.compose,
+    ...(input.templateToml !== undefined
+      ? { templateToml: input.templateToml }
+      : {}),
+    projectSlug: slug,
+    serviceId,
+  })
+  const {
+    composeResolved,
+    generatedVars,
+    domain,
+    declaredEntrypoint,
+    runtimeMode,
+  } = prepared
   const protectedValues = await protectServiceSecrets(composeResolved, generatedVars)
   const accepted = await enqueueWithDbRow({
     db,
@@ -209,6 +213,8 @@ export async function installFromTemplate(
         runtime_mode: runtimeMode,
         ...protectedValues,
         domain,
+        entrypoint_service_name: declaredEntrypoint?.serviceName ?? null,
+        entrypoint_port: declaredEntrypoint?.port ?? null,
         container_ids: [],
       })
       await createCreationSaga(tx, {
@@ -412,9 +418,18 @@ export async function resumeServiceCreation(
             serviceId,
             domain: service.domain,
             containers,
+            ...(() => {
+              const entrypoint = declaredRouteTarget(
+                serviceId,
+                service.entrypoint_service_name,
+                service.entrypoint_port,
+                containers
+              )
+              return entrypoint ? { entrypoint } : {}
+            })(),
           })
         } catch (error) {
-          if (!(error instanceof ServiceHasNoEntrypointError)) throw error
+          if (service.entrypoint_service_name != null || !(error instanceof ServiceHasNoEntrypointError)) throw error
         }
       }
       log.info({ serviceId, serviceCount: containers.length }, "service deployed")
@@ -449,11 +464,22 @@ export async function resumeServiceCreation(
           if (!isAlreadyExists(toAgentError(error))) throw error
         }
       }
-      if (service.domain && plan.entrypoint) {
+      const routeEntrypoint = service.entrypoint_service_name != null
+        ? (() => {
+            const target = plan.services.find(
+              (candidate) => candidate.composeName === service.entrypoint_service_name
+            )
+            if (!target || service.entrypoint_port == null) {
+              throw new ServiceHasNoEntrypointError(serviceId)
+            }
+            return { name: target.name, port: service.entrypoint_port }
+          })()
+        : plan.entrypoint
+      if (service.domain && routeEntrypoint) {
         await fence()
         await caddy.upsertRoute({
           host: service.domain,
-          upstream: `${plan.entrypoint.name}:${plan.entrypoint.port}`,
+          upstream: `${routeEntrypoint.name}:${routeEntrypoint.port}`,
           appId: serviceId,
         })
       }

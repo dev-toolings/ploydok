@@ -314,6 +314,7 @@ function TemplateDialog({
       templateVersion: template.version,
       name: template.name,
       compose: data.dockerCompose,
+      templateToml: data.templateToml,
     })
     setConfirmOpen(false)
     onClose()

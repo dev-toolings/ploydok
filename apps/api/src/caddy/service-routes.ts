@@ -8,6 +8,7 @@ export interface UpsertServiceRouteInput {
   serviceId: string
   domain: string
   containers: ComposeContainer[]
+  entrypoint?: { name: string; port: number }
 }
 
 export class ServiceHasNoEntrypointError extends Error {
@@ -54,7 +55,7 @@ export async function upsertServiceRoute(
 ): Promise<void> {
   const { serviceId, domain, containers } = input
 
-  const { name, port } = pickEntrypoint(containers)
+  const { name, port } = input.entrypoint ?? pickEntrypoint(containers)
 
   if (!name || port === 0) {
     throw new ServiceHasNoEntrypointError(serviceId)

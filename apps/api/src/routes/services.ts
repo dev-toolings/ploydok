@@ -103,6 +103,9 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
         templateVersion: parsed.data.templateVersion,
         name: parsed.data.name,
         compose: parsed.data.compose,
+        ...(parsed.data.templateToml !== undefined
+          ? { templateToml: parsed.data.templateToml }
+          : {}),
       })
       return c.json({ service: maskServiceSecrets(row) }, 201)
     } catch (err) {
