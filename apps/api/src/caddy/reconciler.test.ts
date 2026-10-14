@@ -380,7 +380,7 @@ describe("reconcileServiceRoutes", () => {
 services:
   web:
     image: nginx:alpine
-    ports: ["8080:80"]
+    expose: [80]
     environment:
       TOKEN: __PLOYDOK_SECRET_0__
 `,
