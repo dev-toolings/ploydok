@@ -102,11 +102,11 @@ const FAKE_USER = {
   session_id: "sess-1",
 }
 
-function makeApp(db: Db) {
+function makeApp(db: Db, tokenScopes?: string[]) {
   const app = new Hono()
   app.use("*", async (c, next) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(c as any).set("user", FAKE_USER)
+    ;(c as any).set("user", { ...FAKE_USER, ...(tokenScopes ? { token_scopes: tokenScopes } : {}) })
     await next()
   })
   app.route("/services", createServicesRouter(db))
@@ -308,5 +308,33 @@ describe("DELETE /services/:id", () => {
     expect(res.status).toBe(200)
     const body = await json(res)
     expect(body.ok).toBe(true)
+  })
+})
+
+describe("service PAT scopes", () => {
+  it("rejects every mutation for a read-only PAT before reaching ownership or Docker", async () => {
+    const app = makeApp(makeDb(), ["services:read"])
+    for (const [method, path] of [["POST", "/services/from-template"], ["POST", "/services/svc-1/start"], ["POST", "/services/svc-1/stop"], ["DELETE", "/services/svc-1"]]) {
+      const res = await app.request(path!, { method: method! })
+      expect(res.status).toBe(403)
+      expect((await json(res)).error.code).toBe("FORBIDDEN")
+    }
+    expect(mockGetServiceForOwner).not.toHaveBeenCalled()
+  })
+
+  it("requires services:read on every read route", async () => {
+    const app = makeApp(makeDb(), ["apps:read"])
+    for (const path of ["/services", "/services/svc-1", "/services/svc-1/logs"]) {
+      expect((await app.request(path)).status).toBe(403)
+    }
+    expect((await makeApp(makeDb(), ["services:read"]).request("/services")).status).toBe(200)
+  })
+
+  it("a write PAT still cannot mutate another owner's service", async () => {
+    const app = makeApp(makeDb(), ["services:write"])
+    expect((await app.request("/services/svc-other/start", { method: "POST" })).status).toBe(404)
+    expect(mockGetServiceForOwner).toHaveBeenCalledWith(expect.anything(), "svc-other", "user-1")
+    mockGetServiceForOwner.mockResolvedValueOnce({ id: "svc-1" })
+    expect((await app.request("/services/svc-1/start", { method: "POST" })).status).toBe(200)
   })
 })

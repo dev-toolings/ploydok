@@ -97,7 +97,7 @@ export function EditSecretDialog({
             <Field>
               <FieldLabel>Scope</FieldLabel>
               <FieldContent>
-                <Badge variant="outline" className="font-mono">
+                <Badge variant="outline" className="font-sans">
                   {secret?.scope ?? "shared"}
                 </Badge>
               </FieldContent>
@@ -106,7 +106,7 @@ export function EditSecretDialog({
             <Field>
               <FieldLabel>Phase</FieldLabel>
               <FieldContent>
-                <Badge variant="outline" className="font-mono">
+                <Badge variant="outline" className="font-sans">
                   {secret?.phase ?? "runtime"}
                 </Badge>
               </FieldContent>

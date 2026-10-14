@@ -141,7 +141,7 @@ export function AuthShowcaseFrame({
       />
 
       <div className="relative z-10 flex items-center justify-between p-8 text-xs text-white/65 xl:p-10">
-        <span className="font-mono tracking-[0.14em] uppercase">{label}</span>
+        <span className="font-sans tracking-[0.14em] uppercase">{label}</span>
         <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5">
           <span className="size-1.5 rounded-full bg-[oklch(0.78_0.18_145)] shadow-[0_0_14px_oklch(0.78_0.18_145)]" />
           {badge}
@@ -149,7 +149,7 @@ export function AuthShowcaseFrame({
       </div>
 
       <div className="relative z-10 mx-auto flex w-full max-w-[760px] flex-1 flex-col justify-center px-12 pb-16 xl:px-16">
-        <p className="mb-5 font-mono text-xs tracking-[0.18em] text-[oklch(0.76_0.12_235)] uppercase">
+        <p className="mb-5 font-sans text-xs tracking-[0.18em] text-[oklch(0.76_0.12_235)] uppercase">
           {eyebrow}
         </p>
         <h2 className="max-w-[650px] text-4xl leading-[1.02] font-semibold tracking-[-0.04em] text-balance xl:text-[3.5rem]">
@@ -230,7 +230,7 @@ export function ShowcasePanel({
           <span className="size-2 rounded-full bg-[oklch(0.72_0.17_148)]" />
           {title}
         </div>
-        <span className="font-mono text-[10px] tracking-[0.12em] text-white/35 uppercase">
+        <span className="font-sans text-[10px] tracking-[0.12em] text-white/35 uppercase">
           {meta}
         </span>
       </div>
@@ -256,7 +256,7 @@ export function ShowcaseStep({
 }): React.JSX.Element {
   return (
     <>
-      <span className="font-mono text-[10px] text-white/32">{index}</span>
+      <span className="font-sans text-[10px] text-white/32">{index}</span>
       <span className="flex items-center gap-2.5 text-white/82">
         <span
           className={cn(
@@ -268,7 +268,7 @@ export function ShowcaseStep({
         />
         {label}
       </span>
-      <span className="font-mono text-[10px] text-white/40">{meta}</span>
+      <span className="font-sans text-[10px] text-white/40">{meta}</span>
     </>
   )
 }

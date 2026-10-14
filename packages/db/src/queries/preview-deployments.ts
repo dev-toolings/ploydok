@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { and, eq, lte } from "drizzle-orm"
+import { and, eq, lte, inArray } from "drizzle-orm"
 import type { Db } from "../client"
 import {
   preview_deployments,
@@ -36,7 +36,7 @@ export async function updatePreviewDeployment(
 export async function updatePreviewDeploymentStatus(
   db: Db,
   id: string,
-  status: "pending" | "building" | "running" | "torn_down" | "failed"
+  status: "pending" | "building" | "running" | "tearing_down" | "torn_down" | "failed"
 ): Promise<void> {
   await db
     .update(preview_deployments)
@@ -93,7 +93,7 @@ export async function listPreviewDeploymentsForApp(
     .where(
       and(
         eq(preview_deployments.app_id, appId),
-        eq(preview_deployments.status, "running")
+        inArray(preview_deployments.status, ["running", "tearing_down"])
       )
     )
 }
@@ -111,7 +111,7 @@ export async function listExpiredPreviews(
     .where(
       and(
         lte(preview_deployments.expires_at, now),
-        eq(preview_deployments.status, "running")
+        inArray(preview_deployments.status, ["running", "tearing_down"])
       )
     )
 }

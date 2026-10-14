@@ -120,6 +120,7 @@ export async function handlePullRequest(
         "enqueuing preview teardown"
       )
 
+      await updatePreviewDeployment(db, `${app.id}:pr-${prNumber}`, { status: "tearing_down" })
       await previewTeardown.add("preview.teardown", {
         appId: app.id,
         prNumber,

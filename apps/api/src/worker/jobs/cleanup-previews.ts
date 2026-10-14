@@ -29,11 +29,11 @@ export async function cleanupExpiredPreviews(db: Db): Promise<void> {
         { previewId: preview.id, appId: preview.app_id },
         "enqueuing teardown"
       )
+      await updatePreviewDeploymentStatus(db, preview.id, "tearing_down")
       await previewTeardown.add("preview.teardown", {
         appId: preview.app_id,
         prNumber: preview.pr_number,
       })
-      await updatePreviewDeploymentStatus(db, preview.id, "torn_down")
     }
 
     log.debug({ count: expired.length }, "cleanup complete")

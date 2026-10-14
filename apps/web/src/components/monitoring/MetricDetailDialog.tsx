@@ -204,7 +204,7 @@ export function MetricDetailDialog({
             <DialogTitle className="font-heading text-xl leading-tight">
               {snapshot.name}
             </DialogTitle>
-            <DialogDescription className="font-mono text-[11px] tabular-nums">
+            <DialogDescription className="font-sans text-[11px] tabular-nums">
               {snapshot.image}
               {snapshot.kind ? (
                 <>
@@ -227,7 +227,7 @@ export function MetricDetailDialog({
               label={t("current")}
               value={formatValue(current)}
               valueClass={cn(
-                "font-mono text-[28px] leading-none font-semibold tabular-nums",
+                "font-sans text-[28px] leading-none font-semibold tabular-nums",
                 severity === "ok" ? style.accentText : SEVERITY_TEXT[severity]
               )}
               trend={trend}
@@ -239,17 +239,17 @@ export function MetricDetailDialog({
             <HeroStat
               label={t("min")}
               value={formatValue(min)}
-              valueClass="font-mono text-[16px] font-semibold leading-none tabular-nums text-foreground"
+              valueClass="font-sans text-[16px] font-semibold leading-none tabular-nums text-foreground"
             />
             <HeroStat
               label={t("avg")}
               value={formatValue(avg)}
-              valueClass="font-mono text-[16px] font-semibold leading-none tabular-nums text-foreground"
+              valueClass="font-sans text-[16px] font-semibold leading-none tabular-nums text-foreground"
             />
             <HeroStat
               label={t("max")}
               value={formatValue(max)}
-              valueClass="font-mono text-[16px] font-semibold leading-none tabular-nums text-foreground"
+              valueClass="font-sans text-[16px] font-semibold leading-none tabular-nums text-foreground"
             />
           </div>
 
@@ -260,7 +260,7 @@ export function MetricDetailDialog({
                 <span className="text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
                   {t("limitUsage")}
                 </span>
-                <span className="font-mono text-[12px] text-foreground tabular-nums">
+                <span className="font-sans text-[12px] text-foreground tabular-nums">
                   {memUsagePercent.toFixed(1)}%
                   <span className="ml-1 text-muted-foreground">
                     {t("ofLimit", {
@@ -332,8 +332,7 @@ export function MetricDetailDialog({
                     axisLine={false}
                     tickLine={false}
                     tick={{
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                      fontFamily: "var(--font-sans)",
                       fontSize: 10,
                       fill: "rgba(100, 116, 139, 0.8)",
                     }}
@@ -348,8 +347,7 @@ export function MetricDetailDialog({
                     tickLine={false}
                     width={40}
                     tick={{
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                      fontFamily: "var(--font-sans)",
                       fontSize: 10,
                       fill: "rgba(100, 116, 139, 0.8)",
                     }}
@@ -364,8 +362,7 @@ export function MetricDetailDialog({
                       position: "insideRight",
                       fill: style.color,
                       fontSize: 9,
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                      fontFamily: "var(--font-sans)",
                     }}
                   />
                   <ChartTooltip
@@ -425,7 +422,7 @@ export function MetricDetailDialog({
           </div>
 
           {/* Footer — container metadata + ESC hint */}
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/60 pt-3 font-mono text-[10px] tracking-wider text-muted-foreground/80 uppercase tabular-nums">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/60 pt-3 font-sans text-[10px] tracking-wider text-muted-foreground/80 uppercase tabular-nums">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
               <FooterStat
                 icon={<RiTimeLine className="size-3" />}
@@ -508,7 +505,7 @@ function HeroStatCurrent({
         {trend && TrendIcon ? (
           <span
             className={cn(
-              "inline-flex items-center gap-0.5 font-mono text-[10px] font-medium tabular-nums",
+              "inline-flex items-center gap-0.5 font-sans text-[10px] font-medium tabular-nums",
               trendColor
             )}
             title={
@@ -604,7 +601,7 @@ function LivePill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/80 px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase",
+        "inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/80 px-2 py-0.5 font-sans text-[10px] tracking-wider uppercase",
         textColor
       )}
       title={t("lastSeen", { count: ageSec })}

@@ -43,7 +43,7 @@ export interface BackupRunResult {
 // Main
 // ---------------------------------------------------------------------------
 
-export async function runBackupOnce(db: Db, databaseId: string): Promise<BackupRunResult> {
+export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Date): Promise<BackupRunResult> {
   const bkLog = log.child({ databaseId })
 
   // 1. Load database + backup_config
@@ -70,7 +70,7 @@ export async function runBackupOnce(db: Db, databaseId: string): Promise<BackupR
   const ageEncrypted = Boolean(config.age_recipient_public_key)
 
   // Determine location
-  const filename = buildBackupFilename(startedAt, "dump", ageEncrypted)
+  const filename = buildBackupFilename(scheduledAt ?? startedAt, "dump", ageEncrypted)
   let location: string
   if (config.destination_kind === "s3") {
     const prefix = config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""

@@ -202,7 +202,7 @@ function ConfiguredState({
             </h2>
             <span
               className={cn(
-                "inline-flex items-center gap-1 font-mono text-[10px] tracking-wide uppercase",
+                "inline-flex items-center gap-1 font-sans text-[10px] tracking-wide uppercase",
                 connectionState === "unavailable"
                   ? "text-amber-600 dark:text-amber-400"
                   : "text-emerald-600 dark:text-emerald-400"
@@ -235,7 +235,7 @@ function ConfiguredState({
 
       <dl className="grid gap-3 text-xs sm:grid-cols-2">
         <div>
-          <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("gitlab.applicationId")}
           </dt>
           <dd className="mt-0.5 font-mono text-xs">
@@ -243,7 +243,7 @@ function ConfiguredState({
           </dd>
         </div>
         <div>
-          <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("gitlab.instance")}
           </dt>
           <dd className="mt-0.5 truncate font-mono text-xs">

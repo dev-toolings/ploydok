@@ -158,7 +158,7 @@ export function ApiErrorState({
 
       {/* Status badge */}
       {status !== undefined && (
-        <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 font-mono text-xs text-muted-foreground">
+        <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 font-sans text-xs text-muted-foreground">
           {status}
         </span>
       )}

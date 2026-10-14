@@ -174,7 +174,7 @@ export function RepoItem({
         }
       }}
     >
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[10px] text-muted-foreground uppercase">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-sans text-[10px] text-muted-foreground uppercase">
         {repoName.slice(0, 2)}
       </div>
       <div className="min-w-0 flex-1">

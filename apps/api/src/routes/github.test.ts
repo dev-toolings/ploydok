@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { createHmac } from "node:crypto"
+import { createHmac, generateKeyPairSync } from "node:crypto"
 import {
   afterEach,
   beforeEach,
@@ -27,6 +27,7 @@ const credentialUpserts: Array<{
   conflict: Record<string, unknown>
 }> = []
 const enqueuedSyncs: Array<Record<string, unknown>> = []
+let syncEnqueueFailure: Error | null = null
 const installationAssignments: Array<{
   installationId: string
   userId: string
@@ -149,6 +150,7 @@ mock.module("../github/installation-tokens", () => ({
 }))
 mock.module("../worker/handlers/sync-provider-repos", () => ({
   enqueueProviderReposSync: async (payload: Record<string, unknown>) => {
+    if (syncEnqueueFailure) throw syncEnqueueFailure
     enqueuedSyncs.push(payload)
   },
 }))
@@ -318,6 +320,7 @@ beforeEach(() => {
   evictAllTokenCalls = 0
   credentialUpserts.length = 0
   enqueuedSyncs.length = 0
+  syncEnqueueFailure = null
   installationAssignments.length = 0
   localDisconnects.length = 0
   userGitHubInstallationIds = ["42"]
@@ -794,6 +797,31 @@ describe("GitHub routes are user-scoped", () => {
 })
 
 describe("POST /github/app/import", () => {
+  const realFetch = globalThis.fetch
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  })
+  let verificationStatus = 200
+  let verifiedClientId = "Iv1.client"
+  beforeEach(() => {
+    verificationStatus = 200
+    verifiedClientId = "Iv1.client"
+    globalThis.fetch = (async () =>
+      Response.json(
+        {
+          id: 12345,
+          client_id: verifiedClientId,
+          slug: "ploydok-local",
+          name: "Ploydok Local",
+        },
+        { status: verificationStatus }
+      )) as unknown as typeof fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
   it("rejects non-instance admins", async () => {
     fakeInstanceAdmin = false
     const app = buildApp(FAKE_USER)
@@ -804,8 +832,7 @@ describe("POST /github/app/import", () => {
         appId: "12345",
         clientId: "Iv1.client",
         clientSecret: "secret",
-        privateKey:
-          "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----",
+        privateKey,
         webhookSecret: "",
         slug: "ploydok-local",
         name: "Ploydok Local",
@@ -819,6 +846,10 @@ describe("POST /github/app/import", () => {
   })
 
   it("saves an existing GitHub App config and enqueues a sync", async () => {
+    mockGitHubAppConfig = {
+      app_id: "12345",
+      pem_enc: Buffer.from("unreadable"),
+    }
     const app = buildApp(FAKE_USER)
     const res = await app.request("/github/app/import", {
       method: "POST",
@@ -827,8 +858,7 @@ describe("POST /github/app/import", () => {
         appId: "12345",
         clientId: "Iv1.client",
         clientSecret: "secret",
-        privateKey:
-          "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----",
+        privateKey,
         webhookSecret: "",
         slug: "ploydok-local",
         name: "Ploydok Local",
@@ -849,7 +879,13 @@ describe("POST /github/app/import", () => {
       slug: "ploydok-local",
       name: "Ploydok Local",
     })
-    expect(enqueuedSyncs[0]).toMatchObject({ provider: "github" })
+    expect(enqueuedSyncs[0]).toMatchObject({
+      provider: "github",
+      requestedBy: FAKE_USER.id,
+    })
+    expect(evictAllTokenCalls).toBe(1)
+    expect(revokedInstallations).toHaveLength(0)
+    expect(deletedTables).toHaveLength(0)
   })
 
   it("rejects invalid private keys", async () => {
@@ -872,6 +908,86 @@ describe("POST /github/app/import", () => {
       error: "invalid_private_key",
     })
     expect(importedConfigs).toHaveLength(0)
+  })
+
+  it("preserves the old credentials when GitHub rejects the replacement key", async () => {
+    verificationStatus = 401
+    mockGitHubAppConfig = { app_id: "12345", pem_enc: Buffer.from("original") }
+    const res = await buildApp(FAKE_USER).request("/github/app/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appId: "12345",
+        clientId: "Iv1.client",
+        clientSecret: "secret",
+        privateKey,
+        slug: "ploydok-local",
+        name: "Ploydok Local",
+      }),
+    })
+    expect(res.status).toBe(422)
+    expect(importedConfigs).toHaveLength(0)
+    expect(enqueuedSyncs).toHaveLength(0)
+    expect(evictAllTokenCalls).toBe(0)
+  })
+
+  it("rejects credentials belonging to another App", async () => {
+    verifiedClientId = "Iv1.other"
+    const res = await buildApp(FAKE_USER).request("/github/app/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appId: "12345",
+        clientId: "Iv1.client",
+        clientSecret: "secret",
+        privateKey,
+        slug: "ploydok-local",
+        name: "Ploydok Local",
+      }),
+    })
+    expect(res.status).toBe(422)
+    expect(importedConfigs).toHaveLength(0)
+    expect(enqueuedSyncs).toHaveLength(0)
+  })
+
+  it("preserves the configuration when GitHub is unavailable", async () => {
+    verificationStatus = 503
+    const res = await buildApp(FAKE_USER).request("/github/app/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appId: "12345",
+        clientId: "Iv1.client",
+        clientSecret: "secret",
+        privateKey,
+        slug: "ploydok-local",
+        name: "Ploydok Local",
+      }),
+    })
+    expect(res.status).toBe(502)
+    expect(importedConfigs).toHaveLength(0)
+    expect(enqueuedSyncs).toHaveLength(0)
+  })
+
+  it("reports synchronization failure instead of claiming reconnection success", async () => {
+    syncEnqueueFailure = new Error("queue unavailable")
+    const res = await buildApp(FAKE_USER).request("/github/app/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appId: "12345",
+        clientId: "Iv1.client",
+        clientSecret: "secret",
+        privateKey,
+        slug: "ploydok-local",
+        name: "Ploydok Local",
+      }),
+    })
+    expect(res.status).toBe(503)
+    expect(await res.json()).toMatchObject({ error: "github_app_sync_failed" })
+    expect(importedConfigs).toHaveLength(1)
+    expect(enqueuedSyncs).toHaveLength(0)
+    expect(revokedInstallations).toHaveLength(0)
   })
 })
 

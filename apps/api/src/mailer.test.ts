@@ -38,3 +38,21 @@ describe("abortable SMTP transport", () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 })
+
+it("renders the application mail contract with the upgraded Nodemailer without SMTP traffic", async () => {
+  const { default: nodemailer } = await import("nodemailer")
+  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
+  let rendered = ""
+  const sendMail = (async (options: Parameters<Transporter["sendMail"]>[0]) => {
+    const info = await transport.sendMail(options)
+    rendered = info.message.toString()
+    return info
+  }) as Transporter["sendMail"]
+  const result = await sendMailWithTransport({
+    sendMail, close: () => transport.close(), abortActive: () => transport.close(),
+  }, { to: "fixture@example.com", subject: "Compatibility check", text: "Fixture message", messageId: "fixture@example.com" })
+  expect(result.messageId).toContain("fixture@example.com")
+  expect(rendered).toContain("To: fixture@example.com")
+  expect(rendered).toContain("Subject: Compatibility check")
+  expect(rendered).toContain("Fixture message")
+})

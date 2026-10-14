@@ -67,7 +67,6 @@
     "internalUrl": "Internal URL:",
     "slugHint": "Unique identifier within the organization. The slug is generated from the name.",
     "publicUrl": "Public URL",
-    "openGitLabSettings": "Open GitLab settings",
     "autoDeployHint": "Auto-deploy on push",
     "dockerOci": "Docker / OCI",
     "repoLabel": "{{provider}} repository",
@@ -214,6 +213,12 @@
     "healthAria": "App health: {{label}}"
   },
   "actions": {
+    "deleteConsequences": "This permanently removes the containers, registry images, build artifacts, Caddy route, and database row. This action cannot be undone.",
+    "deleteConfirmLabel": "To confirm deletion, enter the application name below. Click the name to copy it.",
+    "copyName": "Copy {{name}}",
+    "nameCopied": "{{name}} copied",
+    "copyNameFailed": "Unable to copy the name. Select it and copy it manually.",
+    "runtimeControls": "Application runtime actions",
     "deploy": "Deploy",
     "deployHint": "Pull source from git, build, and deploy",
     "restart": "Restart",

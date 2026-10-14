@@ -100,14 +100,14 @@ export function MetricCardButton({
       <div className="relative z-10 mt-1.5 flex items-baseline gap-2">
         <span
           className={cn(
-            "font-mono text-[22px] leading-none font-semibold tabular-nums",
+            "font-sans text-[22px] leading-none font-semibold tabular-nums",
             style.text,
           )}
         >
           {value}
         </span>
         {deltaLabel ? (
-          <span className="font-mono text-[10px] leading-none tabular-nums text-muted-foreground">
+          <span className="font-sans text-[10px] leading-none tabular-nums text-muted-foreground">
             {deltaLabel}
           </span>
         ) : null}

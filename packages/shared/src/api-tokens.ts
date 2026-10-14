@@ -5,6 +5,8 @@ export const ALL_SCOPES = [
   "apps:read",
   "apps:write",
   "apps:deploy",
+  "services:read",
+  "services:write",
   "secrets:read",
   "secrets:write",
   "databases:read",

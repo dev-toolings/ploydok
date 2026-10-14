@@ -69,24 +69,24 @@ use ploydok_proto::agent::{
     BuildCachePruneResponse, BuildProgress, ContainerCreateRequest, ContainerCreateResponse,
     ContainerLogsRequest, ContainerRemoveRequest, ContainerRemoveResponse, ContainerStartRequest,
     ContainerStartResponse, ContainerStatsRequest, ContainerStopRequest, ContainerStopResponse,
-    DiskUsageCategory, DockerCleanupRequest, DockerCleanupResponse, DumpChunk, DumpRequest,
-    ExecFrame, FileEntry, GetAuditPubkeyRequest, GetAuditPubkeyResponse, HostStatsRequest,
-    HostStatsResponse, ImageBuildRequest, ImageDfRequest, ImageDfResponse, ImagePruneRequest,
-    ImagePruneResponse, ImagePullRequest, ImagePushRequest, ImagePushResponse, ImageRemoveRequest,
-    ImageRemoveResponse, InspectContainerHealthRequest, InspectContainerHealthResponse,
-    ListContainerFilesRequest, ListContainerFilesResponse, ListContainersRequest,
-    ListContainersResponse, ListServiceTasksRequest, ListServiceTasksResponse, LogLine,
-    NetworkConnectRequest, NetworkConnectResponse, NetworkCreateRequest, NetworkCreateResponse,
-    NetworkDisconnectRequest, NetworkDisconnectResponse, NetworkRemoveRequest,
-    NetworkRemoveResponse, PingContainerRequest, PingContainerResponse, PullProgress,
-    ReadContainerFileRequest, ReadContainerFileResponse, RegistryGarbageCollectRequest,
-    RegistryGarbageCollectResponse, RegistryImageDigestRequest, RegistryImageDigestResponse,
-    RestoreChunk, RestoreResult, ServiceCreateRequest, ServiceCreateResponse, ServiceRemoveRequest,
-    ServiceRemoveResponse, ServiceRollbackRequest, ServiceRollbackResponse, ServiceScaleRequest,
-    ServiceScaleResponse, ServiceUpdateImageRequest, ServiceUpdateImageResponse,
-    SignAuditEntryRequest, SignAuditEntryResponse, StatsFrame, SwarmEnsureSingleNodeRequest,
-    SwarmEnsureSingleNodeResponse, SwarmInfoRequest, SwarmInfoResponse, SwarmServiceSpec,
-    SwarmTaskSnapshot,
+    DiskUsageCategory, DiskUsageConsumer, DockerCleanupRequest, DockerCleanupResponse, DumpChunk,
+    DumpRequest, ExecFrame, FileEntry, GetAuditPubkeyRequest, GetAuditPubkeyResponse,
+    HostStatsRequest, HostStatsResponse, ImageBuildRequest, ImageDfRequest, ImageDfResponse,
+    ImagePruneRequest, ImagePruneResponse, ImagePullRequest, ImagePushRequest, ImagePushResponse,
+    ImageRemoveRequest, ImageRemoveResponse, InspectContainerHealthRequest,
+    InspectContainerHealthResponse, ListContainerFilesRequest, ListContainerFilesResponse,
+    ListContainersRequest, ListContainersResponse, ListServiceTasksRequest,
+    ListServiceTasksResponse, LogLine, NetworkConnectRequest, NetworkConnectResponse,
+    NetworkCreateRequest, NetworkCreateResponse, NetworkDisconnectRequest,
+    NetworkDisconnectResponse, NetworkRemoveRequest, NetworkRemoveResponse, PingContainerRequest,
+    PingContainerResponse, PullProgress, ReadContainerFileRequest, ReadContainerFileResponse,
+    RegistryGarbageCollectRequest, RegistryGarbageCollectResponse, RegistryImageDigestRequest,
+    RegistryImageDigestResponse, RestoreChunk, RestoreResult, ServiceCreateRequest,
+    ServiceCreateResponse, ServiceRemoveRequest, ServiceRemoveResponse, ServiceRollbackRequest,
+    ServiceRollbackResponse, ServiceScaleRequest, ServiceScaleResponse, ServiceUpdateImageRequest,
+    ServiceUpdateImageResponse, SignAuditEntryRequest, SignAuditEntryResponse, StatsFrame,
+    SwarmEnsureSingleNodeRequest, SwarmEnsureSingleNodeResponse, SwarmInfoRequest,
+    SwarmInfoResponse, SwarmServiceSpec, SwarmTaskSnapshot,
 };
 
 use crate::audit::{audit, audit_with_client, client_identity_from_request};
@@ -1156,8 +1156,31 @@ impl Agent for AgentService {
         let df = self.docker.df().await.map_err(|e| bollard_err("df", e))?;
 
         let mut categories = Vec::new();
+        let mut top_consumers = Vec::new();
+        let mut cleanup_reclaimable_bytes: i64 = 0;
 
         if let Some(images) = df.images.as_ref() {
+            for image in images {
+                let exclusive_size = if image.shared_size >= 0 {
+                    image.size.saturating_sub(image.shared_size).max(0)
+                } else {
+                    0
+                };
+                if image.containers == 0 {
+                    cleanup_reclaimable_bytes =
+                        cleanup_reclaimable_bytes.saturating_add(exclusive_size);
+                }
+                top_consumers.push(DiskUsageConsumer {
+                    kind: "images".to_string(),
+                    name: image
+                        .repo_tags
+                        .iter()
+                        .find(|tag| tag.as_str() != "<none>:<none>")
+                        .cloned()
+                        .unwrap_or_else(|| image.id.clone()),
+                    size_bytes: exclusive_size,
+                });
+            }
             let total: i64 = images.iter().map(|i| i.size).sum();
             // An image is reclaimable when no container references it.
             let reclaimable: i64 = images
@@ -1174,6 +1197,19 @@ impl Agent for AgentService {
         }
 
         if let Some(containers) = df.containers.as_ref() {
+            for container in containers {
+                top_consumers.push(DiskUsageConsumer {
+                    kind: "containers".to_string(),
+                    name: container
+                        .names
+                        .as_ref()
+                        .and_then(|names| names.first())
+                        .map(|name| name.trim_start_matches('/').to_string())
+                        .or_else(|| container.id.clone())
+                        .unwrap_or_default(),
+                    size_bytes: container.size_rw.unwrap_or(0).max(0),
+                });
+            }
             let total: i64 = containers.iter().filter_map(|c| c.size_rw).sum();
             categories.push(DiskUsageCategory {
                 kind: "containers".to_string(),
@@ -1184,6 +1220,15 @@ impl Agent for AgentService {
         }
 
         if let Some(volumes) = df.volumes.as_ref() {
+            for volume in volumes {
+                if let Some(usage) = volume.usage_data.as_ref() {
+                    top_consumers.push(DiskUsageConsumer {
+                        kind: "volumes".to_string(),
+                        name: volume.name.clone(),
+                        size_bytes: usage.size.max(0),
+                    });
+                }
+            }
             let total: i64 = volumes
                 .iter()
                 .filter_map(|v| v.usage_data.as_ref().map(|u| u.size))
@@ -1203,6 +1248,20 @@ impl Agent for AgentService {
         }
 
         if let Some(build_cache) = df.build_cache.as_ref() {
+            for cache in build_cache
+                .iter()
+                .filter(|cache| cache.shared == Some(false))
+            {
+                let size = cache.size.unwrap_or(0).max(0);
+                if cache.in_use == Some(false) {
+                    cleanup_reclaimable_bytes = cleanup_reclaimable_bytes.saturating_add(size);
+                }
+                top_consumers.push(DiskUsageConsumer {
+                    kind: "build_cache".to_string(),
+                    name: cache.id.clone().unwrap_or_default(),
+                    size_bytes: size,
+                });
+            }
             let total: i64 = build_cache.iter().filter_map(|b| b.size).sum();
             let reclaimable: i64 = build_cache
                 .iter()
@@ -1217,9 +1276,15 @@ impl Agent for AgentService {
             });
         }
 
+        top_consumers.retain(|consumer| consumer.size_bytes > 0);
+        top_consumers.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes).then(a.name.cmp(&b.name)));
+        top_consumers.truncate(5);
+
         Ok(Response::new(ImageDfResponse {
             categories,
             layers_size_bytes: df.layers_size.unwrap_or(0),
+            top_consumers,
+            cleanup_reclaimable_bytes: Some(cleanup_reclaimable_bytes),
         }))
     }
 
@@ -1637,7 +1702,14 @@ impl Agent for AgentService {
         request: Request<ListContainersRequest>,
     ) -> Result<Response<ListContainersResponse>, Status> {
         let req = request.into_inner();
-        let resp = self.monitor.list(&req).await;
+        let resp = if req.kind_filter == "service" {
+            self.monitor
+                .list_services()
+                .await
+                .map_err(|e| bollard_err("list_service_containers", e))?
+        } else {
+            self.monitor.list(&req).await
+        };
         Ok(Response::new(resp))
     }
 

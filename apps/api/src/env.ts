@@ -14,6 +14,18 @@ export function defaultStateDir(name: string): string {
   return `${home}/.ploydok-dev/${name}`
 }
 
+export function resolveRegistryApiUrl(config: {
+  nodeEnv: "dev" | "prod" | "test"
+  apiUrl?: string | undefined
+  registryUrl: string
+  pushUrl: string
+}): string {
+  return (
+    config.apiUrl ??
+    (config.nodeEnv === "prod" ? config.pushUrl : config.registryUrl)
+  )
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(["dev", "prod", "test"]).default("dev"),
   PORT: z.coerce.number().default(3335),
@@ -205,8 +217,12 @@ export const env = {
   GITHUB_APP_CALLBACK_URL: raw.GITHUB_APP_CALLBACK_URL,
   GITLAB_OAUTH_CALLBACK_URL: raw.GITLAB_OAUTH_CALLBACK_URL,
   PLOYDOK_REGISTRY_URL: raw.PLOYDOK_REGISTRY_URL,
-  PLOYDOK_REGISTRY_API_URL:
-    raw.PLOYDOK_REGISTRY_API_URL ?? raw.PLOYDOK_REGISTRY_PUSH_URL,
+  PLOYDOK_REGISTRY_API_URL: resolveRegistryApiUrl({
+    nodeEnv: raw.NODE_ENV,
+    apiUrl: raw.PLOYDOK_REGISTRY_API_URL,
+    registryUrl: raw.PLOYDOK_REGISTRY_URL,
+    pushUrl: raw.PLOYDOK_REGISTRY_PUSH_URL,
+  }),
   PLOYDOK_REGISTRY_PUSH_URL: raw.PLOYDOK_REGISTRY_PUSH_URL,
   PLOYDOK_REGISTRY_USER: raw.PLOYDOK_REGISTRY_USER,
   PLOYDOK_REGISTRY_PASS: raw.PLOYDOK_REGISTRY_PASS,
@@ -220,7 +236,7 @@ export const env = {
   PLOYDOK_BUILD_LOG_RETENTION_DAYS: raw.PLOYDOK_BUILD_LOG_RETENTION_DAYS,
   PLOYDOK_PUBLIC_SCHEME:
     raw.PLOYDOK_PUBLIC_SCHEME ?? (isProd ? "https" : "http"),
-  PLOYDOK_PUBLIC_PORT: raw.PLOYDOK_PUBLIC_PORT ?? (isProd ? undefined : 8180),
+  PLOYDOK_PUBLIC_PORT: raw.PLOYDOK_PUBLIC_PORT ?? (isProd ? undefined : 8181),
   PLOYDOK_PUBLIC_HOST: raw.PLOYDOK_PUBLIC_HOST ?? "localhost",
   PLOYDOK_DOMAIN_BASE: raw.PLOYDOK_DOMAIN_BASE,
   PLOYDOK_SETUP_TOKEN_REQUIRED: raw.PLOYDOK_SETUP_TOKEN_REQUIRED ?? true,

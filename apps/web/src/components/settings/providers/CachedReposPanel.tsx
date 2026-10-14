@@ -232,7 +232,7 @@ function StatusPill({
   const { t } = useTranslation("settings")
   if (status === "syncing") {
     return (
-      <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-blue-600 uppercase dark:text-blue-400">
+      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-blue-600 uppercase dark:text-blue-400">
         <RiRefreshLine className="size-3 animate-spin" />
         {t("cache.syncingShort")}
       </span>
@@ -240,14 +240,14 @@ function StatusPill({
   }
   if (status === "fresh") {
     return (
-      <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
         <RiCheckboxCircleFill className="size-3" />
         {t("cache.fresh")}
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
+    <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
       <RiErrorWarningFill className="size-3" />
       {t("cache.stale")}
     </span>

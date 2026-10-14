@@ -63,34 +63,70 @@ export function AppHeaderActions({
   const canRollback = succeededBuilds.length >= 2
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <Button
-        size="sm"
-        variant="default"
-        onClick={() => deploy.mutate()}
-        loading={deploy.isPending}
-        disabled={inFlight}
-        title={t("actions.deployHint")}
-        className="gap-1.5"
-      >
-        <RiRocketLine className="size-4" aria-hidden="true" />
-        {useDeployLabel ? t("actions.deploy") : t("actions.redeploy")}
-      </Button>
+    <>
+      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-30 flex justify-center px-3 md:left-[var(--sidebar-width)] group-data-[sidebar-state=collapsed]/shell:md:left-[calc(var(--sidebar-width-icon)+1rem)]">
+        <div
+          role="group"
+          aria-label={t("actions.runtimeControls")}
+          className="pointer-events-auto flex max-w-full items-center gap-2 rounded-2xl border border-border bg-background/95 p-2 shadow-xl backdrop-blur-md"
+        >
+          <Button
+            size="sm"
+            variant="default"
+            onClick={() => deploy.mutate()}
+            loading={deploy.isPending}
+            disabled={inFlight}
+            title={t("actions.deployHint")}
+            className="h-11 gap-1.5 px-3"
+          >
+            <RiRocketLine className="size-4" aria-hidden="true" />
+            {useDeployLabel ? t("actions.deploy") : t("actions.redeploy")}
+          </Button>
 
-      <ConfirmButton
-        size="sm"
-        variant="secondary"
-        icon={<RiRefreshLine className="size-4" />}
-        label={t("actions.restart")}
-        title={t("actions.restartHint")}
-        disabled={restart.isPending || useDeployLabel || inFlight}
-        loading={restart.isPending}
-        confirmTitle={t("actions.restartConfirm")}
-        confirmDescription={t("actions.restartConfirmHint")}
-        confirmActionLabel={t("actions.restart")}
-        onConfirm={() => restart.mutate()}
-      />
+          <ConfirmButton
+            size="sm"
+            variant="secondary"
+            icon={<RiRefreshLine className="size-4" />}
+            label={t("actions.restart")}
+            title={t("actions.restartHint")}
+            disabled={useDeployLabel || inFlight}
+            loading={restart.isPending}
+            compact
+            confirmTitle={t("actions.restartConfirm")}
+            confirmDescription={t("actions.restartConfirmHint")}
+            confirmActionLabel={t("actions.restart")}
+            onConfirm={() => restart.mutate()}
+          />
 
+          {canStop && (
+            <ConfirmButton
+              size="sm"
+              variant="destructive"
+              icon={<RiStopCircleLine className="size-4" />}
+              label={t("actions.stop")}
+              title={t("actions.stopHint")}
+              disabled={inFlight}
+              loading={stop.isPending}
+              compact
+              confirmTitle={t("actions.stopConfirmTitle")}
+              confirmDescription={
+                <>
+                  <span className="mb-2 block">
+                    {t("actions.stopConfirmBody")}
+                  </span>
+                  <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                    <li>{t("actions.stopConfirm")}</li>
+                    <li>{t("actions.stopLost")}</li>
+                    <li>{t("actions.stopPreserved")}</li>
+                  </ul>
+                </>
+              }
+              confirmActionLabel={t("actions.stopApplication")}
+              onConfirm={() => stop.mutate()}
+            />
+          )}
+        </div>
+      </div>
       <ConfirmButton
         size="sm"
         variant="secondary"
@@ -106,32 +142,7 @@ export function AppHeaderActions({
         confirmActionLabel={t("actions.rollbackAction")}
         onConfirm={() => rollback.mutate()}
       />
-
-      {canStop && (
-        <ConfirmButton
-          size="sm"
-          variant="destructive"
-          icon={<RiStopCircleLine className="size-4" />}
-          label={t("actions.stop")}
-          title={t("actions.stopHint")}
-          disabled={stop.isPending || inFlight}
-          loading={stop.isPending}
-          confirmTitle={t("actions.stopConfirmTitle")}
-          confirmDescription={
-            <>
-              <span className="mb-2 block">{t("actions.stopConfirmBody")}</span>
-              <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-                <li>{t("actions.stopConfirm")}</li>
-                <li>{t("actions.stopLost")}</li>
-                <li>{t("actions.stopPreserved")}</li>
-              </ul>
-            </>
-          }
-          confirmActionLabel={t("actions.stopApplication")}
-          onConfirm={() => stop.mutate()}
-        />
-      )}
-    </div>
+    </>
   )
 }
 
@@ -143,6 +154,7 @@ interface ConfirmButtonProps {
   title: string
   disabled?: boolean
   loading?: boolean
+  compact?: boolean
   confirmTitle: string
   confirmDescription: React.ReactNode
   confirmActionLabel: string
@@ -157,6 +169,7 @@ function ConfirmButton({
   title,
   disabled,
   loading,
+  compact = false,
   confirmTitle,
   confirmDescription,
   confirmActionLabel,
@@ -173,10 +186,13 @@ function ConfirmButton({
         disabled={disabled}
         title={title}
         onClick={() => setOpen(true)}
-        className="gap-1.5"
+        aria-label={label}
+        className={cn("gap-1.5", compact && "size-11 px-0 sm:w-auto sm:px-3")}
       >
         {icon}
-        {label}
+        <span className={compact ? "sr-only sm:not-sr-only" : undefined}>
+          {label}
+        </span>
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>

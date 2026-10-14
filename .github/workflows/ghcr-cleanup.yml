@@ -2,9 +2,6 @@
 name: ghcr-cleanup
 
 on:
-  schedule:
-    # Lundi 03:17 UTC — décalé d'une heure ronde pour éviter le rush GitHub.
-    - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
       dry_run:

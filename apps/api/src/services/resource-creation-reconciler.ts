@@ -23,6 +23,8 @@ import {
   compensateApplicationCreation,
   resumeApplicationConfiguration,
 } from "./application-creation-saga"
+import { resumeServiceCreation } from "./marketplace-orchestrator"
+import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
 
 const log = childLogger("resource-creation-reconciler")
@@ -67,6 +69,10 @@ export async function reconcileResourceCreations(
   for (const saga of sagas) {
     let claim: Awaited<ReturnType<typeof claimCreationSaga>> = null
     try {
+      if (saga.resource_type === "service") {
+        if (await resumeServiceCreation({ db, agent: getSharedAgent() }, saga.resource_id)) result.completed += 1
+        continue
+      }
       if (saga.resource_type === "database") {
         claim = await claimCreationSaga(db, "database", saga.resource_id)
         if (!claim) continue

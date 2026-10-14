@@ -1,258 +1,250 @@
-.PHONY: help install check dev stop dev-agent agent-restart agent-logs db-ensure-auth db-migrate reset db-seed infra-up infra-down infra-stop infra-logs build start test lint typecheck clean secrets-init dod
+.DEFAULT_GOAL := help
+.PHONY: help install update check dev stop dev-agent agent-restart agent-logs db-ensure-auth db-migrate reset db-seed infra-up infra-down infra-stop infra-logs build start test lint typecheck clean secrets-init dod
 
-# Ports locaux :
-#   API 3335 — Web 5173 — Caddy 8180/8543/2020 — Agent unix /tmp/ploydok/agent.sock
+# Ports locaux : API 3335, Web 5173, Caddy 8181/8543/2020, agent unix /tmp/ploydok/agent.sock
 
-# Couleurs ANSI (désactivées si stdout n'est pas un TTY)
 ifneq (,$(findstring xterm,$(TERM))$(MAKE_TERMOUT))
-  C_RESET  := \033[0m
-  C_TITLE  := \033[1;37m
-  C_CAT    := \033[1;35m
-  C_TARGET := \033[1;36m
-  C_DESC   := \033[0;37m
-  C_DIM    := \033[2;37m
+C_SECTION := \033[1;33m
+C_TARGET := \033[0;36m
+C_OK := \033[0;32m
+C_WARN := \033[0;33m
+C_ERR := \033[0;31m
+C_RESET := \033[0m
+else
+C_SECTION :=
+C_TARGET :=
+C_OK :=
+C_WARN :=
+C_ERR :=
+C_RESET :=
 endif
 
-help:
-	@printf "$(C_TITLE)Usage: make <target>$(C_RESET)\n\n"
-	@printf "$(C_CAT)▶ Setup$(C_RESET)\n"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "install" "Setup complet + démarrage : deps + secrets + infra + migrations + dev"
-	@printf "  %-14s $(C_DIM)%s$(C_RESET)\n" "" "reste au premier plan à la fin (enchaîne sur 'make dev') — Ctrl-C pour sortir"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "check" "Sonde toute la stack et affiche l'URL /setup avec son token"
-	@printf "\n$(C_CAT)▶ Dev$(C_RESET)\n"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "dev"       "Lance web + api via turbo (http://localhost:5173 + :3335)"
-	@printf "  %-14s $(C_DIM)%s$(C_RESET)\n" "" "remonte l'infra et attend postgres/redis avant de démarrer"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "stop"      "Arrête les containers Compose sans les supprimer"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "dev-agent" "[debug] Lance l'agent Rust en natif (insecure, /tmp/ploydok/agent.sock)"
-	@printf "  %-14s $(C_DIM)%s$(C_RESET)\n" "" "⚠ stop le container 'agent' d'abord — collision sur le socket"
-	@printf "\n$(C_CAT)▶ Agent$(C_RESET)\n"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "agent-restart" "Redémarre le container 'ploydok-agent' (utile après modif Rust)"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "agent-logs"    "Tail logs du container 'ploydok-agent'"
-	@printf "\n$(C_CAT)▶ Database$(C_RESET)\n"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "db-ensure-auth" "Vérifie l'auth Postgres et réaligne le rôle si le volume a dérivé"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "db-migrate" "Applique les migrations Postgres"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "reset"      "Wipe runtime app/db containers + Postgres + Redis + apply migrations"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "db-seed"    "Seed dev (login: dev@ploydok.local / pwd: DEVD-EVDE-VDEV)"
-	@printf "\n$(C_CAT)▶ Infra$(C_RESET)\n"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "secrets-init" "Génère les secrets persistants de dev dans .env.local"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "infra-up"     "docker compose up (postgres + redis + caddy + buildkitd + registry + agent)"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "infra-down"   "cleanup infra (stop + rm containers + networks)"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "infra-stop"   "stop infra containers (sans les supprimer)"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "infra-logs"   "tail logs Caddy"
-	@printf "\n$(C_CAT)▶ Quality & Build$(C_RESET)\n"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "dod" "Lance les 11 specs Playwright DoD Sprint 3 (requiert infra + dev up)"
-	@printf "  $(C_TARGET)%-14s$(C_RESET) $(C_DESC)%s$(C_RESET)\n" "build/start/test/lint/typecheck/clean" "délégués à turbo"
+# ─── Help ───
+help: ## Affiche les cibles disponibles, regroupees par section
+	@awk -v section_color="$(C_SECTION)" -v target_color="$(C_TARGET)" -v reset="$(C_RESET)" ' \
+	  /^# ─── / { section = $$0; sub(/^# ─── /, "", section); sub(/ ───$$/, "", section); printf "\n%s%s%s\n", section_color, section, reset; next } \
+	  /^[[:alnum:]_-]+:.*## / { target = $$1; sub(/:$$/, "", target); description = $$0; sub(/^.*## /, "", description); printf "  %s%-20s%s %s\n", target_color, target, reset, description }' $(MAKEFILE_LIST)
 
-install:
-	@echo "[install] installing workspace dependencies..."
+# ─── Install / Setup ───
+install: ## Installe les dependances, configure l'infra et demarre le dev
+	@printf '$(C_TARGET)[install]$(C_RESET) installing workspace dependencies...\n'
 	bun install
-	@echo "[install] bringing up local infra (postgres + redis + caddy + buildkitd + registry + agent)..."
+	@printf '$(C_TARGET)[install]$(C_RESET) bringing up local infra (postgres + redis + caddy + buildkitd + registry + agent)...\n'
 	$(MAKE) infra-up
-	@echo "[install] waiting for postgres and checking credentials..."
+	@printf '$(C_TARGET)[install]$(C_RESET) waiting for postgres and checking credentials...\n'
 	$(MAKE) db-ensure-auth
-	@echo "[install] applying database migrations..."
+	@printf '$(C_TARGET)[install]$(C_RESET) applying database migrations...\n'
 	$(MAKE) db-migrate
-	@echo "[install] verifying the stack end to end..."
+	@printf '$(C_TARGET)[install]$(C_RESET) verifying the stack end to end...\n'
 	$(MAKE) check
-	@echo "[install] setup done — starting dev servers (web:5173 + api:3335), Ctrl-C to stop"
+	@printf '$(C_OK)[install]$(C_RESET) setup done, starting dev servers (web:5173 + api:3335), Ctrl-C to stop\n'
 	$(MAKE) dev
 
-# Sonde réelle de chaque brique (TCP, HTTP, socket) + affiche l'URL /setup avec
-# le token de .env.local. Sort en 1 si une brique requise est morte.
-check:
-	@bun run scripts/check-stack.ts
+update: ## Met a jour les dependances du workspace avec bun update
+	bun update
 
 # L'API refuse de booter sans Postgres ni Redis, et turbo tue alors toute la run
 # (web compris). `dev` remonte donc l'infra et attend qu'elle soit prête avant
 # de lancer turbo. Idempotent : ~2 s quand tout tourne déjà.
-dev:
+# ─── Dev servers ───
+dev: ## Demarre le web et l'API apres verification de l'infra
 	@docker info >/dev/null 2>&1 || { \
-	  printf '[dev] docker daemon injoignable. Démarre Docker, puis relance make dev\n'; \
+	  printf '$(C_ERR)[dev]$(C_RESET) docker daemon injoignable. Demarre Docker, puis relance make dev\n'; \
 	  exit 1; \
 	}
 	@busy=""; \
 	for port in 3335 5173; do \
-	  if ss -ltnH 2>/dev/null | awk '{print $$4}' | grep -qE "[:.]$$port\$$"; then \
+	  if lsof -nP -iTCP:$$port -sTCP:LISTEN -t >/dev/null 2>&1; then \
 	    busy="$$busy $$port"; \
 	  fi; \
 	done; \
 	if [ -n "$$busy" ]; then \
-	  printf '[dev] port(s) déjà occupé(s) :%s\n' "$$busy"; \
-	  printf "[dev] un 'make dev' tourne sûrement dans un autre shell. Ferme-le avant de relancer\n"; \
+	  printf '$(C_WARN)[dev]$(C_RESET) port(s) deja occupe(s) :%s\n' "$$busy"; \
+	  printf "$(C_WARN)[dev]$(C_RESET) un 'make dev' tourne surement dans un autre shell. Ferme-le avant de relancer\n"; \
 	  exit 1; \
 	fi
 	@$(MAKE) --no-print-directory infra-up
-	@printf '[dev] waiting for postgres + redis to report healthy...\n'
+	@printf '$(C_TARGET)[dev]$(C_RESET) waiting for postgres + redis to report healthy...\n'
 	@docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml up -d --no-recreate --wait --wait-timeout 120 postgres redis
 	@$(MAKE) --no-print-directory db-ensure-auth
-	@printf '[dev] starting web:5173 + api:3335\n'
+	@printf '$(C_OK)[dev]$(C_RESET) starting web:5173 + api:3335\n'
 	bunx turbo dev
 
-stop: infra-stop
+stop: infra-stop ## Arrete les containers Compose sans les supprimer
 
-dev-agent:
-	@echo "Starting ploydok-agent in native mode (insecure, /tmp/ploydok/agent.sock)..."
-	@echo "⚠  Stop the compose 'agent' service first: docker compose -f infra/docker-compose.yml stop agent"
+dev-agent: ## Lance l'agent Rust en mode natif pour le debug
+	@printf '$(C_TARGET)[dev-agent]$(C_RESET) Starting ploydok-agent in native mode (insecure, /tmp/ploydok/agent.sock)...\n'
+	@printf '$(C_WARN)[dev-agent]$(C_RESET) Stop the compose agent service first: docker compose -f infra/docker-compose.yml stop agent\n'
 	mkdir -p /tmp/ploydok
 	cd agent && PLOYDOK_AGENT_INSECURE=1 PLOYDOK_AGENT_SOCKET=/tmp/ploydok/agent.sock PLOYDOK_VALIDATOR_CONFIG=$(CURDIR)/agent/config/dev-validator.toml cargo run --release -p ploydok-agent
 
-agent-restart:
+agent-restart: ## Redemarre le container ploydok-agent
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml restart agent
-	@echo "agent restarted — tail with: make agent-logs"
+	@printf '$(C_OK)[agent-restart]$(C_RESET) agent restarted, tail with: make agent-logs\n'
 
-agent-logs:
+agent-logs: ## Affiche les logs du container ploydok-agent
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml logs -f agent
 
 # Le volume postgres fige le mot de passe du rôle à l'initdb : une rotation de
 # PLOYDOK_PG_PASSWORD casse l'auth tant que le rôle n'est pas réaligné.
-db-ensure-auth:
+# ─── Database ───
+db-ensure-auth: ## Verifie et réaligne le role Postgres si necessaire
 	bun run scripts/db-ensure-auth.ts
 
-db-migrate:
+db-migrate: ## Applique les migrations Postgres
 	set -a; . apps/api/.env.local; set +a; bun run --cwd packages/db migrate
 
-reset:
-	@echo "[reset] removing runtime app/database containers..."
+reset: ## Reinitialise la base et Redis pour une installation vierge
+	@printf '$(C_WARN)[reset]$(C_RESET) removing runtime app/database containers...\n'
 	@containers=$$({ docker ps -aq --filter 'name=^/ploydok-app-'; docker ps -aq --filter 'name=^/ploydok-db-'; } | sort -u); \
 	if [ -n "$$containers" ]; then \
 	  docker rm -f $$containers >/dev/null; \
-	  echo "[reset] removed runtime containers: $$containers"; \
+	  printf '$(C_OK)[reset]$(C_RESET) removed runtime containers: %s\n' "$$containers"; \
 	else \
-	  echo "[reset] no runtime containers to remove"; \
+	  printf '$(C_WARN)[reset]$(C_RESET) no runtime containers to remove\n'; \
 	fi
-	@echo "[reset] dropping public + drizzle schemas..."
+	@printf '$(C_WARN)[reset]$(C_RESET) dropping public + drizzle schemas...\n'
 	@docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml exec -T postgres psql -U ploydok -d ploydok -v ON_ERROR_STOP=1 --quiet -c 'SET client_min_messages = warning; DROP SCHEMA IF EXISTS public CASCADE; DROP SCHEMA IF EXISTS drizzle CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO ploydok; GRANT ALL ON SCHEMA public TO public;' >/dev/null
-	@echo "[reset] flushing redis..."
+	@printf '$(C_WARN)[reset]$(C_RESET) flushing redis...\n'
 	@set -a; . apps/api/.env.local; set +a; docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml exec -T redis redis-cli --no-auth-warning -a "$$PLOYDOK_REDIS_PASSWORD" FLUSHDB >/dev/null
-	@echo "[reset] applying migrations..."
+	@printf '$(C_TARGET)[reset]$(C_RESET) applying migrations...\n'
 	@set -a; . apps/api/.env.local; set +a; bun run --cwd packages/db migrate
-	@echo "[reset] done — instance is back to a fresh-install state (no users, no projects)"
-	@echo "                next: 'make check' prints the /setup URL with the PLOYDOK_SETUP_TOKEN of .env.local"
+	@printf '$(C_OK)[reset]$(C_RESET) done, instance is back to a fresh-install state (no users, no projects)\n'
+	@printf '                next: make check prints the /setup URL with the PLOYDOK_SETUP_TOKEN of .env.local\n'
 
-secrets-init:
+db-seed: ## Cree les donnees de developpement
+	bun run --cwd packages/db seed
+
+# ─── Infra ───
+secrets-init: ## Genere les secrets de developpement dans .env.local
 	@ENV_FILE=apps/api/.env.local; \
 	touch "$$ENV_FILE"; \
 	if ! grep -q '^PLOYDOK_PG_PASSWORD=' "$$ENV_FILE" 2>/dev/null; then \
 	  PG_PASS=$$(openssl rand -hex 32); \
 	  echo "PLOYDOK_PG_PASSWORD=$$PG_PASS" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] PLOYDOK_PG_PASSWORD generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) PLOYDOK_PG_PASSWORD generated\n'; \
 	else \
-	  echo "[secrets-init] PLOYDOK_PG_PASSWORD already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_PG_PASSWORD already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^PLOYDOK_REDIS_PASSWORD=' "$$ENV_FILE" 2>/dev/null; then \
 	  REDIS_PASS=$$(openssl rand -hex 32); \
 	  echo "PLOYDOK_REDIS_PASSWORD=$$REDIS_PASS" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] PLOYDOK_REDIS_PASSWORD generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) PLOYDOK_REDIS_PASSWORD generated\n'; \
 	else \
-	  echo "[secrets-init] PLOYDOK_REDIS_PASSWORD already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_REDIS_PASSWORD already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^DATABASE_URL=' "$$ENV_FILE" 2>/dev/null; then \
 	  PG_PASS=$$(grep '^PLOYDOK_PG_PASSWORD=' "$$ENV_FILE" | head -n1 | cut -d= -f2-); \
 	  echo "DATABASE_URL=postgres://ploydok:$$PG_PASS@127.0.0.1:5434/ploydok" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] DATABASE_URL generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) DATABASE_URL generated\n'; \
 	else \
-	  echo "[secrets-init] DATABASE_URL already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) DATABASE_URL already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^REDIS_URL=' "$$ENV_FILE" 2>/dev/null; then \
 	  REDIS_PASS=$$(grep '^PLOYDOK_REDIS_PASSWORD=' "$$ENV_FILE" | head -n1 | cut -d= -f2-); \
 	  echo "REDIS_URL=redis://:$$REDIS_PASS@127.0.0.1:6381/0" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] REDIS_URL generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) REDIS_URL generated\n'; \
 	else \
-	  echo "[secrets-init] REDIS_URL already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) REDIS_URL already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^MASTER_KEY=' "$$ENV_FILE" 2>/dev/null; then \
 	  MASTER_KEY=$$(openssl rand -base64 32); \
 	  echo "MASTER_KEY=$$MASTER_KEY" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] MASTER_KEY generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) MASTER_KEY generated\n'; \
 	else \
-	  echo "[secrets-init] MASTER_KEY already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) MASTER_KEY already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^SESSION_SECRET=' "$$ENV_FILE" 2>/dev/null; then \
 	  SESSION_SECRET=$$(openssl rand -hex 32); \
 	  echo "SESSION_SECRET=$$SESSION_SECRET" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] SESSION_SECRET generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) SESSION_SECRET generated\n'; \
 	else \
-	  echo "[secrets-init] SESSION_SECRET already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) SESSION_SECRET already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^PLOYDOK_SETUP_TOKEN=' "$$ENV_FILE" 2>/dev/null; then \
 	  SETUP_TOKEN=$$(openssl rand -hex 32); \
 	  echo "PLOYDOK_SETUP_TOKEN=$$SETUP_TOKEN" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] PLOYDOK_SETUP_TOKEN generated"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) PLOYDOK_SETUP_TOKEN generated\n'; \
 	else \
-	  echo "[secrets-init] PLOYDOK_SETUP_TOKEN already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_SETUP_TOKEN already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^PLOYDOK_STATIC_ROOT=' "$$ENV_FILE" 2>/dev/null; then \
 	  echo "PLOYDOK_STATIC_ROOT=$$HOME/.ploydok-dev/static" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] PLOYDOK_STATIC_ROOT set to $$HOME/.ploydok-dev/static"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) PLOYDOK_STATIC_ROOT set to %s\n' "$$HOME/.ploydok-dev/static"; \
 	else \
-	  echo "[secrets-init] PLOYDOK_STATIC_ROOT already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_STATIC_ROOT already present, skipped\n'; \
 	fi; \
 	if ! grep -q '^PLOYDOK_CADDY_STATIC_ROOT=' "$$ENV_FILE" 2>/dev/null; then \
 	  echo "PLOYDOK_CADDY_STATIC_ROOT=/var/lib/ploydok/static" >> "$$ENV_FILE"; \
-	  echo "[secrets-init] PLOYDOK_CADDY_STATIC_ROOT set to /var/lib/ploydok/static"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) PLOYDOK_CADDY_STATIC_ROOT set to /var/lib/ploydok/static\n'; \
 	else \
-	  echo "[secrets-init] PLOYDOK_CADDY_STATIC_ROOT already present — skipped"; \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_CADDY_STATIC_ROOT already present, skipped\n'; \
 	fi; \
 	STATIC_ROOT=$$(grep '^PLOYDOK_STATIC_ROOT=' "$$ENV_FILE" | head -n1 | cut -d= -f2-); \
 	mkdir -p "$$STATIC_ROOT" "$$HOME/.ploydok-dev/builds"
 
-infra-up: secrets-init
+infra-up: secrets-init ## Demarre les services infra du projet
 	@docker network create ploydok-public 2>/dev/null || true
 	@docker network create ploydok-ingress 2>/dev/null || true
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml up -d
-	@echo "Caddy admin   : http://127.0.0.1:2020/config/"
-	@echo "Registry v2   : http://127.0.0.1:5000/v2/"
-	@echo "BuildKit host : docker-container://ploydok-buildkitd"
-	@echo "Postgres      : postgresql://ploydok:***@127.0.0.1:5434/ploydok"
-	@echo "Redis         : redis://:***@127.0.0.1:6381/0"
+	@printf '$(C_OK)[infra-up]$(C_RESET) Caddy admin   : http://127.0.0.1:2020/config/\n'
+	@printf '$(C_OK)[infra-up]$(C_RESET) Registry v2   : http://127.0.0.1:5000/v2/\n'
+	@printf '$(C_OK)[infra-up]$(C_RESET) BuildKit host : docker-container://ploydok-buildkitd\n'
+	@printf '$(C_OK)[infra-up]$(C_RESET) Postgres      : postgresql://ploydok:***@127.0.0.1:5434/ploydok\n'
+	@printf '$(C_OK)[infra-up]$(C_RESET) Redis         : redis://:***@127.0.0.1:6381/0\n'
 
-infra-down:
+infra-down: ## Arrete et supprime les containers et reseaux du projet
 	-docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml down --timeout 10
 	-docker network rm ploydok-public 2>/dev/null
 	-docker network rm ploydok-ingress 2>/dev/null
 
-infra-stop:
+infra-stop: ## Arrete les containers infra sans les supprimer
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml stop --timeout 15
 
-infra-logs:
+infra-logs: ## Affiche les logs Caddy
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml logs -f caddy
 
-build:
+# Sonde réelle de chaque brique (TCP, HTTP, socket) + affiche l'URL /setup avec
+# le token de .env.local. Sort en 1 si une brique requise est morte.
+# ─── Build / Check ───
+check: ## Sonde la stack et affiche l'URL /setup avec son token
+	@bun run scripts/check-stack.ts
+
+build: ## Construit les paquets via turbo
 	bunx turbo build
 
-start:
+start: ## Demarre l'API
 	cd apps/api && bun run start
 
-test:
+test: ## Lance les tests via turbo
 	bunx turbo test
 
-lint:
+lint: ## Lance le lint via turbo
 	bunx turbo lint
 
-typecheck:
+typecheck: ## Lance le typecheck via turbo
 	bunx turbo typecheck
 
-clean:
+clean: ## Nettoie les artefacts de build
 	bunx turbo clean || true
 	rm -rf apps/web/.vite apps/web/dist apps/api/dist .turbo */.turbo **/*/.turbo 2>/dev/null || true
 
 # Exécute les 11 specs Playwright DoD Sprint 3 contre l'infra réelle.
 # Écrit un rapport local gitignoré sous .ai/reports/.
-dod:
-	@echo "┌─ Pré-requis avant make dod ────────────────────────────────────┐"
-	@echo "│ 1. make infra-up       → postgres/redis/caddy/buildkit/registry/agent │"
-	@echo "│ 2. make dev            → dans un autre shell (web + api)       │"
-	@echo "│ 3. make db-seed        → 1× (dev@ploydok.local + backup code)  │"
-	@echo "│ 4. GitHub App installée sur le compte de test                  │"
-	@echo "│    (via /settings/github dans l'UI web)                        │"
-	@echo "└────────────────────────────────────────────────────────────────┘"
+dod: ## Lance les specifications Playwright DoD Sprint 3
+	@echo "+----------------------------------------------------------------+"
+	@echo "| Prerequis avant make dod                                       |"
+	@echo "| 1. make infra-up       > postgres/redis/caddy/buildkit/agent   |"
+	@echo "| 2. make dev            > dans un autre shell (web + api)       |"
+	@echo "| 3. make db-seed        > une fois (dev login + backup code)    |"
+	@echo "| 4. GitHub App installee sur le compte de test                  |"
+	@echo "|    (via /settings/github dans l'UI web)                        |"
+	@echo "+----------------------------------------------------------------+"
 	@echo ""
-	@echo "Durée : ~5-15 min selon vitesse BuildKit + réseau GitHub."
+	@echo "Duree : ~5-15 min selon vitesse BuildKit + reseau GitHub."
 	@echo "Logs détaillés : test-results/dod-*/"
 	@echo ""
 	PLOYDOK_E2E_REAL=1 bun scripts/run-dod.ts
 
 # Seed dev DB : user dev@ploydok.local + project + backup code fixe (DEVD-EVDE-VDEV).
 # Utilisé par `make dod` pour skipper l'export des creds.
-db-seed:
-	bun run --cwd packages/db seed

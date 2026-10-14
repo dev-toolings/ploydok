@@ -51,9 +51,26 @@ describe("createAgentClient mTLS policy", () => {
       const caPath = path.join(dir, "ca.pem")
       const certPath = path.join(dir, "client.pem")
       const keyPath = path.join(dir, "client.key")
-      fs.writeFileSync(caPath, "test-ca")
-      fs.writeFileSync(certPath, "test-cert")
-      fs.writeFileSync(keyPath, "test-key")
+      const openssl = Bun.spawnSync([
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=ploydok-agent-test",
+        "-keyout",
+        keyPath,
+        "-out",
+        certPath,
+      ])
+      expect(openssl.exitCode).toBe(0)
+      fs.copyFileSync(certPath, caPath)
       process.env["PLOYDOK_AGENT_CA"] = caPath
       process.env["PLOYDOK_AGENT_CLIENT_CERT"] = certPath
       process.env["PLOYDOK_AGENT_CLIENT_KEY"] = keyPath

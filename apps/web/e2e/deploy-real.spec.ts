@@ -38,7 +38,7 @@ const REAL_E2E = process.env.PLOYDOK_E2E_REAL === "1"
 
 const API = API_URL
 const DOMAIN_BASE = process.env.PLOYDOK_DOMAIN_BASE ?? "demo.localhost"
-const CADDY_PORT = 8180
+const CADDY_PORT = 8181
 const POLL_INTERVAL_MS = 2_000
 const BUILD_TIMEOUT_MS = 180_000
 
@@ -193,8 +193,8 @@ test.describe("deploy-real — full pipeline e2e", () => {
 
     expect(detail.builds[0]?.status).toBe("succeeded")
 
-    // 3. Assert live HTTP 200 via Caddy on port 8180.
-    //    Domain is: <slug>.<DOMAIN_BASE>, routed by Caddy on :8180.
+    // 3. Assert live HTTP 200 via Caddy on port 8181.
+    //    Domain is: <slug>.<DOMAIN_BASE>, routed by Caddy on :8181.
     const liveUrl = `http://${detail.app.domain ?? `${appSlug}.${DOMAIN_BASE}`}:${CADDY_PORT}/`
 
     const liveRes = await fetch(liveUrl, { redirect: "follow" })

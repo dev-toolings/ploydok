@@ -297,6 +297,8 @@ message ContainerSnapshot {
   bool   last_ping_ok = 14;
   // Unix millis of last seen
   uint64 last_seen_ms = 15;
+  // Label "ploydok.service_id" for marketplace containers.
+  string service_id = 16;
 }
 
 message ListContainersRequest {
@@ -556,6 +558,16 @@ message ImageDfResponse {
   repeated DiskUsageCategory categories = 1;
   // Total on-disk size of all image layers.
   int64 layers_size_bytes = 2;
+  repeated DiskUsageConsumer top_consumers = 3;
+  // Conservative estimate: unused exclusive image layers and non-shared
+  // build cache. Volumes are excluded from automatic cleanup.
+  optional int64 cleanup_reclaimable_bytes = 4;
+}
+
+message DiskUsageConsumer {
+  string kind = 1;
+  string name = 2;
+  int64 size_bytes = 3;
 }
 
 message ImagePruneRequest {

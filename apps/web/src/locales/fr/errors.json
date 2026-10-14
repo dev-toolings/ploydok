@@ -14,8 +14,19 @@
   "configure": "Configurer",
   "unexpected": "Une erreur est survenue. Réessayez.",
   "codes": {
+    "invalid_private_key": "La clé privée doit être une clé RSA valide au format PEM.",
+    "github_app_credentials_invalid": "GitHub a refusé l’App ID ou la clé privée. Votre configuration existante a été conservée.",
+    "github_app_mismatch": "Utilisez l’App ID et le Client ID de la GitHub App actuellement configurée.",
+    "github_app_verification_failed": "GitHub est inaccessible ou a renvoyé une réponse invalide. Votre configuration existante a été conservée. Réessayez.",
+    "github_app_sync_failed": "Les identifiants ont été enregistrés, mais la synchronisation des dépôts n’a pas pu démarrer. Relancez la reconnexion.",
     "SESSION_EXPIRED": "Session expirée, reconnectez-vous",
     "SECOND_FACTOR_REQUIRED": "Configurez un second facteur pour déverrouiller cette action.",
-    "BACKEND_UNAVAILABLE": "Le frontend ne parvient plus à joindre l'API."
-  }
+    "BACKEND_UNAVAILABLE": "Impossible de joindre le service. Vérifiez votre connexion et réessayez.",
+    "INVALID_CREDENTIALS": "Adresse e-mail ou mot de passe incorrect.",
+    "RATE_LIMITED": "Trop de tentatives. Réessayez dans quelques minutes.",
+    "CSRF_MISMATCH": "Votre jeton de sécurité a expiré. Rechargez la page et réessayez."
+  },
+  "networkDiagnostic": "Aucune réponse HTTP pour {{method}} {{url}} ({{reason}}). Vérifiez le processus API, le réseau, CORS et la console du navigateur. Le navigateur ne révèle pas la cause exacte à JavaScript.",
+  "httpDiagnostic": "{{method}} {{url}} : HTTP {{status}} [{{code}}]. {{message}}",
+  "requestReference": "Référence de la requête : {{id}}."
 }

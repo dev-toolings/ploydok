@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+} from "@tanstack/react-query"
 import { apiFetch } from "./api"
 import type { ApiError } from "./api"
 import type {
@@ -34,6 +38,7 @@ export function useMarketplaceCatalog(query: string) {
     },
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     initialPageParam: 0,
+    placeholderData: keepPreviousData,
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
   })

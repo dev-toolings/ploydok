@@ -274,7 +274,7 @@ export function createOrgMonitoringRouter(
   // POST /:orgSlug/monitoring/ping/:id
   // ---------------------------------------------------------------------------
 
-  const RESERVED_PORTS = new Set([22, 5000, 2020, 8180, 8543])
+  const RESERVED_PORTS = new Set([22, 5000, 2020, 8180, 8181, 8543])
 
   const PingBodySchema = z.object({
     path: z.string().regex(/^\/[^\s?#]{0,255}$/),

@@ -266,7 +266,7 @@ export function CreateDatabaseDialog({
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between text-sm">
                   <span>{stageLabel}</span>
-                  <span className="font-mono tabular-nums">
+                  <span className="font-sans tabular-nums">
                     {progressValue}%
                   </span>
                 </div>

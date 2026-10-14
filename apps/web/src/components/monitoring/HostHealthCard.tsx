@@ -57,7 +57,7 @@ export function HostHealthCard(): React.JSX.Element {
   if (error || !data) {
     return (
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-        <p className="font-mono text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
+        <p className="font-sans text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
           host_stats_unavailable
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -95,12 +95,12 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="space-y-0.5">
-          <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("host.vps")}
           </p>
           <p className="text-sm font-medium">
             {t("host.serverHealth")}{" "}
-            <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+            <span className="ml-1 font-sans text-[10px] text-muted-foreground">
               {t("host.uptime", { value: formatUptime(data.uptime_seconds) })}
             </span>
           </p>
@@ -163,13 +163,13 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
       </dl>
 
       {hasAlerts ? (
-        <div className="border-t border-border bg-destructive/5 px-4 py-2 font-mono text-[11px] text-destructive">
+        <div className="border-t border-border bg-destructive/5 px-4 py-2 font-sans text-[11px] text-destructive">
           {data.alerts.join(" · ")}
         </div>
       ) : null}
 
       {data.error ? (
-        <div className="border-t border-border bg-amber-500/5 px-4 py-2 font-mono text-[10px] text-amber-600 dark:text-amber-400">
+        <div className="border-t border-border bg-amber-500/5 px-4 py-2 font-sans text-[10px] text-amber-600 dark:text-amber-400">
           {t("host.partial", { error: data.error })}
         </div>
       ) : null}
@@ -192,7 +192,7 @@ function Cell({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1 px-4 py-3">
-      <dt className="flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="flex items-center gap-1.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         <Icon className="size-3" />
         {label}
       </dt>
@@ -200,7 +200,7 @@ function Cell({
         {value}
       </dd>
       {sub ? (
-        <p className="font-mono text-[10px] text-muted-foreground">{sub}</p>
+        <p className="font-sans text-[10px] text-muted-foreground">{sub}</p>
       ) : null}
     </div>
   )

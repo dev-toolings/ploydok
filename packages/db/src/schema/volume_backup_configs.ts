@@ -36,6 +36,10 @@ export const volume_backup_configs = pgTable(
     retention_days: integer("retention_days").notNull().default(7),
     age_recipient_public_key: text("age_recipient_public_key"),
     enabled: boolean("enabled").notNull().default(true),
+    last_scheduled_at: timestamp("last_scheduled_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     last_run_at: timestamp("last_run_at", { withTimezone: true, mode: "date" }),
     last_error: text("last_error"),
     created_at: timestamp("created_at", { withTimezone: true, mode: "date" })

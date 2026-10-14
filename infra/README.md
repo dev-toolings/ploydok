@@ -11,7 +11,7 @@ make infra-up
 ```
 
 Le Compose local démarre Postgres, Redis, Caddy, BuildKit, le registry et
-l'agent. Caddy écoute sur `8180`/`8543`; son API d'administration interne `2019`
+l'agent. Caddy écoute sur `8181`/`8543`; son API d'administration interne `2019`
 est publiée uniquement sur `127.0.0.1:2020`.
 
 ## Vérifier l'admin API

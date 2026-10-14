@@ -34,7 +34,7 @@ export const REAL_E2E = process.env["PLOYDOK_E2E_REAL"] === "1"
 export const API_URL = process.env["E2E_API_URL"] ?? "http://localhost:3335"
 export const DOMAIN_BASE =
   process.env["PLOYDOK_DOMAIN_BASE"] ?? "demo.localhost"
-export const CADDY_HTTP_PORT = 8180
+export const CADDY_HTTP_PORT = 8181
 
 // ---------------------------------------------------------------------------
 // 2. AuthContext
@@ -299,7 +299,7 @@ export async function pollBuildStatus(
 // ---------------------------------------------------------------------------
 
 /**
- * Perform an HTTP GET through the Caddy reverse proxy on port 8180.
+ * Perform an HTTP GET through the Caddy reverse proxy on port 8181.
  * The slug is used to construct the virtual-host URL.
  */
 export async function fetchViaProxy(

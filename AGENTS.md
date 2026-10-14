@@ -62,7 +62,7 @@ Règles d'usage :
 - Reserved local ports:
   - API: `3335`
   - Web: `5173`
-  - Caddy: `8180`, `8543`, `2020`
+  - Caddy: `8181`, `8543`, `2020`
 - Agent socket: `/tmp/ploydok-agent.sock`
 - Do not touch ports `80`, `443`, or `3000` on this machine.
 - Local dev secrets live in `apps/api/.env.local`.
@@ -96,6 +96,18 @@ Règles d'usage :
   - use existing query/cache mechanisms before adding new global state
   - use Zustand only if a shared client store is genuinely required
 - Remove dead code created by your change. Do not leave behind unused helpers, compatibility shims, or stale tests.
+
+## Typography (mandatory)
+
+- Use locally loaded **Inter Variable** throughout the interface, including
+  headings, forms, buttons, navigation, tables, dialogs, and charts.
+- Shared font tokens live in `packages/ui/src/styles/globals.css`.
+  `font-sans` and `font-heading` must resolve to the same Inter stack.
+- Reserve **JetBrains Mono Variable** for code, logs, terminals, secrets, and
+  technical identifiers. Ordinary labels, badges, and counters use Inter.
+- Do not introduce per-component font stacks or external font CDNs.
+- Follow `.claude/rules/style.md` for the complete typography policy and verify
+  that the font files actually load in the browser.
 
 ## Button Loading State (mandatory)
 

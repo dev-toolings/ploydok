@@ -34,7 +34,7 @@ export function WorkspacesSection(): React.JSX.Element {
     >
       <header className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("account")}
           </p>
           <h2 className="mt-1 text-base font-semibold text-foreground">
@@ -111,7 +111,7 @@ function WorkspaceRow({
         <p className="truncate text-sm font-medium text-foreground">
           {organization.name}
           {organization.is_default ? (
-            <span className="ml-2 inline-flex rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+            <span className="ml-2 inline-flex rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
               {t("workspace.default")}
             </span>
           ) : null}

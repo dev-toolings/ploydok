@@ -199,6 +199,10 @@ export function resolveTopbarBreadcrumb(
     return [platform, navItem("audit")]
   }
 
+  if (normalized === "/disk") {
+    return [navItem("instance"), navItem("disk")]
+  }
+
   if (normalized === "/shared-env") {
     return [platform, navItem("sharedEnv")]
   }

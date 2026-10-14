@@ -312,17 +312,11 @@ function SetupPage(): React.JSX.Element {
       >
         <Alert variant="destructive">
           <AlertDescription className="space-y-3">
-            <p>
-              This instance requires the one-shot token generated on first boot
-              to be passed explicitly.
-            </p>
+            <p>{t("setup.sessionDeniedMessage")}</p>
             <div className="rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs text-foreground">
-              Open: …/setup?token=…
+              {t("setup.sessionDeniedExample")}
             </div>
-            <p>
-              The token is printed in the API logs at first boot, or set through
-              the PLOYDOK_SETUP_TOKEN environment variable.
-            </p>
+            <p>{t("setup.sessionDeniedTokenSource")}</p>
           </AlertDescription>
         </Alert>
       </AuthShell>
@@ -353,7 +347,7 @@ function SetupPage(): React.JSX.Element {
               </div>
             </div>
             <div className="space-y-1">
-              <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+              <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
                 {t("setup.totp.manualEntry")}
               </p>
               <div className="flex items-center gap-2">
@@ -365,7 +359,7 @@ function SetupPage(): React.JSX.Element {
                   variant="outline"
                   size="sm"
                   onClick={() => void handleCopyTotpSecret()}
-                  className="shrink-0 font-mono text-[11px]"
+                  className="shrink-0 font-sans text-[11px]"
                 >
                   {totpCopied
                     ? t("setup.totp.copied")

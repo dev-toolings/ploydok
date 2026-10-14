@@ -1,0 +1,7 @@
+# BEGIN KonohaOS managed MCP
+[mcp_servers.konohaos]
+command = "/home/kev/lab/sandbox/konohaos/.venv/bin/python"
+args = ["-m", "konoha.cli", "--profile", "/home/kev/lab/sandbox/konohaos/.konohaos/profiles/ploydok-6036bad9cf1ac930/grok.json", "mcp"]
+enabled = true
+
+# END KonohaOS managed MCP

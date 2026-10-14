@@ -133,21 +133,21 @@ function StatusBadge({
 }): React.JSX.Element {
   if (status === "loading") {
     return (
-      <span className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <span className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         …
       </span>
     )
   }
   if (status === "configured") {
     return (
-      <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
         <RiCheckboxCircleFill className="size-3" />
         Configured
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+    <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
       <RiCircleLine className="size-3" />
       Not set
     </span>

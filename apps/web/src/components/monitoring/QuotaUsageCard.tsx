@@ -42,7 +42,7 @@ export function QuotaUsageCard(): React.JSX.Element {
     >
       <header className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
             {t("fleetQuotas")}
           </p>
           <h2 className="text-sm font-medium">{t("planDeclaration")}</h2>
@@ -89,7 +89,7 @@ export function QuotaUsageCard(): React.JSX.Element {
 function CountPill({ value, total }: { value: number; total: number }): React.JSX.Element {
   const { t } = useTranslation("monitoring")
   return (
-    <div className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+    <div className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
       <RiApps2Line className="size-3" />
       {t("runningApps", { running: value, total })}
     </div>
@@ -109,7 +109,7 @@ function Stat({
 }): React.JSX.Element {
   return (
     <div className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-background p-3">
-      <dt className="flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="flex items-center gap-1.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
         <Icon className="size-3" />
         {label}
       </dt>

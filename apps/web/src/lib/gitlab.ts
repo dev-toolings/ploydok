@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -134,6 +135,7 @@ export function useGitLabRepos(params: GitLabReposParams = {}) {
     getNextPageParam: (last, pages) =>
       last.hasMore ? pages.length + 1 : undefined,
     initialPageParam: 1,
+    placeholderData: keepPreviousData,
     enabled,
     staleTime: 60_000,
     refetchOnWindowFocus: true,

@@ -49,7 +49,8 @@ export function getAppVolumeHostPath(appId: string, volumeId: string): string {
 export async function runVolumeBackupOnce(
   db: Db,
   appId: string,
-  volumeId: string
+  volumeId: string,
+  scheduledAt?: Date
 ): Promise<VolumeBackupRunResult> {
   const backupId = nanoid()
   const startedAt = new Date()
@@ -85,7 +86,11 @@ export async function runVolumeBackupOnce(
   }
 
   const ageEncrypted = Boolean(config.age_recipient_public_key)
-  const filename = buildBackupFilename(startedAt, "tar", ageEncrypted)
+  const filename = buildBackupFilename(
+    scheduledAt ?? startedAt,
+    "tar",
+    ageEncrypted
+  )
   const location =
     config.destination_kind === "s3"
       ? `s3://${config.s3_bucket}/${buildVolumeS3Key(
