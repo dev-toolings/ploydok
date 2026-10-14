@@ -114,7 +114,7 @@ export function createDebugRouter(deps: DebugRouterDeps = {}): Hono {
         network: PLOYDOK_NETWORK,
         networks: [],
         volumes: [],
-        ports: [{ containerPort: 80, hostPort: 0, proto: "tcp" }],
+        ports: [{ containerPort: 80, hostPort: 0, proto: "tcp", hostIp: "" }],
         restartPolicy: "",
         resourceLimits: { cpu: 0.5, memoryBytes: 128 * 1024 * 1024, pidsLimit: 0 },
         command: [],

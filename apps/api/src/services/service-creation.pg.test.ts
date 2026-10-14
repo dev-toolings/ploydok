@@ -19,6 +19,7 @@ mock.module("../worker/queues", () => ({
   },
 }))
 mock.module("./projects.js", () => ({
+  ensureProjectNetwork: async () => "ploydok-proj-fixture",
   ensureProjectSwarmNetwork: async () => "ploydok-swarm-fixture",
 }))
 mock.module("../caddy/attachment.js", () => ({
@@ -135,6 +136,76 @@ function runtime(point: Point = null) {
   }
 }
 
+function dockerRuntime(point: Point = null) {
+  let pending = point
+  const containers = new Map<string, { id: string; name: string; serviceId: string; labels: Record<string, string> }>()
+  const createdRequests: Array<Record<string, unknown>> = []
+  let creates = 0
+  let transactions = 0
+  const fail = (at: Point) => {
+    if (pending === at) {
+      pending = null
+      throw new Error(`interrupted at ${at}`)
+    }
+  }
+  const agent = {
+    imagePull: async function* () {},
+    containerCreate: async (req: Record<string, unknown>) => {
+      const labels = req.labels as Record<string, string>
+      const id = `ctr-${creates + 1}`
+      creates++
+      createdRequests.push(req)
+      containers.set(id, {
+        id,
+        name: String(req.name),
+        serviceId: labels["ploydok.service_id"]!,
+        labels,
+      })
+      if (creates === 2) fail("create")
+      return { containerId: id }
+    },
+    containerStart: async () => ({}),
+    containerStop: async () => ({}),
+    containerRemove: mock(async ({ containerId }: { containerId: string }) => {
+      containers.delete(containerId)
+      return {}
+    }),
+    listContainers: async () => ({ containers: [...containers.values()] }),
+  } as unknown as OrchestratorDeps["agent"]
+  const caddy = {
+    upsertRoute: async () => {
+      fail("route")
+    },
+    removeRoute: async () => {},
+  }
+  const wrap = (db: Db) =>
+    new Proxy(db, {
+      get(target, prop) {
+        if (prop === "transaction")
+          return (callback: (tx: unknown) => Promise<unknown>) =>
+            target.transaction(async (tx) => {
+              transactions++
+              const result = await callback(tx)
+              if (transactions === 1) fail("persist")
+              if (transactions === 2) fail("complete")
+              return result
+            })
+        const value = Reflect.get(target, prop)
+        return typeof value === "function" ? value.bind(target) : value
+      },
+    })
+  return {
+    agent,
+    caddy,
+    containers,
+    createdRequests,
+    wrap,
+    get creates() {
+      return creates
+    },
+  }
+}
+
 test.skipIf(!process.env.DATABASE_URL)(
   "service, saga and reference-only outbox survive a Redis publishing failure",
   async () => {
@@ -158,6 +229,95 @@ test.skipIf(!process.env.DATABASE_URL)(
       const [stored] = await db.select().from(services)
       expect(JSON.stringify(stored)).not.toContain(secret)
       expect(stored?.compose_raw).toContain("__PLOYDOK_SECRET_")
+    })
+  }
+)
+
+test
+  .skipIf(!process.env.DATABASE_URL)
+  .each(["persist", "create", "route", "complete"] as const)(
+  "resumes Docker services at %s without duplicate containers and preserves the host IP",
+  async (point) => {
+    await isolated(async (db) => {
+      const r = dockerRuntime(point)
+      const row = await installFromTemplate(
+        { db, agent: r.agent, caddy: r.caddy },
+        "fixture-user",
+        {
+          ...input,
+          compose:
+            "services:\n  first:\n    image: alpine:3.20\n    user: \"1000\"\n    ports: [\"127.0.0.1:8080:80\"]\n    environment:\n      DOMAIN: ${domain}\n  second:\n    image: alpine:3.20\n",
+        }
+      )
+      expect(row.runtime_mode).toBe("docker")
+      const deps = { agent: r.agent, caddy: r.caddy }
+      await expect(
+        resumeServiceCreation({ db: r.wrap(db), ...deps }, row.id)
+      ).rejects.toThrow(`interrupted at ${point}`)
+      await db
+        .update(resource_creation_sagas)
+        .set({ next_retry_at: new Date(0) })
+      await resumeServiceCreation({ db, ...deps }, row.id)
+
+      const [finished] = await db.select().from(services)
+      const [saga] = await db.select().from(resource_creation_sagas)
+      expect(finished?.runtime_mode).toBe("docker")
+      expect(finished?.status).toBe("running")
+      expect(finished?.container_ids).toHaveLength(2)
+      expect(saga?.state).toBe("complete")
+      expect(r.creates).toBe(2)
+      expect(r.containers.size).toBe(2)
+      expect(r.createdRequests[0]?.["user"]).toBe("1000")
+      expect(
+        (r.createdRequests[0]?.["ports"] as Array<Record<string, unknown>>)[0]?.[
+          "hostIp"
+        ]
+      ).toBe("127.0.0.1")
+    })
+  }
+)
+
+test.skipIf(!process.env.DATABASE_URL)(
+  "compensation removes Docker containers and retries interrupted cleanup",
+  async () => {
+    await isolated(async (db) => {
+      const r = dockerRuntime("create")
+      const row = await installFromTemplate(
+        { db, agent: r.agent, caddy: r.caddy },
+        "fixture-user",
+        {
+          ...input,
+          compose:
+            "services:\n  first:\n    image: alpine:3.20\n    ports: [\"127.0.0.1:8080:80\"]\n  second:\n    image: alpine:3.20\n",
+        }
+      )
+      await expect(
+        resumeServiceCreation({ db, agent: r.agent, caddy: r.caddy }, row.id)
+      ).rejects.toThrow("interrupted at create")
+      await db
+        .update(resource_creation_sagas)
+        .set({ state: "compensating", next_retry_at: new Date(0) })
+      ;(r.agent.containerRemove as ReturnType<typeof mock>).mockRejectedValueOnce(
+        new Error("agent unavailable")
+      )
+      await expect(
+        resumeServiceCreation({ db, agent: r.agent, caddy: r.caddy }, row.id)
+      ).rejects.toThrow("agent unavailable")
+      await db
+        .update(resource_creation_sagas)
+        .set({ next_retry_at: new Date(0) })
+      await resumeServiceCreation({ db, agent: r.agent, caddy: r.caddy }, row.id)
+
+      const [saga] = await db.select().from(resource_creation_sagas)
+      const [service] = await db
+        .select()
+        .from(services)
+        .where(eq(services.id, row.id))
+      expect(saga?.state).toBe("compensated")
+      expect(service?.runtime_mode).toBe("docker")
+      expect(service?.container_ids).toEqual([])
+      expect(service?.status).toBe("failed")
+      expect(r.containers.size).toBe(0)
     })
   }
 )

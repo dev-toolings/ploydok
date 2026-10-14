@@ -435,7 +435,12 @@ async function buildRuntimeConfig(
   template: (typeof templates)[DbKind]
   env: Record<string, string>
   args: string[]
-  ports: Array<{ containerPort: number; hostPort: number; proto: string }>
+  ports: Array<{
+    containerPort: number
+    hostPort: number
+    proto: string
+    hostIp: string
+  }>
   publicPort: number | null
   publicHost: string | null
   publicUrl: string | null
@@ -460,7 +465,7 @@ async function buildRuntimeConfig(
       : null
   const ports =
     publicPort !== null && opts.exposureMode === "direct_port"
-      ? [{ containerPort: tmpl.port, hostPort: publicPort, proto: "tcp" }]
+      ? [{ containerPort: tmpl.port, hostPort: publicPort, proto: "tcp", hostIp: "" }]
       : []
   const connectionString = buildConnectionString(tmpl.connection_string, {
     user: opts.creds.user,

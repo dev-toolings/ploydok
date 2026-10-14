@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-# Accepted Compose subset for Swarm
+# Accepted Compose subset for marketplace services
 
 The executable contract is ACCEPTED_COMPOSE_SUBSET in
 apps/api/src/marketplace/compose-to-containers.ts. Validation precedes service,
@@ -15,11 +15,14 @@ shell expansion; explicit empty overrides are rejected because the agent cannot
 distinguish clearing a command from inheriting the image command.
 
 expose declares internal TCP ports; the first selects the Caddy ingress upstream.
-Marketplace services are never published on the host: ingress goes through
-Caddy. ports entries without an address are therefore kept as internal ports
-only (the first one can select the upstream when expose is absent); this is a
-documented rule of the product, not a silent loss. An address-specific binding
-(127.0.0.1:8080:80, host_ip) is refused, so a restriction is never widened.
+Ploydok never publishes a port on all host interfaces. A ports entry without
+an IP is internal only (the first one can select the upstream when expose is
+absent). An explicit 0.0.0.0 or :: is rejected. An IPv4 or IPv6 literal such
+as 127.0.0.1 or ::1 is published on that address only, using Docker containers.
+If any service port has an explicit IP, the whole marketplace service uses the
+Docker runtime. Otherwise it uses the existing Swarm runtime. This runtime
+choice is persisted in services.runtime_mode and is reused for creation,
+resume, start, stop, delete and Caddy reconciliation.
 
 restart: Swarm restarts a task on any exit. always and unless-stopped keep that
 meaning and are accepted; no and on-failure would change it and are refused.
@@ -32,5 +35,9 @@ Healthcheck supports test, interval, timeout, retries, start_period with whole
 seconds. Volumes retain the existing local storage mapping under
 /var/lib/ploydok/volumes; options beyond source/target/type/read_only or ro/rw
 are refused. Existing templates using rejected fields need explicit adaptation.
-Legacy Docker parsing retains its documented ports/restart/dependency support;
-address-specific ports and readiness conditions are refused there too.
+The long port form accepts target, published, protocol and host_ip. host_ip
+must be an IP literal. The short form accepts an IP prefix, including bracketed
+IPv6. Docker receives only explicit-IP bindings, so an unbound ports entry
+cannot widen into a host-wide publication. The agent keeps an empty host_ip
+for legacy non-marketplace callers, while the marketplace API refuses wildcard
+addresses before durable acceptance.
