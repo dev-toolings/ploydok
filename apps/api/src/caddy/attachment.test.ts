@@ -92,3 +92,23 @@ describe("networksToAttachForRunningApps", () => {
     ).toEqual(["ploydok-proj-proj-1"])
   })
 })
+
+it("reconciles ingress for public marketplace services in service-only projects", async () => {
+  const { reconcileCaddyAttachments, resetCaddyIdCache } = await import("./attachment");
+  resetCaddyIdCache();
+  let query = 0;
+  const db = { select: () => ({ from: () => ({ innerJoin: () => ({
+    where: async () => ++query === 1 ? [] : [
+      { project_id: "public", swarm_network_name: "ploydok-swarm-proj-public" },
+    ],
+  }) }) }) };
+  const attached: string[] = [];
+  const agent = {
+    listContainers: async () => ({ containers: [{ id: "caddy", name: "ploydok-caddy", status: "running" }] }),
+    networkConnect: async ({ networkId }: { networkId: string }) => { attached.push(networkId); },
+  };
+  const result = await reconcileCaddyAttachments(agent as any, db as any);
+  expect(attached).toEqual(["ploydok-swarm-proj-public"]);
+  expect(result).toEqual({ attached: 1, skipped: 0, failed: 0 });
+  resetCaddyIdCache();
+});

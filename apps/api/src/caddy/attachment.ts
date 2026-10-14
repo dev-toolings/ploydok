@@ -7,8 +7,8 @@
 // upstreams by container id or Swarm DNS while remaining the only ingress.
 // Projects never share a data-plane network.
 
-import { eq, inArray } from "drizzle-orm"
-import { apps as appsTable, projects as projectsTable } from "@ploydok/db"
+import { and, eq, inArray, isNotNull } from "drizzle-orm"
+import { apps as appsTable, projects as projectsTable, services as servicesTable } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { Agent } from "../agent"
 import { isAlreadyExists, isNotFound, toAgentError } from "../agent/index.js"
@@ -209,7 +209,17 @@ export async function reconcileCaddyAttachments(
     .innerJoin(projectsTable, eq(appsTable.project_id, projectsTable.id))
     .where(inArray(appsTable.status, ["running", "restarting"]))
 
-  const networks = networksToAttachForRunningApps(rows)
+
+  const publicServices = await db.select({
+    project_id: projectsTable.id,
+    swarm_network_name: projectsTable.swarm_network_name,
+  }).from(servicesTable)
+    .innerJoin(projectsTable, eq(servicesTable.project_id, projectsTable.id))
+    .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
+  const networks = [...new Set([
+    ...networksToAttachForRunningApps(rows),
+    ...publicServices.map(row => row.swarm_network_name ?? overlayNameForProject(row.project_id)),
+  ])]
   const result = { attached: 0, skipped: 0, failed: 0 }
   if (networks.length === 0) {
     result.skipped++
