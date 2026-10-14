@@ -6,8 +6,7 @@ const queryMocks = {
     id: "app-1:pr-7",
     container_id: "preview-container-7",
   })),
-  updatePreviewDeployment: mock(async () => {}),
-  updatePreviewDeploymentStatus: mock(async () => {}),
+  updatePreviewDeployment: mock(async (_db: unknown, _id: string, _patch: Record<string, unknown>) => {}),
 }
 
 const caddy = {
@@ -29,7 +28,6 @@ describe("handlePreviewTeardown", () => {
   beforeEach(() => {
     queryMocks.getPreviewDeployment.mockClear()
     queryMocks.updatePreviewDeployment.mockClear()
-    queryMocks.updatePreviewDeploymentStatus.mockClear()
     caddy.removeRoute.mockClear()
     agent.containerStop.mockClear()
     agent.containerRemove.mockClear()
@@ -51,10 +49,26 @@ describe("handlePreviewTeardown", () => {
       "app-1:pr-7",
       expect.objectContaining({ status: "torn_down", container_id: null })
     )
-    expect(queryMocks.updatePreviewDeploymentStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      "app-1:pr-7",
-      "torn_down"
-    )
+
   })
+})
+
+it.each(["containerStop", "containerRemove"] as const)("propagates %s failures, preserves the reference and completes on retry", async (method) => {
+  const { handlePreviewTeardown } = await import("./preview-teardown")
+  queryMocks.updatePreviewDeployment.mockClear()
+  agent[method].mockRejectedValueOnce(new Error("agent unavailable"))
+  await expect(handlePreviewTeardown({} as never, { appId: "app-1", prNumber: 7 })).rejects.toThrow("agent unavailable")
+  expect(queryMocks.updatePreviewDeployment.mock.calls.map(call => call[2])).toEqual([{ status: "tearing_down" }])
+  await handlePreviewTeardown({} as never, { appId: "app-1", prNumber: 7 })
+  expect(agent.containerRemove).toHaveBeenLastCalledWith(expect.objectContaining({ containerId: "preview-container-7" }))
+  expect(queryMocks.updatePreviewDeployment).toHaveBeenLastCalledWith(expect.anything(), "app-1:pr-7", { status: "torn_down", container_id: null })
+})
+
+it("treats agent NotFound as an idempotent completed teardown", async () => {
+  const { handlePreviewTeardown } = await import("./preview-teardown")
+  const notFound = Object.assign(new Error("gone"), { code: 5, details: "not found" })
+  agent.containerStop.mockRejectedValueOnce(notFound)
+  agent.containerRemove.mockRejectedValueOnce(notFound)
+  await handlePreviewTeardown({} as never, { appId: "app-1", prNumber: 7 })
+  expect(queryMocks.updatePreviewDeployment).toHaveBeenLastCalledWith(expect.anything(), "app-1:pr-7", { status: "torn_down", container_id: null })
 })

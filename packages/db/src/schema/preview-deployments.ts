@@ -25,7 +25,7 @@ export const preview_deployments = pgTable(
     domain: text("domain").notNull(),
     container_id: text("container_id"),
     status: text("status", {
-      enum: ["pending", "building", "running", "torn_down", "failed"],
+      enum: ["pending", "building", "running", "tearing_down", "torn_down", "failed"],
     })
       .notNull()
       .default("pending"),

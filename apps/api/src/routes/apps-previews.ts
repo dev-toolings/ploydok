@@ -5,6 +5,7 @@ import {
   getAppForUser,
   listPreviewDeploymentsForApp,
   getPreviewDeploymentByAppAndPr,
+  updatePreviewDeploymentStatus,
 } from "@ploydok/db/queries"
 import { previewTeardown } from "../worker/queues"
 import type { AuthUser } from "../auth/middleware"
@@ -71,6 +72,7 @@ export function createPreviewsRoute(db: Db): Hono {
 
     log.info({ appId, prNumber, userId: user.id }, "enqueuing preview teardown")
 
+    await updatePreviewDeploymentStatus(db, `${appId}:pr-${prNumber}`, "tearing_down")
     await previewTeardown.add("preview.teardown", {
       appId,
       prNumber,
