@@ -24,6 +24,7 @@ export const backup_configs = pgTable('backup_configs', {
   // Plain public key — intentionally not encrypted (age public keys are public by design)
   age_recipient_public_key: text('age_recipient_public_key'),
   enabled: boolean('enabled').notNull().default(true),
+  last_scheduled_at: timestamp('last_scheduled_at', { withTimezone: true, mode: 'date' }),
   last_run_at: timestamp('last_run_at', { withTimezone: true, mode: 'date' }),
   last_error: text('last_error'),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'date' })
