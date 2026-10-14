@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useTranslation } from "react-i18next"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
 import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Input } from "@workspace/ui/components/input"
@@ -20,6 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@workspace/ui/components/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
 import { DEFAULT_DATABASE_ENV_PREFIX } from "../../lib/database-env"
 import { useDatabases, useLinkDatabase } from "../../lib/databases"
 import type { Database } from "../../lib/databases"

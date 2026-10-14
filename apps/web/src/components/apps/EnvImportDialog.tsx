@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useTranslation } from "react-i18next"
+import { Button } from "@workspace/ui/components/button"
 import {
   Dialog,
   DialogContent,
@@ -8,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Button } from "@workspace/ui/components/button"
 import i18n from "../../lib/i18n"
 import { looksSecret, parseDotenv } from "../../lib/env-parser"
 import type { ParseEnvError, ParsedEnvEntry } from "../../lib/env-parser"

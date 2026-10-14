@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { Button } from "@workspace/ui/components/button"
+import { useTranslation } from "react-i18next"
+import { RiServerLine } from "@remixicon/react"
 import {
   Dialog,
   DialogContent,
@@ -9,8 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { useTranslation } from "react-i18next"
-import { RiServerLine } from "@remixicon/react"
 
 interface InstallDialogProps {
   open: boolean

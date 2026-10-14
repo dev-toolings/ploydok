@@ -29,8 +29,8 @@ import {
   useEventsStatus,
   useEventsSubscription,
 } from "../../../../../../lib/events-provider"
-import type { Build } from "@ploydok/shared"
 import i18n from "../../../../../../lib/i18n"
+import type { Build } from "@ploydok/shared"
 import type { BuildStatusEventPayload } from "../../../../../../lib/apps"
 
 interface DeploymentsSearch {

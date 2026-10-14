@@ -9,8 +9,8 @@ import {
   RiGitlabFill,
 } from "@remixicon/react"
 import { cn } from "@workspace/ui/lib/utils"
-import { ShellPage } from "../../../../components/layout/AppShell"
 import { useTranslation } from "react-i18next"
+import { ShellPage } from "../../../../components/layout/AppShell"
 import { useGitProviderStatus } from "../../../../lib/git-providers"
 
 export const Route = createFileRoute("/_authed/settings/git-providers/")({

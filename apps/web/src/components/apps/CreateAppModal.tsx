@@ -23,14 +23,6 @@ import {
   TooltipTrigger,
 } from "@workspace/ui/components/tooltip"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
-import {
   Select,
   SelectContent,
   SelectGroup,
@@ -39,9 +31,17 @@ import {
   SelectValue,
 } from "@workspace/ui/components/select"
 import { useTranslation } from "react-i18next"
-import i18n from "../../lib/i18n"
 import { cn } from "@workspace/ui/lib/utils"
 import { PLANS } from "@ploydok/shared"
+import i18n from "../../lib/i18n"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
 import { useCreateApp } from "../../lib/apps"
 import { apiFetch } from "../../lib/api"
 import {
@@ -74,7 +74,6 @@ import type { ApiError } from "../../lib/api"
 import type { Database, DbKind, DbPlan } from "../../lib/databases"
 import type { PlanSelectorValue } from "./PlanSelector"
 import type {
-  AppConfig,
   BuildMethod,
   GitBranch,
   GitProviderKind,
@@ -653,7 +652,7 @@ export function CreateAppModal({
           envPrefix: form.database.envPrefix,
         }
       }
-      const created = await createApp.mutateAsync(body as Partial<AppConfig>)
+      const created = await createApp.mutateAsync(body)
       const appId = readCreatedAppId(created)
       if (databaseId && appId && !body.initialDatabaseLink) {
         await linkDatabase.mutateAsync({

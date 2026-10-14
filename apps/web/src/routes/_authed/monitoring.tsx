@@ -19,6 +19,7 @@ import {
 import { healthClass } from "@ploydok/shared"
 import { cn } from "@workspace/ui/lib/utils"
 import { Input } from "@workspace/ui/components/input"
+import { useTranslation } from "react-i18next"
 import {
   useMonitoring,
   useMonitoringEvents,
@@ -26,10 +27,8 @@ import {
 } from "../../lib/monitoring"
 import { QuotaUsageCard } from "../../components/monitoring/QuotaUsageCard"
 import { ResourceCard } from "../../components/monitoring/ResourceCard"
-import { useTranslation } from "react-i18next"
 import { ShellPage } from "../../components/layout/AppShell"
-import type {
-  ContainerKind,
+import type { ContainerKind,
   ContainerSnapshot,
   HealthClass,
   MonitoringOverview,

@@ -14,6 +14,7 @@ import {
   RiTimeLine,
 } from "@remixicon/react"
 import { healthClass } from "@ploydok/shared"
+import { useTranslation } from "react-i18next"
 import { CreateAppModal } from "../../../../components/apps/CreateAppModal"
 import { GettingStartedPanel } from "../../../../components/apps/GettingStartedPanel"
 import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
@@ -29,9 +30,8 @@ import {
   useCurrentOrganization,
   useCurrentOrganizationSlug,
 } from "../../../../lib/organizations"
-import type { BuildWithApp } from "../../../../lib/apps"
-import { useTranslation } from "react-i18next"
 import i18n from "../../../../lib/i18n"
+import type { BuildWithApp } from "../../../../lib/apps"
 import type { BuildStatus, ContainerSnapshot } from "@ploydok/shared"
 
 interface DashboardSearch {
@@ -323,27 +323,27 @@ function DashboardPage(): React.JSX.Element {
                 label={t("dashboard.allApplications")}
                 hint={t("dashboard.appsHint", { count: apps.length })}
                 to={
-                  (organization
+                  organization
                     ? organizationPath(organization.slug, "apps")
-                    : "/apps") as never
+                    : "/apps"
                 }
               />
               <QuickLink
                 label={t("dashboard.deployments")}
                 hint={t("dashboard.deploymentsHint")}
                 to={
-                  (organization
+                  organization
                     ? organizationPath(organization.slug, "deployments")
-                    : "/deployments") as never
+                    : "/deployments"
                 }
               />
               <QuickLink
                 label={t("dashboard.monitoring")}
                 hint={t("dashboard.monitoringHint")}
                 to={
-                  (organization
+                  organization
                     ? organizationPath(organization.slug, "monitoring")
-                    : "/monitoring") as never
+                    : "/monitoring"
                 }
               />
             </div>

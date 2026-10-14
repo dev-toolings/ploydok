@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import { loadLocaleModules } from "./load-resources"
 
-function keyPaths(obj: unknown, prefix = ""): string[] {
+function keyPaths(obj: unknown, prefix = ""): Array<string> {
   if (obj && typeof obj === "object" && !Array.isArray(obj)) {
     return Object.entries(obj as Record<string, unknown>)
       .flatMap(([key, value]) =>
@@ -14,7 +14,7 @@ function keyPaths(obj: unknown, prefix = ""): string[] {
   return [prefix]
 }
 
-function interpolationTokens(value: string): string[] {
+function interpolationTokens(value: string): Array<string> {
   return [...value.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)]
     .map((match) => match[1].trim())
     .sort()
@@ -23,8 +23,8 @@ function interpolationTokens(value: string): string[] {
 function interpolationMap(
   obj: unknown,
   prefix = ""
-): Map<string, string[]> {
-  const out = new Map<string, string[]>()
+): Map<string, Array<string>> {
+  const out = new Map<string, Array<string>>()
   if (typeof obj === "string") {
     out.set(prefix, interpolationTokens(obj))
     return out
@@ -44,7 +44,7 @@ function interpolationMap(
   return out
 }
 
-function emptyLeaves(obj: unknown, prefix = ""): string[] {
+function emptyLeaves(obj: unknown, prefix = ""): Array<string> {
   if (typeof obj === "string") {
     return obj.trim() === "" ? [prefix] : []
   }

@@ -89,7 +89,7 @@ describe("buildAppEvent", () => {
 describe("prependEvent", () => {
   const makeEvent = (id: string): AppEvent => ({
     id,
-    type: "build.started" as AppEventType,
+    type: "build.started",
     timestamp: Date.now(),
     data: {},
   })

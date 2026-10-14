@@ -5,10 +5,10 @@ import { detectClientLocale } from "./detect"
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE,
-  type Locale,
   parseAcceptLanguage,
   resolveSupportedLocale,
 } from "./locales"
+import type { Locale } from "./locales"
 
 /**
  * Request locale that SSR HTML and client hydration both boot with.

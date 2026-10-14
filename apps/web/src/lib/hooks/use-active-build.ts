@@ -48,7 +48,7 @@ export function useActiveBuild(appId: string): ActiveBuildState {
       return {
         isActive: true,
         buildId: app.latestBuildId,
-        status: "running" as BuildStatus,
+        status: "running",
       }
     }
     return { isActive: false }

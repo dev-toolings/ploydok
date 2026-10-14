@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { LOCALE_COOKIE } from "./locales"
 import i18n from "./index"
-import { LOCALE_COOKIE, type Locale } from "./locales"
+import type { Locale } from "./locales"
 
 function persist(locale: Locale): void {
   if (typeof document === "undefined") return

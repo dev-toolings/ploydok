@@ -6,6 +6,7 @@ import {
   RiExternalLinkLine,
   RiShapesLine,
 } from "@remixicon/react"
+import { useTranslation } from "react-i18next"
 import {
   ShellPage,
   ShellPanel,
@@ -16,7 +17,6 @@ import {
   organizationPath,
   useCurrentOrganization,
 } from "../../../../../lib/organizations"
-import { useTranslation } from "react-i18next"
 import type { ServiceSummary } from "../../../../../lib/services"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/services/")({

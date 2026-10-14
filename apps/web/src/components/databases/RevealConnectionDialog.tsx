@@ -12,6 +12,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@workspace/ui/components/alert-dialog"
+import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
+import { Label } from "@workspace/ui/components/label"
 import {
   Dialog,
   DialogContent,
@@ -20,9 +23,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Button } from "@workspace/ui/components/button"
-import { Input } from "@workspace/ui/components/input"
-import { Label } from "@workspace/ui/components/label"
 import { useRevealDatabase } from "../../lib/databases"
 
 const AUTO_HIDE_MS = 30_000

@@ -10,6 +10,7 @@ import {
 import { Toaster } from "sonner"
 
 import appCss from "@workspace/ui/globals.css?url"
+import { I18nextProvider } from "react-i18next"
 import { ApiErrorState } from "../components/errors/ApiErrorState"
 import { NotFoundState } from "../components/errors/NotFoundState"
 import { NavigationProgress } from "../components/layout/NavigationProgress"
@@ -26,10 +27,9 @@ import {
 import { apiBaseUrl } from "../lib/api/base"
 import { broadcastAuthEvent, subscribeAuthEvents } from "../lib/api/broadcast"
 import { startProactiveRefresh } from "../lib/api/scheduler"
-import type { ErrorComponentProps } from "@tanstack/react-router"
-import { I18nextProvider } from "react-i18next"
 import i18n from "../lib/i18n"
 import { resolveRequestLocale } from "../lib/i18n/resolve-locale"
+import type { ErrorComponentProps } from "@tanstack/react-router"
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({

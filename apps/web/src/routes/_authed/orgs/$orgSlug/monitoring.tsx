@@ -19,6 +19,7 @@ import {
 import { healthClass } from "@ploydok/shared"
 import { cn } from "@workspace/ui/lib/utils"
 import { Input } from "@workspace/ui/components/input"
+import { useTranslation } from "react-i18next"
 import {
   useOrgMonitoring,
   useOrgMonitoringEvents,
@@ -27,11 +28,9 @@ import {
 import { ResourceCard } from "../../../../components/monitoring/ResourceCard"
 import { SystemHealthCard } from "../../../../components/monitoring/SystemHealthCard"
 import { HostHealthCard } from "../../../../components/monitoring/HostHealthCard"
-import { useTranslation } from "react-i18next"
 import { ShellPage } from "../../../../components/layout/AppShell"
 import { useCurrentOrganizationSlug } from "../../../../lib/organizations"
-import type {
-  ContainerKind,
+import type { ContainerKind,
   ContainerSnapshot,
   HealthClass,
   MonitoringOverview,

@@ -10,10 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@workspace/ui/components/select"
+import { useTranslation } from "react-i18next"
 import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
 import { useCurrentOrganization } from "../../../../lib/organizations"
 import { useAuditEvents } from "../../../../lib/audit"
-import { useTranslation } from "react-i18next"
 import i18n from "../../../../lib/i18n"
 import type { AuditEvent } from "@ploydok/shared"
 
