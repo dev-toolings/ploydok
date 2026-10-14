@@ -33,7 +33,8 @@ import { useCurrentOrganizationSlug } from "../../../../lib/organizations"
 import type { ContainerKind,
   ContainerSnapshot,
   HealthClass,
-  MonitoringOverview, } from "@ploydok/shared"
+  MonitoringOverview,
+} from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/monitoring")({
   component: OrgMonitoringPage,

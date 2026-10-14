@@ -323,27 +323,27 @@ function DashboardPage(): React.JSX.Element {
                 label={t("dashboard.allApplications")}
                 hint={t("dashboard.appsHint", { count: apps.length })}
                 to={
-                  (organization
+                  organization
                     ? organizationPath(organization.slug, "apps")
-                    : "/apps")
+                    : "/apps"
                 }
               />
               <QuickLink
                 label={t("dashboard.deployments")}
                 hint={t("dashboard.deploymentsHint")}
                 to={
-                  (organization
+                  organization
                     ? organizationPath(organization.slug, "deployments")
-                    : "/deployments")
+                    : "/deployments"
                 }
               />
               <QuickLink
                 label={t("dashboard.monitoring")}
                 hint={t("dashboard.monitoringHint")}
                 to={
-                  (organization
+                  organization
                     ? organizationPath(organization.slug, "monitoring")
-                    : "/monitoring")
+                    : "/monitoring"
                 }
               />
             </div>

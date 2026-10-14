@@ -43,7 +43,8 @@ import { WhatsAppForm } from "./WhatsAppForm"
 import { EmailForm } from "./EmailForm"
 import type { ChannelEvent,
   NotificationChannel,
-  NotificationKind, } from "../../lib/notification-channels"
+  NotificationKind,
+} from "../../lib/notification-channels"
 import type { WhatsAppProvider } from "./WhatsAppForm"
 
 const ALL_KINDS: ReadonlyArray<NotificationKind> = [

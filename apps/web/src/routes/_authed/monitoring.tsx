@@ -31,7 +31,8 @@ import { ShellPage } from "../../components/layout/AppShell"
 import type { ContainerKind,
   ContainerSnapshot,
   HealthClass,
-  MonitoringOverview, } from "@ploydok/shared"
+  MonitoringOverview,
+} from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/monitoring")({
   component: MonitoringPage,

@@ -16,14 +16,17 @@ import {
   normalizeAppDetail,
 } from "./transforms"
 import type { ApiError } from "../api"
-import type { AppConfig,
+import type {
+  AppConfig,
   Build,
   BuildStatus,
   CaddyExtraHandlers,
   CdnConfig,
   CloudflareManagedCdn,
-  CloudflareManagedCdnStatus, } from "@ploydok/shared"
-import type { AppDetail,
+  CloudflareManagedCdnStatus,
+} from "@ploydok/shared"
+import type {
+  AppDetail,
   AppListItem,
   AppStatusEventPayload,
   AppsResponse,
@@ -33,7 +36,8 @@ import type { AppDetail,
   RawAppDetail,
   RegistryUsage,
   UseAppOptions,
-  UseBuildsOptions, } from "./types"
+  UseBuildsOptions,
+} from "./types"
 
 export function useApps(organizationId?: string) {
   const qc = useQueryClient()
@@ -165,9 +169,8 @@ export function useApp(appId: string, opts?: UseAppOptions) {
   const subscribeToEvents = opts?.subscribeToEvents ?? true
 
   const syncStatus = (status: import("@ploydok/shared").AppStatus) => {
-    qc.setQueryData<AppDetail | undefined>(
-      ["apps", appId],
-      (current) => applyAppStatus(current, status)
+    qc.setQueryData<AppDetail | undefined>(["apps", appId], (current) =>
+      applyAppStatus(current, status)
     )
     // Match every list cache by prefix — ["apps", "all"], ["apps", orgId], …
     // Plain setQueryData(["apps"], …) only hit the literal ["apps"] key,

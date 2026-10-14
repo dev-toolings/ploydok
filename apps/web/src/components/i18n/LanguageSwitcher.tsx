@@ -14,8 +14,8 @@ export function LanguageSwitcher({
   compact?: boolean
 }): React.JSX.Element {
   const { t, i18n } = useTranslation("common")
-  const active = (LOCALES.find((locale) => i18n.language.startsWith(locale)) ??
-    "en")
+  const active =
+    LOCALES.find((locale) => i18n.language.startsWith(locale)) ?? "en"
 
   return (
     <fieldset className={cn("flex items-center gap-1", className)}>
