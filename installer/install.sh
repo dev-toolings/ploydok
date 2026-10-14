@@ -10,7 +10,7 @@ HTTPS_PORT="8443"
 INSTALL_DIR="/opt/ploydok"
 DATA_DIR="/var/lib/ploydok"
 INSTALL_OWNER="${PLOYDOK_INSTALL_OWNER:-${SUDO_USER:-root}}"
-IMAGE_REGISTRY="${PLOYDOK_IMAGE_REGISTRY:-ghcr.io/makfly}"
+IMAGE_REGISTRY="${PLOYDOK_IMAGE_REGISTRY:-ghcr.io/dev-toolings}"
 PUBLIC_SCHEME="${PLOYDOK_PUBLIC_SCHEME:-}"
 PUBLIC_HOST="${PLOYDOK_PUBLIC_HOST:-}"
 PUBLIC_PORT="${PLOYDOK_PUBLIC_PORT:-}"
@@ -58,6 +58,10 @@ Options:
   --image-registry=<registry>
   --runtime=swarm|compose      (default: swarm for production; compose is local/test only)
   --help
+
+Environment for forks:
+  PLOYDOK_IMAGE_REGISTRY=ghcr.io/dev-toolings
+  PLOYDOK_COSIGN_IDENTITY_REGEXP=<trusted-release-workflow-regexp>
 
 Environment for tests:
   PLOYDOK_INSTALL_DRY_RUN=1
@@ -798,11 +802,12 @@ install_cli() {
 # Vérifie la signature keyless OIDC des images publiées par
 # .github/workflows/release-images.yml. Identité attendue :
 #   issuer   : https://token.actions.githubusercontent.com
-#   identity : https://github.com/MakFly/ploydok/.github/workflows/release-images.yml@<ref>
+#   identity : https://github.com/dev-toolings/ploydok/.github/workflows/release-images.yml@<ref>
 # Bypass (CI / dry-run / image registry custom non signé) : PLOYDOK_INSTALL_SKIP_COSIGN=1.
 verify_or_pull_images() {
   local components=(api web agent adminer caddy)
-  local cosign_identity_regex='^https://github\.com/MakFly/ploydok/\.github/workflows/release-images\.yml@.*$'
+  local cosign_identity_regex='^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$'
+  cosign_identity_regex="${PLOYDOK_COSIGN_IDENTITY_REGEXP:-$cosign_identity_regex}"
   local component image resolved
   for component in "${components[@]}"; do
     image="$IMAGE_REGISTRY/ploydok-${component}:$VERSION"

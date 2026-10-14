@@ -3,8 +3,9 @@
 set -Eeuo pipefail
 
 STACK_FILE="${PLOYDOK_INSTALL_DIR}/docker-stack.yml"
-IDENTITY_REGEX='^https://github\.com/MakFly/ploydok/\.github/workflows/release-images\.yml@.*$'
-IMAGE_PREFIX="${PLOYDOK_IMAGE_REGISTRY:-ghcr.io/makfly}/ploydok-"
+IDENTITY_REGEX='^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$'
+IDENTITY_REGEX="${PLOYDOK_COSIGN_IDENTITY_REGEXP:-$IDENTITY_REGEX}"
+IMAGE_PREFIX="${PLOYDOK_IMAGE_REGISTRY:-ghcr.io/dev-toolings}/ploydok-"
 
 [[ "${PLOYDOK_ENABLE_AUTO_UPDATES:-0}" == "1" && "${PLOYDOK_ALLOW_EDGE:-0}" == "1" ]] || {
   echo "ploydok update refused: automatic updates require explicit edge opt-in" >&2

@@ -20,7 +20,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  OWNER: makfly
+  OWNER: dev-toolings
 
 concurrency:
   # Promotion is globally serialized: a tag existence check followed by a

@@ -121,7 +121,7 @@ assert_contains "$TMP/root/var/lib/ploydok/config/prometheus.yml" "# ploydok-mon
 assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "# ploydok-monitoring-schema: 1"
 assert_contains "$TMP/root/var/lib/ploydok/config/alertmanager.yml" "# ploydok-monitoring-schema: 1"
 assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "alert: ControlPlaneNotReady"
-assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md"
+assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md"
 assert_contains "$TMP/root/var/lib/ploydok/config/alertmanager.yml" "url_file: /run/ploydok-secrets/alert-webhook-url"
 assert_contains "$TMP/root/var/lib/ploydok/secrets/alert-webhook-url" "https://alerts.example.test/ploydok"
 assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "prom/prometheus:v3.13.1@sha256:"
@@ -176,10 +176,10 @@ upgrade_output="$(
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
 assert_text_contains "$upgrade_output" "update $TMP/root/opt/ploydok/docker-compose.yml api/web/agent/adminer images to test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-api:test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-web:test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-agent:test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-adminer:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-web:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-agent:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-adminer:test2"
 assert_text_contains "$upgrade_output" "up -d --no-deps api web agent adminer"
 assert_text_contains "$upgrade_output" "run --rm --no-deps api bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$upgrade_output" "chmod 0400"
@@ -197,11 +197,11 @@ assert_text_contains "$pki_rotation_output" "force-recreate agent then API"
 release_digest="sha256:$(printf 'a%.0s' {1..64})"
 release_manifest="$TMP/root/var/lib/ploydok/release-images.env"
 cat >"$release_manifest" <<EOF
-PLOYDOK_API_IMAGE=ghcr.io/makfly/ploydok-api@$release_digest
-PLOYDOK_WEB_IMAGE=ghcr.io/makfly/ploydok-web@$release_digest
-PLOYDOK_AGENT_IMAGE=ghcr.io/makfly/ploydok-agent@$release_digest
-PLOYDOK_ADMINER_IMAGE=ghcr.io/makfly/ploydok-adminer@$release_digest
-PLOYDOK_CADDY_IMAGE=ghcr.io/makfly/ploydok-caddy@$release_digest
+PLOYDOK_API_IMAGE=ghcr.io/dev-toolings/ploydok-api@$release_digest
+PLOYDOK_WEB_IMAGE=ghcr.io/dev-toolings/ploydok-web@$release_digest
+PLOYDOK_AGENT_IMAGE=ghcr.io/dev-toolings/ploydok-agent@$release_digest
+PLOYDOK_ADMINER_IMAGE=ghcr.io/dev-toolings/ploydok-adminer@$release_digest
+PLOYDOK_CADDY_IMAGE=ghcr.io/dev-toolings/ploydok-caddy@$release_digest
 EOF
 release_upgrade_output="$(
   PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
@@ -209,10 +209,10 @@ release_upgrade_output="$(
       --version=candidate-test --image-manifest=/var/lib/ploydok/release-images.env \
       --include-data-plane 2>&1
 )"
-assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/makfly/ploydok-api@$release_digest"
-assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/makfly/ploydok-caddy@$release_digest"
+assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api@$release_digest"
+assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-caddy@$release_digest"
 
-printf '%s\n' 'PLOYDOK_API_IMAGE=ghcr.io/makfly/ploydok-api:mutable' >"$release_manifest"
+printf '%s\n' 'PLOYDOK_API_IMAGE=ghcr.io/dev-toolings/ploydok-api:mutable' >"$release_manifest"
 if PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
   bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok \
     --version=invalid --image-manifest=/var/lib/ploydok/release-images.env >/dev/null 2>&1; then
@@ -226,7 +226,7 @@ upgrade_data_plane_output="$(
 )"
 assert_text_contains "$upgrade_data_plane_output" "ploydok-caddy:test3"
 assert_text_contains "$upgrade_data_plane_output" "update $TMP/root/opt/ploydok/docker-compose.yml api/web/agent/adminer/caddy images to test3"
-assert_text_contains "$upgrade_data_plane_output" "docker pull ghcr.io/makfly/ploydok-caddy:test3"
+assert_text_contains "$upgrade_data_plane_output" "docker pull ghcr.io/dev-toolings/ploydok-caddy:test3"
 assert_text_contains "$upgrade_data_plane_output" "up -d --no-deps api web agent adminer caddy"
 
 backup_output="$(
@@ -405,8 +405,8 @@ swarm_upgrade_output="$(
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
 assert_text_contains "$swarm_upgrade_output" "update $TMP/swarm-root/opt/ploydok/docker-stack.yml api/web/agent/adminer images to test2"
-assert_text_contains "$swarm_upgrade_output" "docker pull ghcr.io/makfly/ploydok-api:test2"
-assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/makfly/ploydok-api:test2"
+assert_text_contains "$swarm_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api:test2"
+assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/dev-toolings/ploydok-api:test2"
 assert_text_contains "$swarm_upgrade_output" "bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$swarm_upgrade_output" "docker stack deploy --resolve-image always"
 
@@ -496,6 +496,23 @@ for receiver in 'http://alerts.test' $'https://alerts.test\ninvalid'; do
   assert_text_contains "$invalid_alert_output" "must be an HTTPS Alertmanager-compatible receiver"
   assert_not_exists "$TMP/invalid-alert-root/opt/ploydok/docker-compose.yml"
 done
+
+mkdir -p "$TMP/cosign-bin"
+cat >"$TMP/cosign-bin/cosign" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod 0755 "$TMP/cosign-bin/cosign"
+for identity in '' '^https://github\.com/example/fork/\.github/workflows/release-images\.yml@.*$'; do
+  signature_output="$(PATH="$TMP/cosign-bin:$PATH" PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_COSIGN_IDENTITY_REGEXP="$identity" \
+    bash "$ROOT/installer/ploydok-cli" upgrade --version=test-signature 2>&1)"
+  expected_identity="${identity:-^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$}"
+  assert_text_contains "$signature_output" "--certificate-identity-regexp $expected_identity"
+done
+assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_IMAGE_REGISTRY=ghcr.io/dev-toolings"
+assert_text_contains "$(bash "$ROOT/installer/install.sh" --help)" "PLOYDOK_COSIGN_IDENTITY_REGEXP"
+assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK_COSIGN_IDENTITY_REGEXP:-$IDENTITY_REGEX'
 
 bash "$ROOT/installer/tests/bootstrap.sh"
 bash "$ROOT/installer/tests/disaster-recovery.sh"

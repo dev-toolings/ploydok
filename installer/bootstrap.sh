@@ -14,7 +14,7 @@
 #
 set -Eeuo pipefail
 
-REPO_URL="${PLOYDOK_REPO_URL:-https://github.com/MakFly/ploydok.git}"
+REPO_URL="${PLOYDOK_REPO_URL:-https://github.com/dev-toolings/ploydok.git}"
 REF="${PLOYDOK_REF:-}"
 EXPECTED_COMMIT="${PLOYDOK_EXPECTED_COMMIT:-}"
 ALLOW_EDGE="${PLOYDOK_ALLOW_EDGE:-0}"

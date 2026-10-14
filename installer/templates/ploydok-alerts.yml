@@ -9,7 +9,7 @@ groups:
           severity: page
         annotations:
           summary: Ploydok control-plane readiness is degraded
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#controlplanenotready
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#controlplanenotready
 
       - alert: AgentDisconnected
         expr: ploydok_agent_up == 0
@@ -18,7 +18,7 @@ groups:
           severity: page
         annotations:
           summary: Authenticated API-to-agent RPC is unavailable
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#agentdisconnected
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#agentdisconnected
 
       - alert: HostDiskSaturation
         expr: ploydok_host_disk_used_ratio > 0.85
@@ -27,7 +27,7 @@ groups:
           severity: page
         annotations:
           summary: Ploydok host disk usage is above 85 percent
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#hostdisksaturation
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#hostdisksaturation
 
       - alert: HostDiskCritical
         expr: ploydok_host_disk_used_ratio > 0.95
@@ -36,7 +36,7 @@ groups:
           severity: critical
         annotations:
           summary: Ploydok host disk usage is above 95 percent
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#hostdisksaturation
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#hostdisksaturation
 
       - alert: HostInodesSaturation
         expr: ploydok_host_inodes_used_ratio > 0.85
@@ -45,7 +45,7 @@ groups:
           severity: page
         annotations:
           summary: Ploydok host data filesystem inode usage is above 85 percent
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#hostdisksaturation
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#hostdisksaturation
 
       - alert: DeploymentFailureRateHigh
         expr: sum(increase(ploydok_deployment_outcomes_total[15m])) >= 5 and (sum(increase(ploydok_deployment_outcomes_total{outcome="platform_failed"}[15m])) / sum(increase(ploydok_deployment_outcomes_total[15m]))) > 0.25
@@ -54,7 +54,7 @@ groups:
           severity: page
         annotations:
           summary: More than 25 percent of recent deployments failed
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#deploymentfailureratehigh
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#deploymentfailureratehigh
 
       - alert: StuckJobs
         expr: ploydok_stuck_jobs > 0 or ploydok_outbox_stuck > 0
@@ -63,7 +63,7 @@ groups:
           severity: page
         annotations:
           summary: A build or durable outbox event is stuck
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#stuckjobs
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#stuckjobs
 
       - alert: OutboxDeadLettered
         expr: ploydok_outbox_dead_lettered_15m > 0
@@ -72,7 +72,7 @@ groups:
           severity: page
         annotations:
           summary: A durable event moved to the dead-letter state
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#stuckjobs
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#stuckjobs
 
       - alert: BackupFailureOrStale
         expr: ploydok_backup_failures_24h > 0 or ploydok_stale_backup_resources > 0
@@ -81,7 +81,7 @@ groups:
           severity: page
         annotations:
           summary: A protected resource has a failed or stale backup
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
 
       - alert: ControlPlaneBackupFailureOrStale
         expr: ploydok_control_plane_backup_configured == 1 and (ploydok_control_plane_backup_last_success_timestamp_seconds == 0 or time() - ploydok_control_plane_backup_last_success_timestamp_seconds > 86400 or ploydok_control_plane_backup_last_failure_timestamp_seconds > ploydok_control_plane_backup_last_success_timestamp_seconds)
@@ -90,7 +90,7 @@ groups:
           severity: page
         annotations:
           summary: The control-plane backup is missing, stale or followed by a failure
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
 
       - alert: CertificateExpiring
         expr: ploydok_certificates_expiring{within_days="30"} > 0
@@ -99,7 +99,7 @@ groups:
           severity: warning
         annotations:
           summary: A managed certificate expires within 30 days
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#certificateexpiring
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#certificateexpiring
 
       - alert: CertificateExpirySoon
         expr: ploydok_certificates_expiring{within_days="7"} > 0
@@ -108,7 +108,7 @@ groups:
           severity: page
         annotations:
           summary: A managed certificate expires within seven days
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#certificateexpiring
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#certificateexpiring
 
       - alert: CertificateExpiryCritical
         expr: ploydok_certificates_expiring{within_days="1"} > 0
@@ -117,7 +117,7 @@ groups:
           severity: critical
         annotations:
           summary: A managed certificate expires within one day
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#certificateexpiring
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#certificateexpiring
 
       - alert: OperationalMetricsCollectorError
         expr: ploydok_operational_metrics_error == 1
@@ -126,7 +126,7 @@ groups:
           severity: page
         annotations:
           summary: Ploydok operational metrics collection is incomplete
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#operationalmetricscollectorerror
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#operationalmetricscollectorerror
 
       - alert: OperationalMetricsSeriesMissing
         expr: absent(ploydok_agent_up) or absent(ploydok_host_disk_used_ratio) or absent(ploydok_host_inodes_used_ratio) or absent(ploydok_stuck_jobs) or absent(ploydok_stale_backup_resources) or absent(ploydok_control_plane_backup_configured) or absent(ploydok_control_plane_backup_last_success_timestamp_seconds) or absent(ploydok_control_plane_backup_last_failure_timestamp_seconds) or absent(ploydok_certificates_expiring{within_days="1"})
@@ -135,4 +135,4 @@ groups:
           severity: page
         annotations:
           summary: An expected Ploydok operational metric is absent
-          runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md#operationalmetricscollectorerror
+          runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#operationalmetricscollectorerror
