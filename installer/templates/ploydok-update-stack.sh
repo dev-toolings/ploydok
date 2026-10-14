@@ -37,6 +37,8 @@ for image in "${images[@]}"; do
   docker pull "$image"
 done
 
+bash /usr/local/lib/ploydok/stop-stack.sh wait
+
 docker stack deploy \
   --resolve-image always \
   --with-registry-auth \

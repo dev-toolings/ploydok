@@ -8,6 +8,7 @@ Before=ploydok.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/lib/ploydok/port-isolation.sh start
+ExecReload=/usr/local/lib/ploydok/port-isolation.sh start
 ExecStop=/usr/local/lib/ploydok/port-isolation.sh stop
 
 [Install]

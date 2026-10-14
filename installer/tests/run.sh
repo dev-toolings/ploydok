@@ -319,6 +319,12 @@ assert_file "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh"
 assert_file "$TMP/swarm-root/etc/systemd/system/ploydok-port-isolation.service"
 assert_not_exists "$TMP/swarm-root/opt/ploydok/docker-compose.yml"
 assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "docker stack deploy"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecReload=/usr/bin/docker stack deploy"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecStop=/usr/local/lib/ploydok/stop-stack.sh"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecStartPre=/usr/local/lib/ploydok/stop-stack.sh wait"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecReload=/usr/local/lib/ploydok/stop-stack.sh wait"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok-port-isolation.service" "ExecReload=/usr/local/lib/ploydok/port-isolation.sh start"
+assert_file "$TMP/swarm-root/usr/local/lib/ploydok/stop-stack.sh"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "published: 80"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "published: 443"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "/var/lib/ploydok/keys:/var/lib/ploydok/keys"
@@ -402,6 +408,7 @@ assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/port-isolation.sh" 'apply
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'cosign verify'
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK_ENABLE_AUTO_UPDATES'
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'IMAGE_PREFIX'
+assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'stop-stack.sh wait'
 assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok-update.service" '/usr/local/lib/ploydok/update-stack.sh'
 
 swarm_upgrade_output="$(
@@ -413,12 +420,23 @@ assert_text_contains "$swarm_upgrade_output" "docker pull ghcr.io/dev-toolings/p
 assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/dev-toolings/ploydok-api:test2"
 assert_text_contains "$swarm_upgrade_output" "bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$swarm_upgrade_output" "docker stack deploy --resolve-image always"
+assert_text_not_contains "$swarm_upgrade_output" "docker stack rm"
+reinstall_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
+  PLOYDOK_PUBLIC_HOST=ploydok.test bash "$ROOT/installer/install.sh" \
+  --mode=takeover --skip-docker-install --yes --version=test2 2>&1)"
+assert_text_contains "$reinstall_output" "systemctl reload-or-restart ploydok-port-isolation.service"
+assert_text_contains "$reinstall_output" "systemctl reload-or-restart ploydok.service"
+assert_text_not_contains "$reinstall_output" "systemctl restart ploydok.service"
+assert_text_not_contains "$reinstall_output" "systemctl stop ploydok.service"
+assert_text_not_contains "$reinstall_output" "docker stack rm"
+
 
 swarm_uninstall_output="$(
   PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
     bash "$ROOT/installer/ploydok-cli" uninstall --data-dir=/var/lib/ploydok --yes 2>&1
 )"
 assert_text_contains "$swarm_uninstall_output" "systemctl disable --now ploydok.service"
+assert_text_contains "$swarm_uninstall_output" "/usr/local/lib/ploydok/stop-stack.sh"
 assert_text_contains "$swarm_uninstall_output" "systemctl disable --now ploydok-port-isolation.service"
 assert_text_not_contains "$swarm_uninstall_output" "docker compose"
 
@@ -521,5 +539,6 @@ assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK
 bash "$ROOT/installer/tests/bootstrap.sh"
 bash "$ROOT/installer/tests/disaster-recovery.sh"
 bash "$ROOT/installer/tests/release-images.sh"
+bash "$ROOT/installer/tests/stack-stop.sh"
 
 echo "installer tests OK"
