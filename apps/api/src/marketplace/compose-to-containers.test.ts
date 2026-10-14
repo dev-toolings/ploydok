@@ -386,3 +386,48 @@ services:
     expect(result[0]!.composeName).toBe("api-gateway")
   })
 })
+
+describe("volume source containment", () => {
+  it.each(["..", "../files/config.yaml", "../../..", "a/../../b", ".", "./data/.."])(
+    "rejects a relative source outside the service directory: %s", source => {
+      expect(() => run(`services:
+  app:
+    image: alpine
+    volumes:
+      - "${source}:/config:ro"
+`))
+        .toThrow(`Service "app": volume source "${source}" escapes the service volume directory`);
+    }
+  );
+  it("rejects a traversing long-syntax bind source", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    volumes:\n      - type: bind\n        source: ../files/config.yaml\n        target: /config\n'))
+      .toThrow('Service "app": volume source "../files/config.yaml" escapes the service volume directory');
+  });
+  it.each(["/var/lib/ploydok/volumes/../x", "/var/lib/ploydok/volumes/a/../../x", "/var/lib/ploydok/volumes"])(
+    "rejects an absolute source outside the normalized volumes root: %s", source => {
+      expect(() => run(`services:
+  app:
+    image: alpine
+    volumes: ["${source}:/config"]
+`))
+        .toThrow(`Service "app": volume source "${source}" escapes the volumes root`);
+    }
+  );
+  it("rejects a directory whose prefix merely resembles the volumes root", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    volumes: ["/var/lib/ploydok/volumes-other/data:/data"]'))
+      .toThrow(UnsupportedComposeFeatureError);
+  });
+  it.each([
+    ["./data", `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    ["data/sub", `/var/lib/ploydok/volumes/${PREFIX}/data/sub`],
+    ["a/../data", `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    ["/var/lib/ploydok/volumes/a/../data", "/var/lib/ploydok/volumes/data"],
+  ])("keeps and normalizes contained paths: %s", (source, expected) => {
+    const [container] = run(`services:
+  app:
+    image: alpine
+    volumes: ["${source}:/data:ro"]
+`);
+    expect(container!.volumes[0]).toEqual({ hostPath: expected, containerPath: "/data", readOnly: true });
+  });
+});
