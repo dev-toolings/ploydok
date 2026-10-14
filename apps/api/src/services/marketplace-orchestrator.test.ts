@@ -95,6 +95,7 @@ mock.module("../worker/queue-enqueue", () => ({
 // ---------------------------------------------------------------------------
 
 import {
+  planServiceStack,
   installFromTemplate,
   startService,
   stopService,
@@ -509,3 +510,18 @@ describe("deleteService", () => {
     expect(callOrder).toEqual(["removeRoute", "dbDelete"])
   })
 })
+
+describe("marketplace project isolation", () => {
+  it("plans only its own project network, with a reachable ingress upstream", () => {
+    const compose_raw = 'services:\n  web:\n    image: nginx:alpine\n    ports: ["80:80"]\n';
+    const plans = ["one", "two"].map(id => planServiceStack(
+      { id, slug: "demo", compose_raw }, `ploydok-swarm-proj-${id}`, "owner"
+    ));
+    for (const [index, plan] of plans.entries()) {
+      expect(plan.services.every(s => s.networks.length === 1)).toBe(true);
+      expect(plan.services[0]!.networks).toEqual([`ploydok-swarm-proj-${["one", "two"][index]}`]);
+      expect(plan.entrypoint).toEqual({ name: plan.services[0]!.name, port: 80 });
+    }
+    expect(plans[0]!.services[0]!.networks).not.toEqual(plans[1]!.services[0]!.networks);
+  });
+});

@@ -71,7 +71,7 @@ function slugify(name: string): string {
  * Slugs are only unique per project, so the Swarm name carries the service id:
  * a create that reports AlreadyExists can then only be this service's replay.
  */
-function planServiceStack(
+export function planServiceStack(
   service: Pick<ServiceRow, "id" | "slug" | "compose_raw">,
   network: string,
   ownerId: string
@@ -238,7 +238,7 @@ export async function resumeServiceCreation(
 
     await fence()
     const network = await ensureProjectSwarmNetwork(db, service.project_id)
-    await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+    if (service.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
     const plan = planServiceStack(service, network, ownerId)
     const planned = plan.services.map((s) => s.name)
     // Every name is recorded before the first Swarm side effect, so a crash
@@ -326,7 +326,7 @@ export async function startService(
   if (svc.compose_raw && (svc.container_ids ?? []).length === 0) {
     const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
     const network = await ensureProjectSwarmNetwork(db, svc.project_id)
-    await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+    if (svc.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
     const plan = planServiceStack(svc, network, userId)
     const names = await deployPlannedComposeStack(swarm, plan)
     await updateServiceSwarmNames(db, serviceId, names)
