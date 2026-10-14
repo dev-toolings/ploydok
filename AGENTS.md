@@ -225,6 +225,49 @@ The perceived wait ends when the next page paints, not when the request resolves
 - If you used a temporary Claude/Codex worktree under `.claude/worktrees/*` for implementation, remove it once the work is finished and no handoff still depends on it.
 - If you are preparing code for handoff, summarize exactly what was validated and what was not.
 
+## Cross-Agent Delegation (Claude, Codex, Grok)
+
+Orca 1.4.224 refuses `orca orchestration` from the SSH host CLI
+(`forbidden: ... enable "Allow this host's orca CLI to control Orca"`), and
+that setting is not exposed in this version. Until it is, use one of two
+channels:
+
+- **Live terminal** (below): reuses a running session's context and the user
+  can watch it. Best for follow-ups to an agent already working here.
+- **Non-interactive run**: a fresh context per run, result on stdout or in a
+  file, scriptable and parallel in separate worktrees. Best for bounded
+  tasks. Launch it as a background command from a worktree on its own
+  branch, with the order in a file:
+  - Codex: `codex exec -C <worktree> -s workspace-write -o /tmp/<tag>.md "$(cat /tmp/order.txt)"`
+  - Claude: `claude -p "$(cat /tmp/order.txt)" --output-format json --permission-mode acceptEdits` (run from the worktree)
+  - Grok: `grok --cwd <worktree> --prompt-file /tmp/order.txt --output-format json --always-approve`
+
+  Each run counts as one worker in the subagent budget (at most 5 at once)
+  and must not delegate further: say so in the order.
+
+Live terminal procedure:
+
+1. Find the target: `orca terminal list` (the preview shows the Codex, Claude
+   or Grok TUI and its cwd).
+2. Write the order to a file, then send it:
+   `orca terminal send --terminal <handle> --enter --wait-submit 10 --text "$(cat /tmp/order.txt)"`.
+   The order states who sends it and on whose behalf, the ordered tasks, the
+   rules (Git Workflow above, validations, no push), the report format, and
+   ends by asking for a sentinel line such as `FIN-<TAG>`.
+3. Wait in the background:
+   `orca terminal wait --terminal <handle> --for tui-idle --timeout-ms <ms>`.
+4. Read: `orca terminal read --terminal <handle> --limit 1000` and look for
+   the sentinel. The screen history is bounded: ask for a compact final
+   report, and ask the agent to re-print a section that got cut.
+5. Verify before accepting: read the diffs, rerun the validations, then
+   integrate and push yourself. The sender stays the only coordinator.
+
+Rules: one transport per task, never a second prompt into a busy agent
+(short notices excepted), and tasks run one after another when agents share
+this checkout. Never switch branches in a checkout another agent is working
+in: use a worktree under `.claude/worktrees/`. Once Orca exposes the setting,
+prefer `orca orchestration` (Run, `dispatch --inject`, `worker_done`).
+
 ## Repo-Specific References
 
 - Read these only when relevant to the task:
