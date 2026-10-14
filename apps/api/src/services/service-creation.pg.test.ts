@@ -35,7 +35,7 @@ const input = {
   templateVersion: "1",
   name: "Fixture",
   compose:
-    "services:\n  first:\n    image: alpine:3.20\n    ports: ['8080:80']\n    environment:\n      DOMAIN: ${domain}\n  second:\n    image: alpine:3.20\n    depends_on: [first]\n",
+    "services:\n  first:\n    image: alpine:3.20\n    ports: ['8080:80']\n    environment:\n      DOMAIN: ${domain}\n      PASSWORD: ${password}\n  second:\n    image: alpine:3.20\n    depends_on: [first]\n",
 }
 
 async function isolated(run: (db: Db) => Promise<void>) {
@@ -153,6 +153,11 @@ test.skipIf(!process.env.DATABASE_URL)(
       expect(intent?.payload).toEqual({ serviceId: row.id })
       expect(intent?.dispatched_at).toBeNull()
       expect(r.creates).toBe(0)
+      const { revealServiceSecrets } = await import("./service-secrets")
+      const secret = (await revealServiceSecrets(row)).password!
+      const [stored] = await db.select().from(services)
+      expect(JSON.stringify(stored)).not.toContain(secret)
+      expect(stored?.compose_raw).toContain("__PLOYDOK_SECRET_")
     })
   }
 )

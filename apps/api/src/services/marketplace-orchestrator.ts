@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { protectServiceSecrets, resolveServiceCompose } from "./service-secrets"
 import { nanoid } from "nanoid"
 import { eq } from "drizzle-orm"
 import { services, projects } from "@ploydok/db"
@@ -132,6 +133,7 @@ export async function installFromTemplate(
     "validation",
     userId
   )
+  const protectedValues = await protectServiceSecrets(composeResolved, generatedVars)
   const accepted = await enqueueWithDbRow({
     db,
     queue: serviceInstallQueue,
@@ -145,8 +147,7 @@ export async function installFromTemplate(
         template_id: input.templateId,
         template_version: input.templateVersion,
         status: "pending",
-        compose_raw: composeResolved,
-        generated_env: generatedVars,
+        ...protectedValues,
         domain,
         container_ids: [],
       })
@@ -239,7 +240,7 @@ export async function resumeServiceCreation(
     await fence()
     const network = await ensureProjectSwarmNetwork(db, service.project_id)
     if (service.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
-    const plan = planServiceStack(service, network, ownerId)
+    const plan = planServiceStack({ ...service, compose_raw: await resolveServiceCompose(service) }, network, ownerId)
     const planned = plan.services.map((s) => s.name)
     // Every name is recorded before the first Swarm side effect, so a crash
     // between two creations still hands compensation the complete list.
@@ -327,7 +328,7 @@ export async function startService(
     const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
     const network = await ensureProjectSwarmNetwork(db, svc.project_id)
     if (svc.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
-    const plan = planServiceStack(svc, network, userId)
+    const plan = planServiceStack({ ...svc, compose_raw: await resolveServiceCompose(svc) }, network, userId)
     const names = await deployPlannedComposeStack(swarm, plan)
     await updateServiceSwarmNames(db, serviceId, names)
     await updateServiceStatus(db, serviceId, "running")

@@ -554,6 +554,13 @@
       "when": 1791971563268,
       "tag": "0079_compose_swarm_service_names",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1791974115179,
+      "tag": "0080_service_secrets_encrypted",
+      "breakpoints": true
     }
   ]
 }

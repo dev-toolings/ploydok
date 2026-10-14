@@ -15,7 +15,7 @@
     "check:test-placeholders": "bun run scripts/check-test-placeholders.ts",
     "audit:dependencies": "bun run scripts/check-dependency-advisories.ts",
     "openapi:docs": "NODE_ENV=test OPENAPI_OUTPUT=${OPENAPI_OUTPUT:-$HOME/Documents/lab/tools/docs/public/openapi.json} bun run scripts/generate-openapi.ts",
-    "db:migrate": "bun run --cwd packages/db drizzle-kit migrate",
+    "db:migrate": "bun run --cwd packages/db drizzle-kit migrate && bun run apps/api/src/services/migrate-service-secrets.ts",
     "db:generate": "bun run --cwd packages/db drizzle-kit generate",
     "audit:rootless": "bash scripts/audit-rootless.sh"
   },
