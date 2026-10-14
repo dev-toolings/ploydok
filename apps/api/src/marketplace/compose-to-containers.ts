@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { posix } from "node:path"
 import { parse } from "yaml"
 import { isIP } from "node:net"
 
@@ -146,8 +147,7 @@ function parseLabels(raw: unknown): Record<string, string> {
 function parseVolumes(
   raw: unknown,
   serviceName: string,
-  servicePrefix: string,
-  namedVolumes: Set<string>
+  servicePrefix: string
 ): Array<{ hostPath: string; containerPath: string; readOnly: boolean }> {
   if (raw === undefined) return []
   if (!Array.isArray(raw)) throw new UnsupportedComposeFeatureError(`Service "${serviceName}": volumes must be a list`)
@@ -173,7 +173,6 @@ function parseVolumes(
       const hostPath = resolveHostPath(
         src,
         servicePrefix,
-        namedVolumes,
         serviceName
       )
       result.push({ hostPath, containerPath: dst, readOnly })
@@ -187,7 +186,6 @@ function parseVolumes(
       const hostPath = resolveHostPath(
         src,
         servicePrefix,
-        namedVolumes,
         serviceName
       )
       result.push({ hostPath, containerPath: dst, readOnly })
@@ -200,28 +198,32 @@ function parseVolumes(
 function resolveHostPath(
   src: string,
   servicePrefix: string,
-  namedVolumes: Set<string>,
   serviceName: string
 ): string {
   if (src.startsWith("/")) {
-    if (!src.startsWith(PLOYDOK_VOLUMES_ROOT)) {
+    const normalized = posix.normalize(src)
+    if (!normalized.startsWith(`${PLOYDOK_VOLUMES_ROOT}/`)) {
+      if (src === PLOYDOK_VOLUMES_ROOT || src.startsWith(`${PLOYDOK_VOLUMES_ROOT}/`)) {
+        throw new UnsupportedComposeFeatureError(
+          `Service "${serviceName}": volume source "${src}" escapes the volumes root`
+        )
+      }
       throw new UnsupportedComposeFeatureError(
         `Service "${serviceName}": absolute host volume path "${src}" is not allowed. ` +
           `Only paths under ${PLOYDOK_VOLUMES_ROOT} are permitted.`
       )
     }
-    return src
+    return normalized
   }
-  // Named volume (no path separator at start) or relative path
-  if (
-    namedVolumes.has(src) ||
-    (!src.startsWith(".") && !src.startsWith("~") && !src.includes("/"))
-  ) {
-    return `${PLOYDOK_VOLUMES_ROOT}/${servicePrefix}/${src}`
+  // Named volumes and relative binds share the service storage boundary.
+  const serviceRoot = posix.join(PLOYDOK_VOLUMES_ROOT, servicePrefix)
+  const normalized = posix.resolve(serviceRoot, src)
+  if (!normalized.startsWith(`${serviceRoot}/`)) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${serviceName}": volume source "${src}" escapes the service volume directory`
+    )
   }
-  // Relative path: strip leading ./
-  const relative = src.replace(/^\.\//, "")
-  return `${PLOYDOK_VOLUMES_ROOT}/${servicePrefix}/${relative}`
+  return normalized
 }
 
 function validateHostIp(hostIp: string, serviceName: string): string {
@@ -562,13 +564,11 @@ export function composeToContainers(
   }
   const services = rawServices as Record<string, unknown>
 
-  // Collect top-level named volumes
-  const namedVolumes = new Set<string>()
+  // Validate top-level local volume declarations
   if (doc.volumes && typeof doc.volumes === "object") {
     for (const key of Object.keys(doc.volumes as Record<string, unknown>)) {
       const definition = (doc.volumes as Record<string, unknown>)[key]
       if (definition && Object.keys(definition as object).length) throw new UnsupportedComposeFeatureError(`Volume "${key}": driver/external/options definitions are not supported`)
-      namedVolumes.add(key)
     }
   }
 
@@ -596,8 +596,7 @@ export function composeToContainers(
     const volumes = parseVolumes(
       svc.volumes,
       svcName,
-      servicePrefix,
-      namedVolumes
+      servicePrefix
     )
     const ports = parsePorts(svc.ports, svcName)
     const command = parseCommand(svc.command)
