@@ -1,71 +1,125 @@
 {
   "schemaVersion": 1,
-  "reviewedOn": "2026-08-18",
-  "reviewBy": "2026-09-18",
+  "reviewedOn": "2026-10-14",
+  "reviewBy": "2026-10-28",
+  "baseline": {
+    "sourceCommit": "bb2459e",
+    "command": "bun audit --json",
+    "packages": 5,
+    "occurrences": 13,
+    "high": 4,
+    "moderate": 6,
+    "low": 3,
+    "critical": 0
+  },
   "entries": [
     {
-      "ids": [1123897, 1130588, 1130737],
-      "package": "brace-expansion",
+      "ids": [
+        1240992
+      ],
+      "package": "braces",
+      "lockedVersion": "3.0.3",
       "severity": "high",
       "classification": "build-time",
       "decision": "temporarily-accepted",
-      "rationale": "Vulnerable 1.x is reachable only through minimatch in lint and type-analysis tooling; no untrusted pattern reaches a released service. Upgrade is tracked until the parent tools accept the patched line."
-    },
-    {
-      "ids": [1123898, 1130591, 1130734],
-      "package": "brace-expansion",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "Vulnerable 5.x copies are nested under TypeScript and ESLint tooling and are not present in an application runtime path."
-    },
-    {
-      "ids": [1123911, 1138115],
-      "package": "js-yaml",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "The vulnerable copies are nested under ESLint, cosmiconfig and build-time XML tooling; production API YAML parsing uses the patched yaml package instead."
-    },
-    {
-      "ids": [1123999],
-      "package": "hono",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "The vulnerable copy belongs to the MCP dependency bundled by the shadcn design tool. The API resolves patched Hono 4.13.x and does not import this nested server."
-    },
-    {
-      "ids": [1124064, 1130720, 1138948, 1139454, 1144861],
-      "package": "fast-uri",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "The vulnerable copies are used by AJV inside shadcn MCP/build tooling; they do not validate URLs in the released API or web server."
-    },
-    {
-      "ids": [1124252, 1139510],
-      "package": "postcss",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "PostCSS runs only while compiling repository-controlled CSS. Customer content and runtime requests cannot supply source maps to this compiler."
-    },
-    {
-      "ids": [1130722],
-      "package": "ip-address",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "The vulnerable copy is nested under the shadcn MCP development dependency; the released services do not use it for SSRF or trust-boundary decisions."
-    },
-    {
-      "ids": [1138811, 1139427],
-      "package": "nanoid",
-      "severity": "high",
-      "classification": "build-time",
-      "decision": "temporarily-accepted",
-      "rationale": "Only PostCSS build tooling retains nanoid 3.x. Runtime API and database code resolve patched nanoid 5.1.16 and never pass attacker-controlled sizes."
+      "dependencyPath": "@workspace/ui -> shadcn -> fast-glob -> micromatch -> braces (also ts-morph -> @ts-morph/common -> fast-glob)",
+      "rationale": "The only locked braces instance is used by shadcn code-generation tooling through fast-glob. Repository runtime source does not import shadcn, fast-glob, micromatch or braces. No Ploydok HTTP request or customer application pattern is passed to this code-generation dependency. Upstream currently publishes no patched braces version.",
+      "mitigation": "Keep shadcn/code-generation tooling confined to maintainer-controlled repository patterns; do not expose it as an API or process customer-controlled glob expressions. Re-evaluate immediately if this boundary changes.",
+      "reviewBy": "2026-10-28",
+      "advisoryUrls": [
+        "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm"
+      ]
     }
-  ]
+  ],
+  "resolved": [
+    {
+      "package": "@grpc/grpc-js",
+      "ids": [
+        1240622,
+        1240624
+      ],
+      "classification": "runtime",
+      "beforeVersion": "1.14.4",
+      "afterVersion": "1.14.6",
+      "decision": "upgraded",
+      "evidence": "apps/api/src/agent/client.ts and packages/agent-proto: API-to-agent gRPC runtime. Patched within the existing 1.14 release line; both audited advisories disappear from bun audit.",
+      "advisoryUrls": [
+        "https://github.com/advisories/GHSA-m9gg-hp2v-232j",
+        "https://github.com/advisories/GHSA-f596-whhp-79r4"
+      ]
+    },
+    {
+      "package": "nodemailer",
+      "ids": [
+        1193741,
+        1193770,
+        1193778,
+        1193779,
+        1240114,
+        1239931,
+        1240033
+      ],
+      "classification": "runtime",
+      "beforeVersion": "9.0.5",
+      "afterVersion": "10.1.1",
+      "decision": "upgraded",
+      "evidence": "apps/api/src/mailer.ts sends auth, invitation and operator email. The 10.0 minimum Node 20 requirement fits the repository Node >=22/Bun runtime; upstream preserves the Transporter type layout. Typecheck, abortable transport tests and offline message rendering verify the used API. All seven audited advisories disappear.",
+      "advisoryUrls": [
+        "https://github.com/advisories/GHSA-8m3c-c648-2xjj",
+        "https://github.com/advisories/GHSA-wmmp-3585-3rmp",
+        "https://github.com/advisories/GHSA-2x7j-588g-ccc2",
+        "https://github.com/advisories/GHSA-cc9r-2j5m-2m83",
+        "https://github.com/advisories/GHSA-v53p-9fqp-m79j",
+        "https://github.com/advisories/GHSA-6vj9-mwq6-2f5v",
+        "https://github.com/advisories/GHSA-8vvx-rff5-p5rq"
+      ]
+    }
+  ],
+  "nonBlockingResiduals": [
+    {
+      "package": "esbuild",
+      "ids": [
+        1102341
+      ],
+      "lockedVersion": "0.18.20",
+      "severity": "moderate",
+      "classification": "build-time",
+      "decision": "temporarily-accepted",
+      "dependencyPath": "dev @ploydok/db -> drizzle-kit 0.31.10 -> @esbuild-kit/esm-loader -> @esbuild-kit/core-utils -> esbuild 0.18.20",
+      "rationale": "The affected copy belongs to the Drizzle configuration loader. The advisory requires the esbuild serve HTTP server. Ploydok does not invoke serve on this copy or expose it through runtime requests; the separate Vite esbuild copy is 0.28.2.",
+      "mitigation": "Use the loader only for maintainer-invoked one-shot database tooling. Do not run or expose esbuild serve from this dependency. Avoid overriding the pinned 0.18 API across a breaking version; review a compatible upstream loader replacement.",
+      "reviewBy": "2026-10-28",
+      "advisoryUrls": [
+        "https://github.com/advisories/GHSA-67mh-4wv8-2f99"
+      ]
+    },
+    {
+      "package": "dompurify",
+      "ids": [
+        1240621,
+        1241204
+      ],
+      "lockedVersion": "3.4.15",
+      "severity": "low",
+      "classification": "runtime",
+      "decision": "temporarily-accepted",
+      "dependencyPath": "web -> @monaco-editor/react -> monaco-editor 0.57.0 -> dompurify 3.4.15 (also vendored in Monaco)",
+      "rationale": "The advisories require IN_PLACE with DOM node input, including a node-removing afterSanitize hook or a removed rawtext root. Monaco esm/vs/base/browser/domSanitize.js sanitizes strings, never sets IN_PLACE, and does not install a node-removing afterSanitize hook. No direct Ploydok DOMPurify use was found. Reachability assessment is source-only, not a browser exploit test.",
+      "mitigation": "Preserve string-input sanitization without IN_PLACE. Track an upstream Monaco release updating its vendored sanitizer; a package override alone would not patch that vendored copy. Re-review any sanitizer configuration change.",
+      "reviewBy": "2026-10-28",
+      "advisoryUrls": [
+        "https://github.com/advisories/GHSA-p98j-92pf-mc4p",
+        "https://github.com/advisories/GHSA-6688-9rhm-gjv2"
+      ]
+    }
+  ],
+  "remainingAudit": {
+    "packages": 3,
+    "occurrences": 4,
+    "high": 1,
+    "moderate": 1,
+    "low": 2,
+    "critical": 0
+  },
+  "gate": "scripts/check-dependency-advisories.ts and the release-images.yml audit:dependencies step remain unchanged and active. Only current high/critical advisory IDs belong in entries; lower severities are tracked in nonBlockingResiduals. No test-only advisories remain in this locked tree."
 }
