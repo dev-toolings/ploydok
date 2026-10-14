@@ -184,7 +184,7 @@ printf 'managed-db-sentinel\n' >"$TMP/root/var/lib/ploydok/volumes/state"
 cat >"$TMP/root/opt/ploydok/docker-compose.yml" <<'EOF'
 services:
   api:
-    image: ghcr.io/makfly/ploydok-api:test
+    image: ghcr.io/dev-toolings/ploydok-api:test
 EOF
 for volume in redis-data registry-data caddy-data caddy-config prometheus-data alertmanager-data; do
   mkdir -p "$TMP/fake-volumes/ploydok_$volume"

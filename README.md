@@ -1,8 +1,8 @@
 # Ploydok - Self-Hosted PaaS for Docker, Git Deploys, Databases and Blue/Green Rollouts
 
-[![CI](https://github.com/MakFly/ploydok/actions/workflows/ci.yml/badge.svg)](https://github.com/MakFly/ploydok/actions/workflows/ci.yml)
-[![Integration](https://github.com/MakFly/ploydok/actions/workflows/ci-integration.yml/badge.svg)](https://github.com/MakFly/ploydok/actions/workflows/ci-integration.yml)
-[![Release images](https://github.com/MakFly/ploydok/actions/workflows/release-images.yml/badge.svg)](https://github.com/MakFly/ploydok/actions/workflows/release-images.yml)
+[![CI](https://github.com/dev-toolings/ploydok/actions/workflows/ci.yml/badge.svg)](https://github.com/dev-toolings/ploydok/actions/workflows/ci.yml)
+[![Integration](https://github.com/dev-toolings/ploydok/actions/workflows/ci-integration.yml/badge.svg)](https://github.com/dev-toolings/ploydok/actions/workflows/ci-integration.yml)
+[![Release images](https://github.com/dev-toolings/ploydok/actions/workflows/release-images.yml/badge.svg)](https://github.com/dev-toolings/ploydok/actions/workflows/release-images.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
 [![Runtime: Docker Swarm](https://img.shields.io/badge/runtime-Docker%20Swarm-2496ED.svg)](https://docs.docker.com/engine/swarm/)
 [![Stack: Bun Hono React](https://img.shields.io/badge/stack-Bun%20%2B%20Hono%20%2B%20React-black.svg)](./package.json)
@@ -156,11 +156,19 @@ containerized workload and has extra guardrails for popular stacks.
 Production releases publish a signed bootstrap bundle after every image and
 quality gate succeeds. Replace `1.2.3` below with an existing release:
 
+Fork release verification uses `PLOYDOK_IMAGE_REGISTRY` to select the image
+registry and `PLOYDOK_COSIGN_IDENTITY_REGEXP` to select the trusted GitHub release
+workflow identity. Set both when installing a fork and pass the identity override
+again when rerunning the installer or invoking `ploydok-cli`. For automatic stack
+updates, set the identity override in the update service environment. The default
+identity trusts
+`https://github.com/dev-toolings/ploydok/.github/workflows/release-images.yml`.
+
 ```bash
 version=1.2.3
 alert_webhook_url="https://alerts.example.com/ploydok"
 asset="ploydok-bootstrap-${version}.tar.gz"
-base="https://github.com/MakFly/ploydok/releases/download/v${version}"
+base="https://github.com/dev-toolings/ploydok/releases/download/v${version}"
 curl -fSLO "${base}/${asset}"
 curl -fSLO "${base}/${asset}.sha256"
 curl -fSLO "${base}/${asset}.sigstore.json"
@@ -168,7 +176,7 @@ sha256sum -c "${asset}.sha256"
 cosign verify-blob \
   --bundle "${asset}.sigstore.json" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/MakFly/ploydok/\.github/workflows/release-images\.yml@refs/tags/v.*$' \
+  --certificate-identity-regexp '^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@refs/tags/v.*$' \
   "${asset}"
 tmp_dir="$(mktemp -d)"
 tar -C "$tmp_dir" -xzf "$asset"
