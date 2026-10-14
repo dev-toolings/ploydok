@@ -24,6 +24,7 @@ export const preview_deployments = pgTable(
     head_sha: text("head_sha").notNull(),
     domain: text("domain").notNull(),
     container_id: text("container_id"),
+    queue_job_id: text("queue_job_id"),
     status: text("status", {
       enum: ["pending", "building", "running", "tearing_down", "torn_down", "failed"],
     })

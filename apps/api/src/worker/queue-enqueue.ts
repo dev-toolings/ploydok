@@ -9,6 +9,8 @@ const ALLOWED_JOB_OPTION_KEYS = new Set(["attempts"])
 
 const REFERENCE_PAYLOAD_KEYS = {
   "deploy\0deploy.requested": ["buildId"],
+  "preview.deploy\0preview.deploy": ["previewJobId"],
+  "preview.teardown\0preview.teardown": ["previewJobId"],
   "service.install\0service.install.requested": ["serviceId"],
   "gc.registry\0gc.registry.requested": ["jobId"],
   "gc.images\0gc.images.requested": ["jobId"],
