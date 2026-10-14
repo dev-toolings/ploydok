@@ -100,6 +100,19 @@ mock.module("../cloudflare/purge.js", () => ({
   purgeCloudflareForApp: async () => {},
 }))
 
+// The real module opens a Redis connection at import time; outside a lease
+// these helpers are no-ops, so stub them to keep the test off the network.
+mock.module("./app-deploy-lock.js", () => ({
+  DeployLeaseLostError: class DeployLeaseLostError extends Error {},
+  currentDeployLease: () => undefined,
+  currentDeployLeaseCondition: () => undefined,
+  fenceDeploySideEffect: async () => {},
+  runOwnedDeployReconciliation: async (action: () => Promise<void>) => {
+    await action()
+    return true
+  },
+}))
+
 mock.module("../services/app-volumes.js", () => ({
   listRuntimeAppVolumeMounts,
 }))
