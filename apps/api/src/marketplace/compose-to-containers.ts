@@ -44,9 +44,14 @@ export class UnsupportedComposeFeatureError extends Error {
   }
 }
 
+const SWARM_RESTART_EQUIVALENT = ["always", "unless-stopped"]
+
 export const ACCEPTED_COMPOSE_SUBSET = Object.freeze({
   topLevel: ["services", "volumes", "version"],
   service: ["image", "environment", "labels", "volumes", "command", "user", "healthcheck", "expose"],
+  // Swarm: ports are internal only (never published on the host, ingress is
+  // Caddy) and refused when bound to an IP; restart only always/unless-stopped.
+  // depends_on keeps creation order; conditions other than service_started are refused.
   legacyOnly: ["ports", "restart", "depends_on"],
   healthcheck: ["test", "interval", "timeout", "retries", "start_period"],
 })
@@ -305,11 +310,31 @@ function parseCommand(raw: unknown): string[] {
   return args
 }
 
+/**
+ * Swarm services never publish host ports here (ingress goes through Caddy)
+ * and restart under the default "any" condition. Accept only what keeps its
+ * meaning under those rules, and refuse the rest before any resource exists.
+ */
+function assertSwarmCompatible(svcName: string, svc: Record<string, unknown>) {
+  if (svc.command === "" || (Array.isArray(svc.command) && svc.command.length === 0))
+    throw new UnsupportedComposeFeatureError("Empty command override cannot be preserved by the Swarm contract")
+  // parsePorts refuses an IP binding; the remaining ports stay internal.
+  parsePorts(svc.ports, svcName)
+  if (svc.restart !== undefined && !SWARM_RESTART_EQUIVALENT.includes(String(svc.restart)))
+    throw new UnsupportedComposeFeatureError(`Service "${svcName}": restart "${String(svc.restart)}" cannot be preserved by Swarm's restart-on-any-exit policy; use always or unless-stopped`)
+}
+
 function parseDependsOn(raw: unknown): string[] {
   if (!raw) return []
   if (Array.isArray(raw)) return raw.map(String)
   if (typeof raw === "object" && raw !== null) {
-    throw new UnsupportedComposeFeatureError("depends_on conditions (including service_healthy) are not supported")
+    // Only creation order is kept, so a readiness condition cannot be honoured.
+    for (const [dep, spec] of Object.entries(raw as Record<string, unknown>)) {
+      const condition = (spec as { condition?: unknown } | null)?.condition ?? "service_started"
+      if (condition !== "service_started")
+        throw new UnsupportedComposeFeatureError(`depends_on ${dep} condition "${String(condition)}" cannot be preserved (including service_healthy): only creation order is kept`)
+    }
+    return Object.keys(raw as Record<string, unknown>)
   }
   return []
 }
@@ -498,17 +523,7 @@ export function composeToContainers(
     if (!svc || typeof svc !== "object" || Array.isArray(svc)) throw new UnsupportedComposeFeatureError(`Service "${svcName}" must be a map`)
     assertNoUnsupportedServiceFeatures(svcName, svc)
     assertFields(svc, [...ACCEPTED_COMPOSE_SUBSET.service, ...ACCEPTED_COMPOSE_SUBSET.legacyOnly], `Service "${svcName}"`)
-    if (input.runtime === "swarm") {
-      if (svc.command === "" || (Array.isArray(svc.command) && svc.command.length === 0))
-        throw new UnsupportedComposeFeatureError("Empty command override cannot be preserved by the Swarm contract")
-      // The agent has no faithful published-port/restart/dependency contract.
-      if (svc.ports !== undefined) {
-        parsePorts(svc.ports, svcName) // Give IP bindings their precise diagnostic.
-        throw new UnsupportedComposeFeatureError(`Service "${svcName}": ports publication is not supported by the Swarm contract; use expose for internal ports and Caddy ingress`)
-      }
-      for (const field of ["restart", "depends_on"]) if (svc[field] !== undefined)
-        throw new UnsupportedComposeFeatureError(`Service "${svcName}": ${field} cannot preserve its Compose semantics in Swarm (including service_healthy); refusing before creation`)
-    }
+    if (input.runtime === "swarm") assertSwarmCompatible(svcName, svc)
     if (svc.user !== undefined && typeof svc.user !== "string" && typeof svc.user !== "number")
       throw new UnsupportedComposeFeatureError(`Service "${svcName}": user must be a string or numeric UID`)
 
