@@ -1,33 +1,79 @@
+# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: AGPL-3.0-only
 # Production image for ploydok-agent (gRPC daemon).
-# Build context = monorepo root.
-#   docker build -f agent/Dockerfile.prod -t ghcr.io/makfly/ploydok-agent:0.0.1 .
+# Build context = monorepo root. Compile on the builder host, never under QEMU.
 
-FROM rust:1.88-slim-bookworm AS builder
-WORKDIR /workspace
-
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      pkg-config \
-      libssl-dev \
-      protobuf-compiler \
-      ca-certificates \
- && rm -rf /var/lib/apt/lists/*
-
-COPY agent/ ./agent/
-COPY packages/agent-proto/proto ./packages/agent-proto/proto
+FROM --platform=$BUILDPLATFORM rust:1.88-slim-bookworm AS chef
 WORKDIR /workspace/agent
-RUN cargo build --release -p ploydok-agent
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc ca-certificates file \
+ && rm -rf /var/lib/apt/lists/* \
+ && cargo install cargo-chef --version 0.1.73 --locked
+
+FROM chef AS cross
+ARG TARGETARCH
+ARG BUILDARCH
+
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) target=x86_64-unknown-linux-gnu; triplet=x86_64-linux-gnu ;; \
+      arm64) target=aarch64-unknown-linux-gnu; triplet=aarch64-linux-gnu ;; \
+      *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 2 ;; \
+    esac; \
+    compiler=gcc; sysroot=libc6-dev; \
+    if [ "$BUILDARCH" != "$TARGETARCH" ]; then \
+      dpkg --add-architecture "$TARGETARCH"; \
+      sysroot="libc6-dev-$TARGETARCH-cross"; \
+      compiler="gcc-$(printf '%s' "$triplet" | tr '_' '-')"; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      "$compiler" "$sysroot" "libssl-dev:$TARGETARCH" pkg-config ca-certificates; \
+    rm -rf /var/lib/apt/lists/*; \
+    rustup target add "$target"; \
+    printf '%s\n' "$target" >/rust-target; \
+    printf '%s\n' "$triplet" >/cross-triplet
+
+
+FROM chef AS planner
+COPY agent/ ./
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM cross AS builder
+COPY --from=planner /recipe.json /recipe.json
+# The cooked target directory is a normal layer, exported by mode=max GHA
+# caching. Cache mounts alone would disappear on the next hosted runner.
+RUN set -eux; \
+    target="$(cat /rust-target)"; triplet="$(cat /cross-triplet)"; \
+    linker_var="CARGO_TARGET_$(printf '%s' "$target" | tr 'a-z-' 'A-Z_')_LINKER"; \
+    export "$linker_var=$triplet-gcc"; \
+    export CC="$triplet-gcc" PKG_CONFIG_ALLOW_CROSS=1 \
+      PKG_CONFIG_LIBDIR="/usr/lib/$triplet/pkgconfig:/usr/share/pkgconfig"; \
+    cargo chef cook --release --locked --package ploydok-agent \
+      --target "$target" --recipe-path /recipe.json
+
+COPY agent/ ./
+COPY packages/agent-proto/proto /workspace/packages/agent-proto/proto
+RUN set -eux; \
+    target="$(cat /rust-target)"; triplet="$(cat /cross-triplet)"; \
+    linker_var="CARGO_TARGET_$(printf '%s' "$target" | tr 'a-z-' 'A-Z_')_LINKER"; \
+    export "$linker_var=$triplet-gcc"; \
+    export CC="$triplet-gcc" PKG_CONFIG_ALLOW_CROSS=1 \
+      PKG_CONFIG_LIBDIR="/usr/lib/$triplet/pkgconfig:/usr/share/pkgconfig"; \
+    cargo build --release --locked --target "$target" -p ploydok-agent; \
+    install -D "target/$target/release/ploydok-agent" /out/ploydok-agent; \
+    file /out/ploydok-agent
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       libssl3 \
       tini \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /workspace/agent/target/release/ploydok-agent /usr/local/bin/ploydok-agent
+COPY --from=builder /out/ploydok-agent /usr/local/bin/ploydok-agent
 
 ENV PLOYDOK_AGENT_SOCKET=/run/ploydok/agent.sock \
     RUST_LOG=info
