@@ -754,7 +754,7 @@ prepare_runtime_transition() {
 }
 
 # Initialise un Swarm single-node si la machine n'en fait pas déjà partie.
-# Idempotent — si Swarm est déjà actif, on ne touche à rien (un opérateur a
+# Idempotent: si Swarm est déjà actif, on ne touche à rien (un opérateur a
 # pu joindre la machine à un cluster multi-node existant).
 ensure_swarm() {
   [[ "$RUNTIME" == "swarm" ]] || return 0
@@ -844,6 +844,7 @@ write_templates() {
     render_template Caddyfile | write_file "$INSTALL_DIR/Caddyfile" 0644 "$INSTALL_OWNER:$INSTALL_OWNER"
     render_template CaddyAdminProxyfile | write_file "$INSTALL_DIR/CaddyAdminProxyfile" 0644 "$INSTALL_OWNER:$INSTALL_OWNER"
     render_template ploydok-port-isolation.sh | write_file "/usr/local/lib/ploydok/port-isolation.sh" 0755
+    render_template ploydok-stop-stack.sh | write_file "/usr/local/lib/ploydok/stop-stack.sh" 0755
     render_template ploydok-update-stack.sh | write_file "/usr/local/lib/ploydok/update-stack.sh" 0755
     render_template ploydok-port-isolation.service | write_file "/etc/systemd/system/ploydok-port-isolation.service" 0644
     render_template ploydok.service | write_file "/etc/systemd/system/ploydok.service" 0644
@@ -900,14 +901,17 @@ start_services() {
   run systemctl daemon-reload
   if [[ "$RUNTIME" == "swarm" ]]; then
     run systemctl enable ploydok.target ploydok-port-isolation.service ploydok.service
-    run systemctl restart ploydok-port-isolation.service
+    # Restarting a required unit would stop ploydok.service too.
+    run systemctl reload-or-restart ploydok-port-isolation.service
   else
     run systemctl enable ploydok.target ploydok.service
   fi
-  # `restart` (not `start`) so a fresh install re-runs ExecStart even if the
-  # oneshot/RemainAfterExit service was left in `active (exited)` by a prior
-  # run — `systemctl start` is a no-op on an already-active oneshot.
-  run systemctl restart ploydok.service
+  if [[ "$RUNTIME" == "swarm" ]]; then
+    # Active oneshot units redeploy through ExecReload; inactive units start.
+    run systemctl reload-or-restart ploydok.service
+  else
+    run systemctl restart ploydok.service
+  fi
   if [[ "$RUNTIME" == "swarm" ]]; then
     run docker service update --force ploydok_prometheus
     run docker service update --force ploydok_alertmanager

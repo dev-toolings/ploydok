@@ -448,6 +448,8 @@ EOF
     runtime="$(runtime_kind)"
     if [[ "$runtime" == "swarm" ]]; then
       run systemctl disable --now ploydok.service
+      # Also clean a stack deployed while the systemd unit was inactive.
+      run bash "$(real_path /usr/local/lib/ploydok/stop-stack.sh)"
       run systemctl disable --now ploydok-port-isolation.service
       run systemctl disable --now ploydok.target
     else
@@ -617,6 +619,7 @@ EOF
     fi
 
     if [[ "$runtime" == "swarm" ]]; then
+      run bash "$(real_path /usr/local/lib/ploydok/stop-stack.sh)" wait
       if ! run docker stack deploy --resolve-image always --with-registry-auth --prune -c "$descriptor" ploydok; then
         echo "stack deploy failed; restoring previous stack descriptor" >&2
         run cp "$backup_descriptor" "$descriptor"
