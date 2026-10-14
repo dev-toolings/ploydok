@@ -3,7 +3,7 @@
 # Ploydok control-plane Swarm stack.
 #
 # Used by `docker stack deploy -c docker-stack.yml ploydok` on hosts that
-# joined a Swarm (single-node is fine — `docker swarm init`). Replaces the
+# joined a Swarm (single-node is fine: `docker swarm init`). Replaces the
 # legacy compose file for production deployments. The compose template
 # remains for local dev (`make infra-up`) where Swarm features are unwanted.
 #
@@ -17,7 +17,7 @@
 #     while its WebAuthn/setup challenge state is process-local.
 #   - postgres / redis / registry / agent / buildkitd / caddy stay at
 #     replicas: 1 (stateful or singleton).
-#   - Watchtower is gone — replaced by `ploydok-update.timer` on the host.
+#   - Watchtower is gone. It is replaced by `ploydok-update.timer` on the host.
 
 version: "3.8"
 
@@ -96,7 +96,8 @@ services:
     networks:
       - ploydok
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      # Anonymous root requests redirect to login/setup; redirects are healthy.
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3000/',{redirect:'manual'});process.exit(r.status>=200&&r.status<400?0:1)"]
       interval: 10s
       timeout: 3s
       retries: 3

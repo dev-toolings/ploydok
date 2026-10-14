@@ -351,6 +351,10 @@ assert_text_contains "$registry_block" "- ploydok-build"
 assert_text_contains "$buildkit_block" "- ploydok-build"
 ! grep -Fxq -- "      - ploydok" <<<"$buildkit_block" || { echo "buildkitd must not join the general ploydok network" >&2; exit 1; }
 assert_text_not_contains "$web_block" "- ploydok-build"
+assert_text_contains "$web_block" '"bun"'
+assert_text_contains "$web_block" "fetch('http://127.0.0.1:3000/',{redirect:'manual'})"
+assert_text_contains "$web_block" 'r.status>=200&&r.status<400'
+assert_text_not_contains "$web_block" '"wget"'
 assert_text_not_contains "$agent_block" "- ploydok-build"
 assert_text_not_contains "$api_block" "/var/run/docker.sock"
 assert_text_contains "$agent_block" "/var/run/docker.sock"
