@@ -40,7 +40,7 @@ done
 for image in "${images[@]}"; do
   case "$image" in api|web|agent|caddy|adminer) ;; *) die "unknown image: $image" ;; esac
 done
-for command in docker jq; do command -v "$command" >/dev/null || die "$command is required"; done
+for command in docker; do command -v "$command" >/dev/null || die "$command is required"; done
 if ((push)); then command -v skopeo >/dev/null || die 'skopeo is required for --push'; fi
 root="$(cd "$root" && pwd)"
 tmp="$(mktemp -d)"
@@ -62,7 +62,6 @@ cleanup() {
   rm -rf "$tmp"
   log 'Disk usage after cleanup (bytes)'
   df -B1 "$root"
-  docker system df
   exit "$status"
 }
 trap cleanup EXIT
@@ -70,7 +69,6 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 log 'Disk usage before build (bytes)'
 df -B1 "$root"
-docker system df
 docker buildx create --name "$builder" --driver docker-container >/dev/null
 build_version="candidate-$(git -C "$root" rev-parse HEAD)"
 for image in "${images[@]}"; do
@@ -102,7 +100,8 @@ for image in "${images[@]}"; do
       --file "$dockerfile" --build-arg "PLOYDOK_BUILD_VERSION=$build_version" \
       --tag "$tag" --load "$context"
     docker run --rm "$tag" bun --version
-    docker run --rm "$tag" bun -e '
+    docker run --rm --network none -e NODE_ENV=test "$tag" bun -e '
+      await import("./src/index.ts");
       await import("drizzle-orm/postgres-js/migrator");
       await import("@ploydok/shared");
       await import("@ploydok/agent-proto");

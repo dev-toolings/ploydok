@@ -7,7 +7,7 @@ scripts/release-local/release.sh --version 0.1.0-rc.2
 scripts/release-local/release.sh --version 0.1.0-rc.2 --image api --image web --smoke-api
 ```
 
-Requires Docker, buildx, jq and support for both amd64 and arm64 builds
+Requires Docker, buildx and support for both amd64 and arm64 builds
 (native builder nodes or preconfigured binfmt emulation). Publishing also
 requires skopeo and registry credentials in Docker's config.json. Docker
 credential helpers must be available to skopeo if configured.
@@ -37,7 +37,7 @@ Install them only in staging with `PLOYDOK_INSTALL_SKIP_COSIGN=1`.
 
 `--root PATH` builds another checkout without copying this script there.
 `--smoke-api` also loads a temporary amd64 API image and checks Bun, runtime
-module imports and migration files without accessing a database.
+server entry import, runtime module imports and migration files without accessing a database.
 
 Exit traps remove temporary images, OCI archives, the Trivy cache and this
 run's dedicated buildx builder/cache, including on build or scan failure.
