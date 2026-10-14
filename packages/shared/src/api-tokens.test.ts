@@ -43,7 +43,7 @@ describe("ApiTokenCreateSchema", () => {
   test("accepte scopes valides", () => {
     const r = ApiTokenCreateSchema.safeParse({
       name: "ci",
-      scopes: ["apps:read", "apps:deploy"],
+      scopes: ["apps:read", "apps:deploy", "services:read", "services:write"],
     })
     expect(r.success).toBe(true)
   })
