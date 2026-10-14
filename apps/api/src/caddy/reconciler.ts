@@ -50,6 +50,8 @@ export interface ServiceForReconcile {
   slug: string
   domain: string | null
   compose_raw: string
+  container_ids: string[] | null
+  swarm_service_names: string[] | null
 }
 
 export interface DatabaseProxyForReconcile {
@@ -99,6 +101,8 @@ export async function fetchRunningServicesForCaddy(
       slug: servicesTable.slug,
       domain: servicesTable.domain,
       compose_raw: servicesTable.compose_raw,
+      container_ids: servicesTable.container_ids,
+      swarm_service_names: servicesTable.swarm_service_names,
     })
     .from(servicesTable)
     .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
@@ -171,6 +175,13 @@ export async function reconcileServiceRoutes(opts: {
       continue
     }
     try {
+      const swarmServiceNames = service.swarm_service_names ?? []
+      const containerIds = service.container_ids ?? []
+      if (swarmServiceNames.length === 0 && containerIds.length === 0) {
+        result.skipped++
+        continue
+      }
+
       const containers = composeToContainers({
         compose: service.compose_raw,
         servicePrefix: `ploydok-svc-${service.slug}`,
@@ -180,10 +191,24 @@ export async function reconcileServiceRoutes(opts: {
           "ploydok.service_id": service.id,
         },
       })
+      const routeContainers =
+        swarmServiceNames.length === 0
+          ? containers
+          : (() => {
+              if (swarmServiceNames.length !== containers.length) {
+                throw new Error(
+                  `Service ${service.id} has ${swarmServiceNames.length} Swarm service names for ${containers.length} Compose services`
+                )
+              }
+              return containers.map((container, index) => ({
+                ...container,
+                name: swarmServiceNames[index]!,
+              }))
+            })()
       await upsertServiceRoute(opts.caddy, {
         serviceId: service.id,
         domain: service.domain,
-        containers,
+        containers: routeContainers,
       })
       result.synced++
       opts.logger.info(

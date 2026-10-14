@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import pino from "pino"
-import { reconcileCaddyRoutes, type AppForReconcile } from "./reconciler.js"
+import {
+  reconcileCaddyRoutes,
+  reconcileServiceRoutes,
+  type AppForReconcile,
+  type ServiceForReconcile,
+} from "./reconciler.js"
 import type { CaddyClient } from "./client.js"
 
 const silentLogger = pino({ level: "silent" })
@@ -106,6 +111,20 @@ function app(
     cdn_headers: overrides.cdn_headers ?? null,
     cdn_external_provider: overrides.cdn_external_provider ?? null,
   }
+}
+
+function createFakeServiceCaddy(): {
+  caddy: CaddyClient
+  upserts: Array<{ host: string; upstream: string; appId: string }>
+} {
+  const upserts: Array<{ host: string; upstream: string; appId: string }> = []
+  const caddy = {
+    async ensureBootstrap() {},
+    async upsertRoute(input: (typeof upserts)[number]) {
+      upserts.push(input)
+    },
+  } as unknown as CaddyClient
+  return { caddy, upserts }
 }
 
 describe("reconcileCaddyRoutes", () => {
@@ -346,5 +365,48 @@ describe("reconcileCaddyRoutes", () => {
       failed: 0,
     })
     expect(calls.upserts).toHaveLength(0)
+  })
+})
+
+describe("reconcileServiceRoutes", () => {
+  test("utilise le nom Swarm persiste avec le port Compose", async () => {
+    const { caddy, upserts } = createFakeServiceCaddy()
+    const services: ServiceForReconcile[] = [
+      {
+        id: "svc-1",
+        slug: "demo",
+        domain: "demo.example.com",
+        compose_raw: `
+services:
+  web:
+    image: nginx:alpine
+    expose: [80]
+    environment:
+      TOKEN: __PLOYDOK_SECRET_0__
+`,
+        container_ids: [],
+        swarm_service_names: ["ploydok-app-svc-svc-1-demo-web"],
+      },
+    ]
+
+    const result = await reconcileServiceRoutes({
+      caddy,
+      logger: silentLogger,
+      services,
+    })
+
+    expect(result).toEqual({
+      bootstrapped: true,
+      synced: 1,
+      skipped: 0,
+      failed: 0,
+    })
+    expect(upserts).toEqual([
+      {
+        host: "demo.example.com",
+        upstream: "ploydok-app-svc-svc-1-demo-web:80",
+        appId: "svc-1",
+      },
+    ])
   })
 })
