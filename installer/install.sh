@@ -52,7 +52,7 @@ Options:
   --skip-docker-install
   --manage-firewall
   --yes
-  --unattended
+  --unattended                 (implies --yes; defaults to coexist unless --mode is given)
   --version=<tag>
   --allow-edge                  (development only; permits the mutable edge channel)
   --image-registry=<registry>
@@ -86,7 +86,7 @@ for arg in "$@"; do
     --skip-docker-install) SKIP_DOCKER_INSTALL=1 ;;
     --manage-firewall) MANAGE_FIREWALL=1 ;;
     --yes) YES=1 ;;
-    --unattended) UNATTENDED=1; YES=1; MODE="coexist" ;;
+    --unattended) UNATTENDED=1; YES=1 ;;
     --version=*) VERSION="${arg#*=}" ;;
     --allow-edge)
       [[ -z "$VERSION" ]] && VERSION="edge"
@@ -98,6 +98,10 @@ for arg in "$@"; do
     *) echo "Unknown option: $arg" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+if [[ "$UNATTENDED" == "1" && -z "$MODE" ]]; then
+  MODE="coexist"
+fi
 
 case "$MODE" in
   ""|takeover|coexist|bootstrap-http|abort) ;;

@@ -278,6 +278,28 @@ bash "$ROOT/installer/install.sh" \
 assert_contains "$TMP/takeover-root/opt/ploydok/docker-compose.yml" '"80:80"'
 assert_contains "$TMP/takeover-root/opt/ploydok/docker-compose.yml" '"443:443"'
 
+# Unattended defaults never override an explicit mode, in either argument order.
+for scenario in mode-first unattended-first unattended-only; do
+  case "$scenario" in
+    mode-first) mode_args=(--mode=takeover --unattended); expected_mode=takeover ;;
+    unattended-first) mode_args=(--unattended --mode=takeover); expected_mode=takeover ;;
+    unattended-only) mode_args=(--unattended); expected_mode=coexist ;;
+  esac
+  unattended_output="$(
+    PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/$scenario-root" \
+      bash "$ROOT/installer/install.sh" "${mode_args[@]}" \
+        --public-host=ploydok.test --skip-docker-install --version=test 2>&1
+  )"
+  assert_text_contains "$unattended_output" "installing Ploydok test in mode=$expected_mode"
+  if [[ "$expected_mode" == takeover ]]; then
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 80"
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 443"
+  else
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 8080"
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 8443"
+  fi
+done
+
 PLOYDOK_INSTALL_DRY_RUN=1 \
 PLOYDOK_INSTALL_ROOT="$TMP/bootstrap-root" \
 bash "$ROOT/installer/install.sh" \
