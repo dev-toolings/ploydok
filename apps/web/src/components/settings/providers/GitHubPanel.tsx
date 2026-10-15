@@ -921,14 +921,21 @@ function GitHubAccountRow({
               <RiMore2Line aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-auto">
             {installation && (
-              <DropdownMenuItem onSelect={onRevoke}>
+              <DropdownMenuItem
+                className="whitespace-nowrap"
+                onSelect={onRevoke}
+              >
                 {t("github.accounts.revokeInstallation")}
               </DropdownMenuItem>
             )}
             {app && (
-              <DropdownMenuItem variant="destructive" onSelect={onReset}>
+              <DropdownMenuItem
+                className="whitespace-nowrap"
+                variant="destructive"
+                onSelect={onReset}
+              >
                 {t("github.accounts.deleteApp")}
               </DropdownMenuItem>
             )}
