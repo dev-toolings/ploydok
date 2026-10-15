@@ -105,6 +105,7 @@ mock.module("../gitlab/connection", () => ({
     installationId: "gitlab:user:user-test-1",
     provider: {
       listBranches: async () => [],
+      listFiles: async () => ["custom/service/go.mod"],
       fileExists: async () => false,
       readFile: async () => "",
     },
@@ -595,5 +596,25 @@ describe("GitLab OAuth round-trip", () => {
     expect(back.headers.get("location")).toBe(
       `${env.WEB_ORIGIN}/settings/git-providers/gitlab?gitlab_error=exchange_failed`
     )
+  })
+})
+
+describe("GitLab application directory discovery", () => {
+  it("requires authentication and discovers the selected repository", async () => {
+    expect(
+      (
+        await buildApp().request(
+          "/gitlab/repos/acme%2Frepo/deployment-targets?ref=main"
+        )
+      ).status
+    ).toBe(401)
+    const res = await buildApp(FAKE_USER).request(
+      "/gitlab/repos/acme%2Frepo/deployment-targets?ref=main"
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { targets: { rootDir: string }[] }
+    expect(body.targets.map((target) => target.rootDir)).toEqual([
+      "custom/service",
+    ])
   })
 })

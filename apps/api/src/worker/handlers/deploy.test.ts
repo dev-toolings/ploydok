@@ -28,6 +28,7 @@ import { nanoid } from "nanoid"
 import * as dbQueries from "@ploydok/db/queries"
 import * as gitMod from "../git"
 import * as detectMod from "../detect"
+import * as repositoryTargetsMod from "../repository-targets"
 import * as nixpacksMod from "../nixpacks"
 import * as runnerMod from "../runner"
 import * as eventBusMod from "../event-bus"
@@ -453,6 +454,7 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
     spyOn(installTokensMod, "getInstallationToken").mockResolvedValue(
       "fake-token"
     )
+    spyOn(repositoryTargetsMod, "resolveRepositoryRoot").mockResolvedValue(null)
     spyOn(gitMod, "cloneRepo").mockResolvedValue({
       workspacePath: path.join(env.PLOYDOK_BUILD_DIR, "ws-test"),
       headSha: null,
@@ -662,6 +664,7 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     spyOn(installTokensMod, "getInstallationToken").mockResolvedValue(
       "fake-token"
     )
+    spyOn(repositoryTargetsMod, "resolveRepositoryRoot").mockResolvedValue(null)
     spyOn(gitMod, "cloneRepo").mockResolvedValue({
       workspacePath: path.join(env.PLOYDOK_BUILD_DIR, "ws-bg"),
       headSha: null,

@@ -13,6 +13,7 @@ import type {
   ManifestProbeKey,
   ParsedEnvVar,
   ProbeResults,
+  RepositoryTarget,
   StackClassification,
 } from "@ploydok/shared";
 import type { ApiError } from "./api";
@@ -77,61 +78,56 @@ async function runProbes(
   source: Source,
   fullName: string,
   ref: string,
-  rootDir?: string,
+  rootDir?: string
 ): Promise<{ probes: ProbeResults; files: Record<string, boolean> }> {
-  const paths = Array.from(new Set([...ALL_PROBE_KEYS, ...MANIFEST_FILE_PROBE_KEYS]));
-  const repoPaths = paths.map((path) => pathWithinRoot(path, rootDir));
-  try {
-    const res = await apiFetch<FileExistsBatchResponse>(
-      buildFilesExistUrl(source, fullName, repoPaths, ref),
-    );
-    const out: ProbeResults = {};
-    for (const key of ALL_PROBE_KEYS) {
-      if (res.files[pathWithinRoot(key, rootDir)] === true) out[key] = true;
-    }
-    const files = Object.fromEntries(
-      paths.map((path) => [path, res.files[pathWithinRoot(path, rootDir)] === true]),
-    );
-    return { probes: out, files };
-  } catch {
-    // Probe failures (404, network) are treated as "not present" — classifier will
-    // handle missing signals gracefully.
-    return { probes: {}, files: {} };
+  const paths = Array.from(
+    new Set([...ALL_PROBE_KEYS, ...MANIFEST_FILE_PROBE_KEYS])
+  )
+  const repoPaths = paths.map((path) => pathWithinRoot(path, rootDir))
+  const res = await apiFetch<FileExistsBatchResponse>(
+    buildFilesExistUrl(source, fullName, repoPaths, ref)
+  )
+  const out: ProbeResults = {}
+  for (const key of ALL_PROBE_KEYS) {
+    if (res.files[pathWithinRoot(key, rootDir)] === true) out[key] = true
   }
+  const files = Object.fromEntries(
+    paths.map((path) => [
+      path,
+      res.files[pathWithinRoot(path, rootDir)] === true,
+    ])
+  )
+  return { probes: out, files }
 }
 
 export async function runStackClassificationProbes(
   source: Source,
   fullName: string,
   ref: string,
-  rootDir?: string,
+  rootDir?: string
 ): Promise<{ probes: ProbeResults; classification: StackClassification }> {
-  const { probes, files } = await runProbes(source, fullName, ref, rootDir);
+  const { probes, files } = await runProbes(source, fullName, ref, rootDir)
   const manifestEntries = await Promise.all(
     MANIFEST_FILE_PROBE_KEYS.map(async (path) => {
-      if (files[path] !== true) return null;
-      try {
-        const response = await apiFetch<ManifestFileResponse>(
-          buildManifestFileUrl(
-            source,
-            fullName,
-            pathWithinRoot(path, rootDir),
-            ref,
-          ),
-        );
-        return [path, response.content] as const;
-      } catch {
-        return null;
-      }
-    }),
-  );
+      if (files[path] !== true) return null
+      const response = await apiFetch<ManifestFileResponse>(
+        buildManifestFileUrl(
+          source,
+          fullName,
+          pathWithinRoot(path, rootDir),
+          ref
+        )
+      )
+      return [path, response.content] as const
+    })
+  )
   const manifests: ManifestContents = Object.fromEntries(
     manifestEntries.filter((entry): entry is [ManifestProbeKey, string] =>
-      Boolean(entry),
-    ),
-  );
-  const classification = classifyStackWithManifests(probes, manifests);
-  return { probes, classification };
+      Boolean(entry)
+    )
+  )
+  const classification = classifyStackWithManifests(probes, manifests)
+  return { probes, classification }
 }
 
 export function detectedEnvFiles(
@@ -232,4 +228,30 @@ export function useStackClassification(
     isFetching: query.isFetching,
     error: query.error,
   };
+}
+
+/** Discover real repository paths independently of the currently selected root. */
+export function useRepositoryTargets(
+  source: Source | undefined,
+  fullName: string | undefined,
+  ref: string | undefined
+) {
+  return useQuery<
+    { targets: Array<RepositoryTarget> },
+    ApiError
+  >({
+    queryKey: ["repository-targets", source, fullName, ref],
+    enabled: Boolean(source && fullName && ref),
+    staleTime: 5 * 60_000,
+    queryFn: () => {
+      const params = new URLSearchParams({ ref: ref! })
+      const repoPath =
+        source === "github"
+          ? fullName!.split("/").map(encodeURIComponent).join("/")
+          : encodeURIComponent(fullName!)
+      return apiFetch(
+        `/${source}/repos/${repoPath}/deployment-targets?${params}`
+      )
+    },
+  })
 }

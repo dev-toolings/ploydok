@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { describe, expect, it } from "bun:test"
+import {
+  defaultRepositoryTarget,
+  discoverRepositoryTargets,
+} from "./repository-targets"
+
+function discover(files: Record<string, string>) {
+  return discoverRepositoryTargets(
+    Object.keys(files),
+    async (path) => files[path]!
+  )
+}
+
+describe("repository application targets", () => {
+  it("finds arbitrary nested services and skips a metadata-only root", async () => {
+    const targets = await discover({
+      "package.json": JSON.stringify({
+        private: true,
+        workspaces: ["products/*"],
+        devDependencies: { prettier: "3" },
+      }),
+      "products/store/package.json": JSON.stringify({
+        scripts: { build: "vite build" },
+        dependencies: { vite: "7" },
+      }),
+      "products/store/index.html": "<html />",
+      "services/orders/composer.json": JSON.stringify({
+        require: { "laravel/framework": "12" },
+      }),
+      "services/orders/artisan": "<?php",
+    })
+    expect(
+      targets.map((target) => [target.rootDir, target.classification.stack])
+    ).toEqual([
+      ["products/store", "static"],
+      ["services/orders", "laravel"],
+    ])
+    expect(defaultRepositoryTarget(targets)).toBeUndefined()
+  })
+
+  it("selects a single nested non-JavaScript application", async () => {
+    const targets = await discover({
+      "custom/deep/service/go.mod": "module example.com/service",
+    })
+    expect(defaultRepositoryTarget(targets)?.rootDir).toBe(
+      "custom/deep/service"
+    )
+    expect(targets[0]?.classification.stack).toBe("go")
+  })
+
+  it("keeps a deployable repository root and explicit orchestration", async () => {
+    const targets = await discover({
+      "compose.yaml": "services: {}",
+      "backend/Cargo.toml": "[package]",
+    })
+    expect(defaultRepositoryTarget(targets)?.rootDir).toBe(".")
+    expect(
+      defaultRepositoryTarget(targets)?.classification.recommendedBuild
+    ).toBe("compose")
+  })
+
+  it("groups Symfony bin/console with its application and ignores dependencies", async () => {
+    const targets = await discover({
+      "server/composer.json": "{}",
+      "server/bin/console": "<?php",
+      "node_modules/dependency/package.json": "{}",
+      "vendor/library/composer.json": "{}",
+    })
+    expect(targets.map((target) => target.rootDir)).toEqual(["server"])
+    expect(targets[0]?.classification.stack).toBe("symfony")
+  })
+
+  it("never turns failed manifest reads into successful detection", async () => {
+    await expect(
+      discoverRepositoryTargets(["package.json"], async () => {
+        throw new Error("provider unavailable")
+      })
+    ).rejects.toThrow("provider unavailable")
+  })
+
+  it("requires a choice when both the root and a nested service are applications", async () => {
+    const targets = await discover({
+      "package.json": JSON.stringify({ scripts: { start: "custom-server" } }),
+      "services/worker/go.mod": "module worker",
+    })
+    expect(targets).toHaveLength(2)
+    expect(defaultRepositoryTarget(targets)).toBeUndefined()
+  })
+})
+
+it("skips workspace-only build manifests across ecosystems", async () => {
+  for (const root of [
+    {
+      "package.json": JSON.stringify({
+        workspaces: ["modules/*"],
+        scripts: { build: "turbo build" },
+      }),
+    },
+    { "Cargo.toml": '[workspace]\nmembers = ["modules/*"]' },
+    { "pom.xml": "<project><packaging>pom</packaging><modules /></project>" },
+  ]) {
+    const targets = await discover({
+      ...root,
+      "modules/service/go.mod": "module service",
+    } as Record<string, string>)
+    expect(defaultRepositoryTarget(targets)?.rootDir).toBe("modules/service")
+  }
+})
+
+it("preserves a root Dockerfile without depending on unrelated manifests", async () => {
+  const targets = await discover({
+    Dockerfile: "FROM alpine",
+    "package.json": "not json",
+    "nested/go.mod": "module nested",
+  })
+  expect(
+    defaultRepositoryTarget(targets)?.classification.recommendedBuild
+  ).toBe("dockerfile")
+  expect(defaultRepositoryTarget(targets)?.rootDir).toBe(".")
+})

@@ -229,3 +229,50 @@ describe("GitHubProvider.cloneUrlWithToken()", () => {
     );
   });
 });
+
+describe("GitHub repository discovery", () => {
+  it("encodes refs and rejects truncated trees rather than selecting from partial results", async () => {
+    using _token = spyOn(
+      installationTokens,
+      "getInstallationToken"
+    ).mockResolvedValue(FAKE_TOKEN)
+    const provider = new GitHubProvider(new GitHubCache())
+    using _fetch = spyOn(globalThis, "fetch").mockImplementation(
+      makeFetch(async (url) => {
+        expect(String(url)).toContain("/git/trees/feature%2Fnew?recursive=1")
+        return makeResponse({
+          truncated: true,
+          tree: [{ path: "api/go.mod", type: "blob" }],
+        })
+      })
+    )
+    await expect(
+      provider.listFiles(FAKE_INSTALL_ID, "owner/repo", "feature/new")
+    ).rejects.toThrow("incomplete")
+  })
+
+  it("returns files only, excluding symlinks and submodules", async () => {
+    using _token = spyOn(
+      installationTokens,
+      "getInstallationToken"
+    ).mockResolvedValue(FAKE_TOKEN)
+    using _fetch = spyOn(globalThis, "fetch").mockImplementation(
+      makeFetch(async () =>
+        makeResponse({
+          tree: [
+            { path: "custom/service/go.mod", type: "blob", mode: "100644" },
+            { path: "linked/package.json", type: "blob", mode: "120000" },
+            { path: "module", type: "commit" },
+          ],
+        })
+      )
+    )
+    expect(
+      await new GitHubProvider(new GitHubCache()).listFiles(
+        FAKE_INSTALL_ID,
+        "owner/repo",
+        "main"
+      )
+    ).toEqual(["custom/service/go.mod"])
+  })
+})

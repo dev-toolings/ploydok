@@ -150,3 +150,23 @@ describe("detectBuildMethod", () => {
     expect(result.dockerfilePath).toBe("Dockerfile")
   })
 })
+
+it("auto detection agrees with the wizard for Compose and static applications", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ploydok-methods-"))
+  try {
+    await writeFile(path.join(dir, "index.html"), "<html />")
+    expect((await detectBuildMethod({ workspacePath: dir })).method).toBe(
+      "static"
+    )
+    await writeFile(path.join(dir, "compose.yaml"), "services: {}")
+    expect((await detectBuildMethod({ workspacePath: dir })).method).toBe(
+      "compose"
+    )
+    expect(
+      (await detectBuildMethod({ workspacePath: dir, override: "nixpacks" }))
+        .method
+    ).toBe("nixpacks")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
