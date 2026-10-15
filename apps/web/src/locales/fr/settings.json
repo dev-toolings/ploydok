@@ -344,7 +344,6 @@
     "readyToConnect": "GitHub App de l'instance prête à connecter",
     "temporarilyUnavailable": "GitLab temporairement indisponible ; connexion conservée",
     "oauthExpired": "Connexion OAuth expirée ; reconnexion requise",
-    "header": "En-tête du fournisseur",
     "ready": "Prêt à connecter",
     "notSet": "Non configuré"
   },

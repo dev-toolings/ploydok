@@ -26,7 +26,6 @@ let GitHubCredentialsRecovery: React.ComponentType<{
 }>
 let InstallationsCard: React.ComponentType<{
   role: "admin" | "member"
-  installUrl: string | null
 }>
 let canLoadGitHubInstallations: (
   configured: boolean,
@@ -138,10 +137,7 @@ describe("GitHubPanel credentials guard", () => {
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
-        React.createElement(InstallationsCard, {
-          role: "member",
-          installUrl: "https://api.example.test/github/installations/start",
-        })
+        React.createElement(InstallationsCard, { role: "member" })
       )
     )
 
@@ -250,28 +246,14 @@ describe("GitHubPanel credentials guard", () => {
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
-        React.createElement(InstallationsCard, {
-          role: "admin",
-          installUrl: "https://api.example.test/github/installations/start",
-        })
+        React.createElement(InstallationsCard, { role: "admin" })
       )
     )
 
     await waitFor(() => expect(view.getByText("@acme")).toBeTruthy())
-    expect(
-      view.getByRole("button", { name: "Add account or organization" })
-    ).toBeTruthy()
     expect(view.getByRole("button", { name: "Revoke" })).toBeTruthy()
     expect(view.queryByRole("button", { name: "Disconnect" })).toBeNull()
     expect(view.getByText("Cached repositories")).toBeTruthy()
-    expect(
-      view.getByRole("button", { name: "Add account or organization" })
-        .className
-    ).toContain("w-full")
-    expect(
-      view.getByRole("button", { name: "Add account or organization" })
-        .className
-    ).toContain("sm:w-auto")
 
     fireEvent.click(view.getByRole("button", { name: "Revoke" }))
     expect(await view.findByText("Revoke GitHub installation?")).toBeTruthy()
@@ -291,12 +273,6 @@ describe("GitHubPanel credentials guard", () => {
     await waitFor(() =>
       expect(view.queryByText("Revoke GitHub installation?")).toBeNull()
     )
-
-    const installUrl = "https://api.example.test/github/installations/start"
-    fireEvent.click(
-      view.getByRole("button", { name: "Add account or organization" })
-    )
-    expect(window.location.href).toBe(installUrl)
   })
 
   it("opens the modal, keeps a warning after dismissal, and exposes reconnect", async () => {

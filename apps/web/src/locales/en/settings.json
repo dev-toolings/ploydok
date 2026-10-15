@@ -344,7 +344,6 @@
     "readyToConnect": "Instance App ready to connect",
     "temporarilyUnavailable": "GitLab temporarily unavailable; connection preserved",
     "oauthExpired": "OAuth connection expired; reconnect required",
-    "header": "Provider header",
     "ready": "Ready to connect",
     "notSet": "Not set"
   },
