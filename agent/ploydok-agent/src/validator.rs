@@ -16,6 +16,7 @@
 //   - `PermissiveValidator` : no-op, development only.
 //   - `StrictValidator`     : production allowlist enforcement (task 2.3).
 
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 
@@ -343,6 +344,154 @@ fn validate_host_path(host_path: &str, allowed_prefixes: &[&str]) -> Result<(), 
     ))
 }
 
+/// Label carrying the service-specific volume root for Compose workloads.
+///
+/// The API owns this label. The agent still validates its shape and containment
+/// because it is the last boundary before Docker receives a bind mount.
+pub const MARKETPLACE_VOLUME_ROOT_LABEL: &str = "ploydok.volume_root";
+
+fn normalize_absolute_path(candidate: &str) -> Result<PathBuf, String> {
+    if candidate.is_empty() || candidate.contains('\0') {
+        return Err("path must be a non-empty absolute path without NUL bytes".to_string());
+    }
+
+    let path = Path::new(candidate);
+    if !path.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::Normal(_) => normalized.push(component.as_os_str()),
+            Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
+                return Err("path must not contain '.', '..', or a platform prefix".to_string())
+            }
+        }
+    }
+
+    // Do not accept aliases such as a trailing slash, duplicate separators, or
+    // a path that only becomes safe after normalization.
+    if normalized.as_os_str() != path.as_os_str() {
+        return Err("path is not normalized".to_string());
+    }
+    Ok(normalized)
+}
+
+fn validate_strict_descendant(candidate: &str, root: &Path) -> Result<(), String> {
+    let normalized = normalize_absolute_path(candidate)?;
+    if normalized == root {
+        return Err("path must be a strict descendant of the declared root".to_string());
+    }
+    if !normalized.starts_with(root) {
+        return Err("path is outside the declared root".to_string());
+    }
+    Ok(())
+}
+
+fn path_is_under_prefix(candidate: &str, prefix: &str) -> bool {
+    let normalized_prefix = prefix.trim_end_matches('/');
+    candidate == normalized_prefix || candidate.starts_with(&format!("{normalized_prefix}/"))
+}
+
+fn declared_root_scope(labels: &HashMap<String, String>, name: &str) -> (bool, bool) {
+    let kind = labels.get("ploydok.kind").map(String::as_str);
+    let has_service_identity = labels
+        .get("ploydok.service_id")
+        .is_some_and(|service_id| !service_id.is_empty());
+    let service_scoped = matches!(kind, Some("service"))
+        || has_service_identity
+        || name.starts_with("ploydok-svc-")
+        || name.starts_with("ploydok-app-svc-");
+    let requires_global_root = service_scoped
+        || labels.contains_key(MARKETPLACE_VOLUME_ROOT_LABEL)
+        || matches!(kind, Some("app" | "preview"))
+        || name.starts_with("ploydok-app-");
+
+    // The first flag requires a root for mounts below volume_prefix. The
+    // second flag applies that root to every mount, including app volumes.
+    (
+        requires_global_root,
+        service_scoped || labels.contains_key(MARKETPLACE_VOLUME_ROOT_LABEL),
+    )
+}
+
+/// Validate bind mounts while preserving the broad legacy roots used by
+/// ordinary apps, databases, and internal workloads.
+fn validate_workload_mounts<'a>(
+    labels: &HashMap<String, String>,
+    name: &str,
+    mounts: impl Iterator<Item = &'a str>,
+    volume_prefix: &str,
+    app_volume_prefix: &str,
+) -> Result<(), String> {
+    let (requires_global_root, strict_all_mounts) = declared_root_scope(labels, name);
+    let declared_root = if requires_global_root {
+        labels
+            .get(MARKETPLACE_VOLUME_ROOT_LABEL)
+            .map(|raw_root| {
+                let root = normalize_absolute_path(raw_root)?;
+                let normalized_volume_prefix =
+                    normalize_absolute_path(volume_prefix.trim_end_matches('/'))
+                        .map_err(|reason| format!("invalid configured volume prefix: {reason}"))?;
+                let relative = root
+                    .strip_prefix(&normalized_volume_prefix)
+                    .map_err(|_| "declared root must be under volume_prefix".to_string())?;
+                if relative.components().count() != 1 {
+                    return Err(
+                        "declared root must be one direct child of volume_prefix".to_string()
+                    );
+                }
+                if let Some(service_id) = labels
+                    .get("ploydok.service_id")
+                    .filter(|service_id| !service_id.is_empty())
+                {
+                    let root_name = root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default();
+                    let docker_root_name = format!("ploydok-svc-{service_id}");
+                    let swarm_root_prefix = format!("tmp-svc-{service_id}");
+                    let matches_swarm_root = root_name == swarm_root_prefix
+                        || root_name
+                            .strip_prefix(&swarm_root_prefix)
+                            .is_some_and(|suffix| suffix.starts_with('-'));
+                    if root_name != docker_root_name && !matches_swarm_root {
+                        return Err(
+                            "declared root does not match the marketplace service identity"
+                                .to_string(),
+                        );
+                    }
+                }
+                Ok(root)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+
+    for host_path in mounts {
+        validate_host_path(host_path, &[volume_prefix, app_volume_prefix])?;
+
+        if strict_all_mounts {
+            let root = declared_root.as_deref().ok_or_else(|| {
+                format!("declared-root workload mount requires {MARKETPLACE_VOLUME_ROOT_LABEL}")
+            })?;
+            validate_strict_descendant(host_path, root)?;
+        } else if requires_global_root && path_is_under_prefix(host_path, volume_prefix) {
+            let root = declared_root.as_deref().ok_or_else(|| {
+                format!("declared-root workload mount requires {MARKETPLACE_VOLUME_ROOT_LABEL}")
+            })?;
+            validate_strict_descendant(host_path, root)?;
+        } else if path_is_under_prefix(host_path, app_volume_prefix) {
+            // App volumes are a separate ownership namespace and retain their
+            // existing semantics for every non-marketplace workload kind.
+            continue;
+        }
+    }
+    Ok(())
+}
+
 const MANAGED_IMAGE_REGISTRIES: &[&str] = &["registry:5000", "127.0.0.1:5000", "localhost:5000"];
 const MIN_BUILD_CACHE_KEEP_BYTES: i64 = 1024 * 1024 * 1024;
 const MAX_BUILD_CACHE_KEEP_BYTES: i64 = 1024 * 1024 * 1024 * 1024;
@@ -566,18 +715,20 @@ impl Validator for StrictValidator {
             }
         }
 
-        // 3. Volume host paths: under the allowlisted Ploydok roots, no traversal.
-        for vol in &req.volumes {
-            if let Err(reason) = validate_host_path(
-                &vol.host_path,
-                &[&self.cfg.volume_prefix, &self.cfg.app_volume_prefix],
-            ) {
-                return Err(deny(
-                    tonic::Code::PermissionDenied,
-                    "volume_host_path",
-                    serde_json::json!({ "host_path": &vol.host_path, "reason": reason }),
-                ));
-            }
+        // 3. Volume host paths: under the allowlisted Ploydok roots, with a
+        // strict declared root for Compose and marketplace workloads.
+        if let Err(reason) = validate_workload_mounts(
+            &req.labels,
+            &req.name,
+            req.volumes.iter().map(|volume| volume.host_path.as_str()),
+            &self.cfg.volume_prefix,
+            &self.cfg.app_volume_prefix,
+        ) {
+            return Err(deny(
+                tonic::Code::PermissionDenied,
+                "volume_host_path",
+                serde_json::json!({ "reason": reason }),
+            ));
         }
 
         // 4. Labels: must contain non-empty ploydok.app_id and ploydok.owner_id.
@@ -1010,17 +1161,18 @@ impl Validator for StrictValidator {
         for network in &req.networks {
             validate_workload_network_name(network)?;
         }
-        for mount in &req.mounts {
-            if let Err(reason) = validate_host_path(
-                &mount.host_path,
-                &[&self.cfg.volume_prefix, &self.cfg.app_volume_prefix],
-            ) {
-                return Err(deny(
-                    tonic::Code::PermissionDenied,
-                    "volume_host_path",
-                    serde_json::json!({ "host_path": &mount.host_path, "reason": reason }),
-                ));
-            }
+        if let Err(reason) = validate_workload_mounts(
+            &req.labels,
+            &req.name,
+            req.mounts.iter().map(|mount| mount.host_path.as_str()),
+            &self.cfg.volume_prefix,
+            &self.cfg.app_volume_prefix,
+        ) {
+            return Err(deny(
+                tonic::Code::PermissionDenied,
+                "volume_host_path",
+                serde_json::json!({ "reason": reason }),
+            ));
         }
         for key in &["ploydok.app_id", "ploydok.owner_id"] {
             match req.labels.get(*key) {

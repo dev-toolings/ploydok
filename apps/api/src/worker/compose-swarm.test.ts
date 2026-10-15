@@ -93,6 +93,25 @@ volumes:
       })
     ).toThrow(/writable local volumes/)
   })
+
+  it("protects the declared service volume root from plan label spoofing", () => {
+    const plan = planComposeSwarmDeploy({
+      compose: `
+services:
+  app:
+    image: alpine
+    labels:
+      ploydok.volume_root: compose-spoof
+`,
+      kindToken: "demo-abc123",
+      network: "ploydok-swarm-proj-proj1",
+      labels: { "ploydok.volume_root": "input-spoof" },
+    })
+
+    expect(plan.services[0]!.labels["ploydok.volume_root"]).toBe(
+      "/var/lib/ploydok/volumes/tmp-demo-abc123"
+    )
+  })
 })
 
 describe("deployPlannedComposeStack", () => {
