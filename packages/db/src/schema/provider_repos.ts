@@ -9,6 +9,7 @@ import {
   primaryKey,
   unique,
 } from "drizzle-orm/pg-core"
+import { github_app } from "./github_app"
 
 export const provider_installations = pgTable(
   "provider_installations",
@@ -26,6 +27,10 @@ export const provider_installations = pgTable(
     html_url: text("html_url"),
     avatar_url: text("avatar_url"),
     repository_count: integer("repository_count"),
+    // GitHub only: the App whose credentials sign this installation's tokens.
+    github_app_id: text("github_app_id").references(() => github_app.id, {
+      onDelete: "cascade",
+    }),
     last_synced_at: timestamp("last_synced_at", {
       withTimezone: true,
       mode: "date",

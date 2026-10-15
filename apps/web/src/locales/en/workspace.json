@@ -251,7 +251,8 @@
     "ownerVerificationError": "GitHub could not verify that this account administers the organization. Retry with an organization owner account and approve the requested access.",
     "installed": "GitHub installation granted to this workspace.",
     "revoked": "GitHub installation revoked for this workspace.",
-    "revokeFailed": "Failed to revoke the GitHub installation."
+    "revokeFailed": "Failed to revoke the GitHub installation.",
+    "installOn": "Install on {{owner}}"
   },
   "sso": {
     "title": "SSO Configuration",

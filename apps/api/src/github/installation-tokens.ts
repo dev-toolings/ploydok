@@ -2,7 +2,11 @@
 import { signAppJwt } from "./jwt";
 import { decryptAppPrivateKey } from "./app-credentials";
 import { getGitHubAppConfigFingerprint } from "./config-fingerprint";
-import { getGitHubAppConfig } from "@ploydok/db/queries";
+import {
+  getGitHubAppConfigForInstallation,
+  listGitHubAppConfigs,
+  type GitHubAppRow,
+} from "@ploydok/db/queries";
 import { createDb } from "@ploydok/db";
 import { env } from "../env";
 
@@ -41,10 +45,10 @@ const db = createDb(env.DATABASE_URL);
 export async function getInstallationToken(installationId: string): Promise<string> {
   // Always validate the current DB config before consulting the process-local
   // cache. This is the cross-process revocation fence after a local App reset.
-  const config = await getGitHubAppConfig(db);
+  const config = await getGitHubAppConfigForInstallation(db, installationId);
   if (!config) {
     TOKEN_CACHE.delete(installationId);
-    throw new Error("GitHub App not configured — run the App manifest flow first");
+    throw new Error("No GitHub App owns this installation: run the App manifest flow first");
   }
   const configFingerprint = getGitHubAppConfigFingerprint(config);
 
@@ -90,7 +94,7 @@ export async function getInstallationToken(installationId: string): Promise<stri
 
   // The App may have been reset or re-imported while GitHub was issuing the
   // token. Re-read the DB before making that bearer observable or cacheable.
-  const currentConfig = await getGitHubAppConfig(db);
+  const currentConfig = await getGitHubAppConfigForInstallation(db, installationId);
   if (
     !currentConfig ||
     getGitHubAppConfigFingerprint(currentConfig) !== configFingerprint
@@ -123,6 +127,8 @@ export function evictAllInstallationTokens(): void {
 
 export interface AppInstallation {
   id: number;
+  /** Ploydok row id of the GitHub App that owns this installation. */
+  githubAppId: string;
   accountLogin: string;
   accountType: string;
   repositorySelection: "all" | "selected";
@@ -131,18 +137,30 @@ export interface AppInstallation {
   avatarUrl: string;
 }
 
+async function appJwt(config: GitHubAppRow): Promise<string> {
+  const pem = await decryptAppPrivateKey(config);
+  return signAppJwt(pem, config.app_id);
+}
+
 /**
- * List all installations of the configured GitHub App.
- * Authenticates with a short-lived App JWT (signed with the App private key).
+ * List the installations of one GitHub App, or of every registered App when
+ * none is given. Authenticates with a short-lived App JWT per App.
  */
-export async function listAppInstallations(): Promise<AppInstallation[]> {
-  const config = await getGitHubAppConfig(db);
-  if (!config) {
+export async function listAppInstallations(
+  config?: GitHubAppRow,
+): Promise<AppInstallation[]> {
+  const configs = config ? [config] : await listGitHubAppConfigs(db);
+  if (configs.length === 0) {
     throw new Error("GitHub App not configured");
   }
+  const lists = await Promise.all(configs.map(listInstallationsForApp));
+  return lists.flat();
+}
 
-  const pem = await decryptAppPrivateKey(config);
-  const jwt = signAppJwt(pem, config.app_id);
+async function listInstallationsForApp(
+  config: GitHubAppRow,
+): Promise<AppInstallation[]> {
+  const jwt = await appJwt(config);
 
   const res = await fetch("https://api.github.com/app/installations?per_page=100", {
     headers: {
@@ -168,6 +186,7 @@ export async function listAppInstallations(): Promise<AppInstallation[]> {
 
   return data.map((i) => ({
     id: i.id,
+    githubAppId: config.id,
     accountLogin: i.account?.login ?? "",
     accountType: i.account?.type ?? "",
     repositorySelection: i.repository_selection ?? "selected",
@@ -178,17 +197,21 @@ export async function listAppInstallations(): Promise<AppInstallation[]> {
 }
 
 /**
- * Delete/revoke an installation by id. The App loses access to all repos
- * granted by that installation. The owner can re-install anytime.
+ * Delete/revoke an installation by id with the App that owns it. The App loses
+ * access to all repos granted by that installation. The owner can re-install
+ * anytime.
  */
-export async function revokeAppInstallation(installationId: number): Promise<void> {
-  const config = await getGitHubAppConfig(db);
-  if (!config) {
-    throw new Error("GitHub App not configured");
+export async function revokeAppInstallation(
+  installationId: number,
+  config?: GitHubAppRow,
+): Promise<void> {
+  const owner =
+    config ?? (await getGitHubAppConfigForInstallation(db, String(installationId)));
+  if (!owner) {
+    throw new Error("No GitHub App owns this installation");
   }
 
-  const pem = await decryptAppPrivateKey(config);
-  const jwt = signAppJwt(pem, config.app_id);
+  const jwt = await appJwt(owner);
 
   const res = await fetch(`https://api.github.com/app/installations/${installationId}`, {
     method: "DELETE",

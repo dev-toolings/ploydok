@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Db } from '../client';
-import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm"
+import { randomUUID } from "node:crypto"
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm"
 import {
   github_app,
   github_installation_legacy_backfill,
@@ -11,19 +12,21 @@ import {
   provider_credentials,
 } from "../schema"
 
-const SINGLETON_ID = 'singleton';
-
 function githubInstallationExternalId(installationId: string): string {
   return installationId.startsWith("github:")
     ? installationId.slice("github:".length)
     : installationId
 }
 
+export type GitHubAppRow = typeof github_app.$inferSelect
+
 export interface GitHubAppConfig {
   app_id: string;
   client_id: string;
   slug: string;
   name: string;
+  owner_login?: string | null;
+  owner_type?: string | null;
   client_secret_enc: Buffer;
   client_secret_nonce: Buffer;
   pem_enc: Buffer;
@@ -32,104 +35,232 @@ export interface GitHubAppConfig {
   webhook_secret_nonce: Buffer;
 }
 
-/** Returns the stored GitHub App config, or null if not yet created. */
-export async function getGitHubAppConfig(db: Db): Promise<(typeof github_app.$inferSelect) | null> {
-  const rows = await db
+/** Lists every registered GitHub App, oldest first. */
+export async function listGitHubAppConfigs(db: Db): Promise<GitHubAppRow[]> {
+  return db
     .select()
     .from(github_app)
-    .where(eq(github_app.id, SINGLETON_ID))
-    .limit(1);
-  return rows[0] ?? null;
+    .orderBy(asc(github_app.created_at), asc(github_app.id))
 }
 
 /**
- * Serializes GitHub App replacement/reset writes and locks the singleton row.
- * The table lock also covers the not-configured case, where no row exists for
- * SELECT FOR UPDATE to lock. Must be called inside a transaction.
+ * Returns one GitHub App: the given row id, or the oldest App when no id is
+ * passed (readiness checks that only need to know an App exists).
+ */
+export async function getGitHubAppConfig(
+  db: Db,
+  id?: string
+): Promise<GitHubAppRow | null> {
+  if (id) {
+    const rows = await db
+      .select()
+      .from(github_app)
+      .where(eq(github_app.id, id))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  const rows = await db
+    .select()
+    .from(github_app)
+    .orderBy(asc(github_app.created_at), asc(github_app.id))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/** Resolves an App from GitHub's numeric App id (webhook target header). */
+export async function getGitHubAppConfigByAppId(
+  db: Db,
+  appId: string
+): Promise<GitHubAppRow | null> {
+  const rows = await db
+    .select()
+    .from(github_app)
+    .where(eq(github_app.app_id, appId))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/**
+ * Resolves the App that owns an installation. An installation recorded before
+ * its App was known falls back to the only App, never to an arbitrary one.
+ */
+export async function getGitHubAppConfigForInstallation(
+  db: Db,
+  installationId: string
+): Promise<GitHubAppRow | null> {
+  const externalId = githubInstallationExternalId(installationId)
+  const linked = await db
+    .select({ app: github_app })
+    .from(provider_installations)
+    .innerJoin(github_app, eq(github_app.id, provider_installations.github_app_id))
+    .where(
+      and(
+        eq(provider_installations.provider, "github"),
+        eq(provider_installations.external_id, externalId)
+      )
+    )
+    .limit(1)
+  if (linked[0]) return linked[0].app
+  const apps = await db.select().from(github_app).limit(2)
+  return apps.length === 1 ? apps[0]! : null
+}
+
+/**
+ * Serializes replacement/reset writes on one App and locks its row. The table
+ * lock also covers the case where the row is already gone. Must be called
+ * inside a transaction.
  */
 export async function lockGitHubAppConfigForReset(
-  db: Db
-): Promise<(typeof github_app.$inferSelect) | null> {
+  db: Db,
+  id: string
+): Promise<GitHubAppRow | null> {
   await db.execute(
     sql`LOCK TABLE ${github_app} IN SHARE ROW EXCLUSIVE MODE`
   )
   const rows = await db
     .select()
     .from(github_app)
-    .where(eq(github_app.id, SINGLETON_ID))
+    .where(eq(github_app.id, id))
     .limit(1)
     .for("update")
   return rows[0] ?? null
 }
 
-/** Locks the current singleton against reset/re-import for a short side effect. */
+/** Locks one App against reset/re-import for a short side effect. */
 export async function lockGitHubAppConfigForUse(
-  db: Db
-): Promise<(typeof github_app.$inferSelect) | null> {
+  db: Db,
+  id: string
+): Promise<GitHubAppRow | null> {
   const rows = await db
     .select()
     .from(github_app)
-    .where(eq(github_app.id, SINGLETON_ID))
+    .where(eq(github_app.id, id))
     .limit(1)
     .for("share")
   return rows[0] ?? null
 }
 
-/** Upserts the singleton GitHub App config. */
-export async function saveGitHubAppConfig(db: Db, cfg: GitHubAppConfig): Promise<void> {
-  const row = {
-    id: SINGLETON_ID,
-    app_id: cfg.app_id,
+/** Locks every App against reset/re-import (cross-App fan-out side effects). */
+export async function lockGitHubAppConfigsForUse(
+  db: Db
+): Promise<GitHubAppRow[]> {
+  return db
+    .select()
+    .from(github_app)
+    .orderBy(asc(github_app.created_at), asc(github_app.id))
+    .for("share")
+}
+
+/**
+ * Stores an App, keyed by its GitHub App id: re-importing an App updates its
+ * existing row (and keeps its installations), a new App gets a new row.
+ * Returns the row id.
+ */
+export async function saveGitHubAppConfig(
+  db: Db,
+  cfg: GitHubAppConfig
+): Promise<string> {
+  const set = {
     client_id: cfg.client_id,
     slug: cfg.slug,
     name: cfg.name,
+    ...(cfg.owner_login !== undefined ? { owner_login: cfg.owner_login } : {}),
+    ...(cfg.owner_type !== undefined ? { owner_type: cfg.owner_type } : {}),
     client_secret_enc: cfg.client_secret_enc,
     client_secret_nonce: cfg.client_secret_nonce,
     pem_enc: cfg.pem_enc,
     pem_nonce: cfg.pem_nonce,
     webhook_secret_enc: cfg.webhook_secret_enc,
     webhook_secret_nonce: cfg.webhook_secret_nonce,
-  };
-
-  await db
+  }
+  const rows = await db
     .insert(github_app)
-    .values(row)
-    .onConflictDoUpdate({
-      target: github_app.id,
-      set: {
-        app_id: row.app_id,
-        client_id: row.client_id,
-        slug: row.slug,
-        name: row.name,
-        client_secret_enc: row.client_secret_enc,
-        client_secret_nonce: row.client_secret_nonce,
-        pem_enc: row.pem_enc,
-        pem_nonce: row.pem_nonce,
-        webhook_secret_enc: row.webhook_secret_enc,
-        webhook_secret_nonce: row.webhook_secret_nonce,
-      },
-    });
+    .values({
+      id: `ghapp_${randomUUID()}`,
+      app_id: cfg.app_id,
+      owner_login: cfg.owner_login ?? null,
+      owner_type: cfg.owner_type ?? null,
+      ...set,
+    })
+    .onConflictDoUpdate({ target: github_app.app_id, set })
+    .returning({ id: github_app.id })
+  return rows[0]!.id
 }
 
-/** Deletes the singleton GitHub App config (used by the reset flow). */
-export async function deleteGitHubAppConfig(db: Db): Promise<void> {
-  await db.delete(github_app).where(eq(github_app.id, SINGLETON_ID));
+/** Deletes one App row; its installations cascade. */
+export async function deleteGitHubAppConfig(db: Db, id: string): Promise<void> {
+  await db.delete(github_app).where(eq(github_app.id, id));
 }
 
-/** Deletes every local record owned by the GitHub App integration. */
-export async function deleteGitHubAppLocalState(db: Db): Promise<void> {
-  await db
-    .delete(provider_credentials)
-    .where(eq(provider_credentials.provider, "github"))
-  await db
-    .delete(provider_installations)
-    .where(eq(provider_installations.provider, "github"))
-  await db.delete(github_installation_users)
-  await db
-    .update(github_installation_legacy_backfill)
-    .set({ consumed_at: new Date() })
-    .where(isNull(github_installation_legacy_backfill.consumed_at))
-  await db.delete(github_app).where(eq(github_app.id, SINGLETON_ID))
+/**
+ * Deletes every local record owned by one GitHub App. Installations recorded
+ * before their App was known are removed with the last App.
+ */
+export async function deleteGitHubAppLocalState(
+  db: Db,
+  id: string
+): Promise<void> {
+  const others = await db
+    .select({ id: github_app.id })
+    .from(github_app)
+    .where(ne(github_app.id, id))
+    .limit(1)
+  const owned = and(
+    eq(provider_installations.provider, "github"),
+    others.length === 0
+      ? or(
+          eq(provider_installations.github_app_id, id),
+          isNull(provider_installations.github_app_id)
+        )
+      : eq(provider_installations.github_app_id, id)
+  )
+  const installations = await db
+    .select({
+      id: provider_installations.id,
+      external_id: provider_installations.external_id,
+    })
+    .from(provider_installations)
+    .where(owned)
+  const dbIds = installations.map((row) => row.id)
+  const externalIds = installations.map((row) => row.external_id)
+
+  if (others.length === 0) {
+    await db
+      .delete(provider_credentials)
+      .where(eq(provider_credentials.provider, "github"))
+    await db.delete(github_installation_users)
+    await db
+      .update(github_installation_legacy_backfill)
+      .set({ consumed_at: new Date() })
+      .where(isNull(github_installation_legacy_backfill.consumed_at))
+  } else if (dbIds.length > 0) {
+    await db
+      .delete(provider_credentials)
+      .where(inArray(provider_credentials.id, dbIds))
+    await db
+      .delete(github_installation_users)
+      .where(
+        inArray(github_installation_users.installation_id, [
+          ...externalIds,
+          ...dbIds,
+        ])
+      )
+    await db
+      .update(github_installation_legacy_backfill)
+      .set({ consumed_at: new Date() })
+      .where(
+        and(
+          isNull(github_installation_legacy_backfill.consumed_at),
+          inArray(github_installation_legacy_backfill.installation_id, externalIds)
+        )
+      )
+  }
+  if (dbIds.length > 0) {
+    await db
+      .delete(provider_installations)
+      .where(inArray(provider_installations.id, dbIds))
+  }
+  await db.delete(github_app).where(eq(github_app.id, id))
 }
 
 export async function assignGitHubInstallationToUser(

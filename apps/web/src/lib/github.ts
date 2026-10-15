@@ -6,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
+import { useRef } from "react"
 import { toast } from "sonner"
 import { apiFetch, criticalRetryDelay, shouldRetryCriticalQuery } from "./api"
 import { usePendingAction } from "./hooks/use-pending-action"
@@ -16,12 +17,33 @@ import type { GitBranch, GitRepo } from "@ploydok/shared"
 // Types
 // ---------------------------------------------------------------------------
 
+/** One registered GitHub App. Each App can only be installed on its owner. */
+export interface GitHubAppSummary {
+  id: string
+  name: string
+  slug: string
+  app_id: string
+  owner_login: string | null
+  owner_type: string | null
+  install_url: string
+}
+
 export interface GitHubAppConfig {
   configured: boolean
   name?: string
   slug?: string
   app_id?: string
   install_url?: string
+  apps?: Array<GitHubAppSummary>
+}
+
+export interface GitHubInstallTarget {
+  appId: string
+  name: string
+  slug: string
+  ownerLogin: string | null
+  ownerType: string | null
+  url: string
 }
 
 export type GitHubAppCredentialsStatus =
@@ -65,6 +87,7 @@ export interface AppInstallation {
 export interface InstallationsResponse {
   installations: Array<AppInstallation>
   installUrl: string
+  installTargets?: Array<GitHubInstallTarget>
   claimableInstallations?: Array<AppInstallation>
 }
 
@@ -231,6 +254,8 @@ export function useGitHubAppCredentialsStatus(
 export interface CreateGitHubAppVariables {
   /** Where the GitHub round-trip should land once the App is created. */
   returnTo?: string
+  /** GitHub organization that will own the App; omit for a personal App. */
+  organization?: string
 }
 
 export function useCreateGitHubApp() {
@@ -242,7 +267,10 @@ export function useCreateGitHubApp() {
     mutationFn: (vars) =>
       apiFetch<CreateGitHubAppResponse>("/github/app/manifest", {
         method: "POST",
-        body: { return_to: vars?.returnTo ?? null },
+        body: {
+          return_to: vars?.returnTo ?? null,
+          ...(vars?.organization ? { organization: vars.organization } : {}),
+        },
         headers: { "content-type": "application/json" },
       }),
     onError: (error) => {
@@ -282,15 +310,23 @@ const MANIFEST_REDIRECT_HOLD_MS = 500
  */
 export function useCreateGitHubAppFlow(returnTo: string) {
   const createApp = useCreateGitHubApp()
+  const organizationRef = useRef<string | undefined>(undefined)
   const { run, pending } = usePendingAction(
-    () => createApp.mutateAsync({ returnTo }),
+    () =>
+      createApp.mutateAsync({
+        returnTo,
+        ...(organizationRef.current
+          ? { organization: organizationRef.current }
+          : {}),
+      }),
     {
       minVisibleMs: MANIFEST_REDIRECT_HOLD_MS,
       keepPendingOnSuccess: true,
     }
   )
 
-  const start = async (): Promise<void> => {
+  const start = async (organization?: string): Promise<void> => {
+    organizationRef.current = organization
     try {
       submitGitHubAppManifest(await run())
     } catch {
@@ -345,16 +381,15 @@ export interface ResetGitHubAppResponse {
 
 export function useResetGitHubApp() {
   const qc = useQueryClient()
-  return useMutation<ResetGitHubAppResponse, ApiError, void>({
-    mutationFn: () =>
+  return useMutation<ResetGitHubAppResponse, ApiError, string | void>({
+    mutationFn: (appId) =>
       apiFetch<ResetGitHubAppResponse>(
-        "/github/app/config?confirm=uninstall-github-installations",
+        `/github/app/config?confirm=uninstall-github-installations${
+          appId ? `&appId=${encodeURIComponent(appId)}` : ""
+        }`,
         { method: "DELETE" }
       ),
     onSuccess: () => {
-      qc.setQueryData(["github", "app", "config"], {
-        configured: false,
-      } satisfies GitHubAppConfig)
       qc.invalidateQueries({ queryKey: ["github", "app"] })
       qc.invalidateQueries({ queryKey: ["github", "installations"] })
       qc.invalidateQueries({ queryKey: ["github", "cache-status"] })
@@ -375,20 +410,15 @@ export interface ForgetLocalGitHubAppResponse {
 
 export function useForgetLocalGitHubApp() {
   const qc = useQueryClient()
-  return useMutation<ForgetLocalGitHubAppResponse, ApiError, void>({
-    mutationFn: () =>
+  return useMutation<ForgetLocalGitHubAppResponse, ApiError, string | void>({
+    mutationFn: (appId) =>
       apiFetch<ForgetLocalGitHubAppResponse>(
-        "/github/app/config/local?confirm=forget-local-github-app",
+        `/github/app/config/local?confirm=forget-local-github-app${
+          appId ? `&appId=${encodeURIComponent(appId)}` : ""
+        }`,
         { method: "DELETE" }
       ),
     onSuccess: async () => {
-      qc.setQueryData(["github", "app", "config"], {
-        configured: false,
-      } satisfies GitHubAppConfig)
-      qc.setQueryData<GitHubAppCredentialsStatus>(
-        ["github", "app", "credentials", "status"],
-        { status: "not_configured" }
-      )
       await qc.invalidateQueries({ queryKey: ["github"] })
     },
   })

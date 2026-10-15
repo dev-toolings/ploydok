@@ -104,6 +104,7 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
   let lockConfigSpy: ReturnType<typeof spyOn>
 
   const githubConfig = {
+    id: "singleton",
     app_id: "123",
     pem_enc: Buffer.from("ciphertext"),
     pem_nonce: Buffer.from("nonce"),
@@ -122,6 +123,7 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
         suspendedAt: null,
         htmlUrl: "https://github.com/orgs/org-a",
         avatarUrl: "https://avatars.githubusercontent.com/org-a",
+        githubAppId: "singleton",
       },
       {
         id: 222,
@@ -131,6 +133,7 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
         suspendedAt: null,
         htmlUrl: "https://github.com/orgs/org-b",
         avatarUrl: "https://avatars.githubusercontent.com/org-b",
+        githubAppId: "singleton",
       },
     ])
 
@@ -146,12 +149,12 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
 
     getConfigSpy = spyOn(
       providerReposQueries,
-      "getGitHubAppConfig"
-    ).mockResolvedValue(githubConfig as never)
+      "listGitHubAppConfigs"
+    ).mockResolvedValue([githubConfig] as never)
     lockConfigSpy = spyOn(
       providerReposQueries,
-      "lockGitHubAppConfigForUse"
-    ).mockResolvedValue(githubConfig as never)
+      "lockGitHubAppConfigsForUse"
+    ).mockResolvedValue([githubConfig] as never)
   })
 
   afterEach(() => {
@@ -203,7 +206,7 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
   })
 
   it("abandons without DB reinsertion or enqueue when config is deleted after fetch", async () => {
-    lockConfigSpy.mockResolvedValueOnce(null)
+    lockConfigSpy.mockResolvedValueOnce([])
     const { handleSyncProviderRepos } = await import("./sync-provider-repos")
     const db = mockDb()
     mockEnqueue.mockClear()
@@ -215,11 +218,13 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
   })
 
   it("abandons stale fan-out when the same App is re-imported", async () => {
-    lockConfigSpy.mockResolvedValueOnce({
-      ...githubConfig,
-      pem_enc: Buffer.from("replacement-ciphertext"),
-      pem_nonce: Buffer.from("replacement-nonce"),
-    } as never)
+    lockConfigSpy.mockResolvedValueOnce([
+      {
+        ...githubConfig,
+        pem_enc: Buffer.from("replacement-ciphertext"),
+        pem_nonce: Buffer.from("replacement-nonce"),
+      },
+    ] as never)
     const { handleSyncProviderRepos } = await import("./sync-provider-repos")
     const db = mockDb()
     mockEnqueue.mockClear()
@@ -240,6 +245,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
   let listInstallationsSpy: ReturnType<typeof spyOn>
   let replaceSnapshotSpy: ReturnType<typeof spyOn>
   let legacyBackfillSpy: ReturnType<typeof spyOn>
+  let ownerAppSpy: ReturnType<typeof spyOn>
 
   beforeEach(async () => {
     const { ghProvider } = await import("../../routes/github")
@@ -256,6 +262,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
         suspendedAt: null,
         htmlUrl: "https://github.com/orgs/org",
         avatarUrl: "https://avatars.githubusercontent.com/org",
+        githubAppId: "singleton",
       },
     ])
 
@@ -311,6 +318,10 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
       providerReposQueries,
       "backfillLegacyGitHubInstallationGrants"
     ).mockResolvedValue(0)
+    ownerAppSpy = spyOn(
+      providerReposQueries,
+      "getGitHubAppConfigForInstallation"
+    ).mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -318,6 +329,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     listInstallationsSpy.mockRestore()
     replaceSnapshotSpy.mockRestore()
     legacyBackfillSpy.mockRestore()
+    ownerAppSpy.mockRestore()
   })
 
   it("publishes installation freshness and all pages as one snapshot", async () => {

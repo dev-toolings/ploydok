@@ -3,6 +3,8 @@ import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
+import { Label } from "@workspace/ui/components/label"
 import { cn } from "@workspace/ui/lib/utils"
 import {
   AlertDialog,
@@ -50,6 +52,7 @@ const INSTALL_ERROR_KEYS = [
   "state_mismatch",
   "missing_installation_id",
   "sync_failed",
+  "github_app_required",
 ] as const
 
 type InstallErrorKey = (typeof INSTALL_ERROR_KEYS)[number]
@@ -280,6 +283,9 @@ export function GitHubPanel(): React.JSX.Element {
   })
   const createApp = useCreateGitHubAppFlow("/settings/git-providers/github")
   const resetApp = useResetGitHubApp()
+  const [resettingAppId, setResettingAppId] = React.useState<string | null>(
+    null
+  )
   const [resetError, setResetError] = React.useState<string | null>(null)
   const [appSuccess, setAppSuccess] = React.useState<boolean>(
     appParam === "created"
@@ -305,15 +311,18 @@ export function GitHubPanel(): React.JSX.Element {
     )
   }
 
-  const handleResetApp = async (): Promise<void> => {
+  const handleResetApp = async (appId: string): Promise<void> => {
     setResetError(null)
+    setResettingAppId(appId)
     try {
-      await resetApp.mutateAsync()
+      await resetApp.mutateAsync(appId)
       setAppSuccess(false)
     } catch (err) {
       setResetError(
         err instanceof Error ? err.message : t("github.resetFailed")
       )
+    } finally {
+      setResettingAppId(null)
     }
   }
 
@@ -338,13 +347,29 @@ export function GitHubPanel(): React.JSX.Element {
         {appLoading ? (
           <GitHubStatusSkeleton />
         ) : appConfig?.configured ? (
-          <GitHubAppConfiguredState
-            name={appConfig.name!}
-            slug={appConfig.slug!}
-            isPending={resetApp.isPending}
-            onReset={() => void handleResetApp()}
-            error={resetError}
-          />
+          <div className="space-y-6">
+            {(appConfig.apps ?? []).map((app) => (
+              <GitHubAppConfiguredState
+                key={app.id}
+                name={app.name}
+                slug={app.slug}
+                ownerLogin={app.owner_login}
+                isPending={resettingAppId === app.id}
+                onReset={() => void handleResetApp(app.id)}
+                error={null}
+              />
+            ))}
+            {resetError && resettingAppId === null && (
+              <p className="text-sm text-destructive" role="alert">
+                {resetError}
+              </p>
+            )}
+            <AddGitHubOrganizationApp
+              isPending={createApp.isPending}
+              onCreate={(organization) => void createApp.start(organization)}
+              error={createApp.error}
+            />
+          </div>
         ) : (
           <GitHubAppSetupCard
             isPending={createApp.isPending}
@@ -507,7 +532,9 @@ export function InstallationsCard({
     }
   }
 
-  const installUrl = data?.installUrl ?? installUrlFallback ?? ""
+  const installTargets = data?.installTargets ?? []
+  const installUrl =
+    installTargets[0]?.url ?? data?.installUrl ?? installUrlFallback ?? ""
   const hasInstallation =
     Boolean(justInstalled) || Boolean(data && data.installations.length > 0)
 
@@ -528,15 +555,33 @@ export function InstallationsCard({
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:justify-end">
-          {role === "admin" && installUrl && (
-            <Button
-              className="w-full sm:w-auto"
-              size="sm"
-              onClick={() => handleStartInstall(installUrl)}
-            >
-              {t("github.addAccount")}
-            </Button>
-          )}
+          {role === "admin" &&
+            (installTargets.length > 1
+              ? installTargets.map((target) => (
+                  <Button
+                    key={target.appId}
+                    className="w-full sm:w-auto"
+                    size="sm"
+                    onClick={() => handleStartInstall(target.url)}
+                  >
+                    {t("github.installOn", {
+                      owner: target.ownerLogin ?? target.name,
+                    })}
+                  </Button>
+                ))
+              : installUrl && (
+                  <Button
+                    className="w-full sm:w-auto"
+                    size="sm"
+                    onClick={() => handleStartInstall(installUrl)}
+                  >
+                    {installTargets[0]?.ownerLogin
+                      ? t("github.installOn", {
+                          owner: installTargets[0].ownerLogin,
+                        })
+                      : t("github.addAccount")}
+                  </Button>
+                ))}
           <Button
             className="w-full sm:w-auto"
             variant="outline"
@@ -840,9 +885,71 @@ function GitHubStatusSkeleton(): React.JSX.Element {
   )
 }
 
+// Same rule as GitHub logins: alphanumerics and single hyphens, 39 max.
+const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
+
+function AddGitHubOrganizationApp({
+  isPending,
+  onCreate,
+  error,
+}: {
+  isPending: boolean
+  onCreate: (organization: string) => void
+  error: string | null
+}): React.JSX.Element {
+  const { t } = useTranslation("settings")
+  const [organization, setOrganization] = React.useState("")
+  const trimmed = organization.trim()
+  const valid = GITHUB_LOGIN_PATTERN.test(trimmed)
+
+  return (
+    <form
+      className="space-y-3 border-t border-border pt-4"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (valid) onCreate(trimmed)
+      }}
+    >
+      <div className="space-y-1">
+        <p className="text-sm font-medium">{t("github.orgApp.title")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("github.orgApp.hint")}
+        </p>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <div className="flex-1 space-y-1">
+          <Label htmlFor="github-org-app-login">
+            {t("github.orgApp.label")}
+          </Label>
+          <Input
+            id="github-org-app-login"
+            value={organization}
+            onChange={(event) => setOrganization(event.target.value)}
+            placeholder={t("github.orgApp.placeholder")}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <Button type="submit" disabled={!valid} loading={isPending}>
+          {isPending
+            ? t("github.orgApp.redirecting")
+            : t("github.orgApp.create")}
+        </Button>
+      </div>
+      {error && (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
+  )
+}
+
 interface GitHubAppConfiguredStateProps {
   name: string
   slug: string
+  ownerLogin: string | null
   isPending: boolean
   onReset: () => void
   error: string | null
@@ -851,6 +958,7 @@ interface GitHubAppConfiguredStateProps {
 function GitHubAppConfiguredState({
   name,
   slug,
+  ownerLogin,
   isPending,
   onReset,
   error,
@@ -875,7 +983,9 @@ function GitHubAppConfiguredState({
             <span className="text-xs text-muted-foreground">({slug})</span>
           </p>
           <p className="text-xs text-muted-foreground">
-            {t("github.registeredHint")}
+            {ownerLogin
+              ? t("github.ownedBy", { owner: ownerLogin })
+              : t("github.registeredHint")}
           </p>
         </div>
         <div className="ml-auto">

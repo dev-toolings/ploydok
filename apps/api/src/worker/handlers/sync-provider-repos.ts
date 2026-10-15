@@ -2,12 +2,13 @@
 import {
   backfillLegacyGitHubInstallationGrants,
   replaceInstallationSnapshot,
-  getGitHubAppConfig,
-  lockGitHubAppConfigForUse,
+  getGitHubAppConfigForInstallation,
+  listGitHubAppConfigs,
+  lockGitHubAppConfigsForUse,
 } from "@ploydok/db/queries"
 import type { ProviderCredentialRow } from "@ploydok/db"
 import type {
-  ProviderInstallationRow,
+  ProviderInstallationInput,
   ProviderRepoRow,
 } from "@ploydok/db/queries"
 import type { Db } from "@ploydok/db"
@@ -20,7 +21,7 @@ import { and, eq, notInArray, sql } from "drizzle-orm"
 import { listAppInstallations } from "../../github/installation-tokens"
 import { ghProvider } from "../../routes/github"
 import { resolveGitLabConnection } from "../../gitlab/connection"
-import { getGitHubAppConfigFingerprint } from "../../github/config-fingerprint"
+import { getGitHubAppsFingerprint } from "../../github/config-fingerprint"
 import { workerLog } from "../logger"
 import { providerReposSyncQueue } from "../queues"
 import { eventBus } from "../event-bus"
@@ -171,10 +172,11 @@ function getGitHubInstallationDbId(installationId: string): string {
 function buildLiveGitHubInstallationRow(
   installation: Awaited<ReturnType<typeof listAppInstallations>>[number],
   syncedAt = new Date()
-): ProviderInstallationRow {
+): ProviderInstallationInput {
   const installId = String(installation.id)
   return {
     id: getGitHubInstallationDbId(installId),
+    github_app_id: installation.githubAppId,
     provider: "github",
     external_id: installId,
     account_login: installation.accountLogin,
@@ -231,23 +233,20 @@ async function syncGitHub(
 }
 
 async function syncGitHubFanOut(db: Db, ctx: SyncCtx): Promise<void> {
-  const initialConfig = await getGitHubAppConfig(db)
-  if (!initialConfig) {
+  const initialConfigs = await listGitHubAppConfigs(db)
+  if (initialConfigs.length === 0) {
     workerLog.info("github fan-out: App config missing, abandoning")
     return
   }
-  const configFingerprint = getGitHubAppConfigFingerprint(initialConfig)
+  const configFingerprint = getGitHubAppsFingerprint(initialConfigs)
   const installations = await listAppInstallations()
   const withConfigFence = async (
     sideEffect: (transactionDb: Db) => Promise<void>
   ): Promise<boolean> =>
     db.transaction(async (tx) => {
       const transactionDb = tx as unknown as Db
-      const currentConfig = await lockGitHubAppConfigForUse(transactionDb)
-      if (
-        !currentConfig ||
-        getGitHubAppConfigFingerprint(currentConfig) !== configFingerprint
-      ) {
+      const currentConfigs = await lockGitHubAppConfigsForUse(transactionDb)
+      if (getGitHubAppsFingerprint(currentConfigs) !== configFingerprint) {
         return false
       }
       await sideEffect(transactionDb)
@@ -413,7 +412,11 @@ async function syncGitHubInstallation(
   // only after every GitHub page has been fetched successfully.
   let liveInstallations: Awaited<ReturnType<typeof listAppInstallations>>
   try {
-    liveInstallations = await listAppInstallations()
+    const owner = await getGitHubAppConfigForInstallation(
+      db,
+      externalInstallationId
+    )
+    liveInstallations = await listAppInstallations(owner ?? undefined)
   } catch (err) {
     await db
       .update(provider_credentials)
@@ -752,7 +755,7 @@ async function syncGitLabUser(
   const installationId = connection.installationId
   const now = new Date()
 
-  const installRow: ProviderInstallationRow = {
+  const installRow: ProviderInstallationInput = {
     id: installationId,
     provider: "gitlab",
     external_id: userId,

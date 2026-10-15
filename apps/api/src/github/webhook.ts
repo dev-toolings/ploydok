@@ -45,6 +45,8 @@ export interface PushPayload {
 export interface WebhookExtras {
   payloadHash?: string;
   rawBodyBuffer?: Buffer;
+  /** Ploydok row id of the GitHub App whose secret signed the delivery. */
+  githubAppId?: string;
 }
 
 export type EnqueueFn = (payload: {
@@ -164,6 +166,7 @@ async function handleInstallationEvent(
   deliveryId: string,
   enqueue: EnqueueFn,
   queries: Required<NonNullable<WebhookDeps["queries"]>>,
+  githubAppId?: string,
 ): Promise<void> {
   const parsed = GhInstallationEventSchema.safeParse(payload);
   if (!parsed.success) {
@@ -182,6 +185,7 @@ async function handleInstallationEvent(
     case "created": {
       await queries.upsertInstallation(db, {
         id: installationId,
+        github_app_id: githubAppId,
         provider: "github",
         external_id: String(installation.id),
         account_login: installation.account.login,
@@ -206,6 +210,7 @@ async function handleInstallationEvent(
     case "suspend": {
       await queries.upsertInstallation(db, {
         id: installationId,
+        github_app_id: githubAppId,
         provider: "github",
         external_id: String(installation.id),
         account_login: installation.account.login,
@@ -224,6 +229,7 @@ async function handleInstallationEvent(
     case "unsuspend": {
       await queries.upsertInstallation(db, {
         id: installationId,
+        github_app_id: githubAppId,
         provider: "github",
         external_id: String(installation.id),
         account_login: installation.account.login,
@@ -414,7 +420,14 @@ export async function handleWebhook(
       break;
 
     case "installation":
-      await handleInstallationEvent(db, payload, deliveryId, enqueue, queries);
+      await handleInstallationEvent(
+        db,
+        payload,
+        deliveryId,
+        enqueue,
+        queries,
+        extras?.githubAppId,
+      );
       break;
 
     case "installation_repositories":

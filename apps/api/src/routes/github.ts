@@ -20,7 +20,10 @@ import {
   grantGitHubInstallationToOrganization,
   getCacheStatus,
   getGitHubAppConfig,
+  getGitHubAppConfigByAppId,
+  getGitHubAppConfigForInstallation,
   getInstallationStaleness,
+  listGitHubAppConfigs,
   lockGitHubAppConfigForReset,
   lockGitHubAppConfigForUse,
   listInstallations,
@@ -34,7 +37,7 @@ import {
   upsertInstallation,
   userOwnsGitHubInstallation,
 } from "@ploydok/db/queries"
-import type { ProviderRepoRow } from "@ploydok/db/queries"
+import type { GitHubAppRow, ProviderRepoRow } from "@ploydok/db/queries"
 import {
   audit_log,
   memberships,
@@ -126,6 +129,7 @@ function isAllowedManifestFilePath(path: string): boolean {
 }
 
 const RESET_APP_CONFIRMATION = "uninstall-github-installations"
+const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 const FORGET_LOCAL_APP_CONFIRMATION = "forget-local-github-app"
 
 // ---------------------------------------------------------------------------
@@ -352,7 +356,8 @@ function signInstallState(
   userId: string,
   returnTo: ProviderReturnPath = GITHUB_RETURN_FALLBACK,
   organizationId?: string,
-  claimInstallationId?: string
+  claimInstallationId?: string,
+  githubAppId?: string
 ): string {
   const payload = Buffer.from(
     JSON.stringify({
@@ -362,6 +367,7 @@ function signInstallState(
       issuedAt: Date.now(),
       ...(organizationId ? { organizationId } : {}),
       ...(claimInstallationId ? { claimInstallationId } : {}),
+      ...(githubAppId ? { githubAppId } : {}),
     })
   ).toString("base64url")
   const mac = createHmac("sha256", env.SESSION_SECRET)
@@ -378,6 +384,7 @@ function verifyInstallState(
   returnTo: ProviderReturnPath
   organizationId: string | null
   claimInstallationId: string | null
+  githubAppId: string | null
 } | null {
   const payload = verifySignedPrefix(cookieValue)
   if (payload === null) return null
@@ -389,6 +396,7 @@ function verifyInstallState(
       returnTo?: unknown
       organizationId?: unknown
       claimInstallationId?: unknown
+      githubAppId?: unknown
       issuedAt?: unknown
     }
     if (parsed.state !== state || typeof parsed.userId !== "string") return null
@@ -410,6 +418,8 @@ function verifyInstallState(
         typeof parsed.claimInstallationId === "string"
           ? parsed.claimInstallationId
           : null,
+      githubAppId:
+        typeof parsed.githubAppId === "string" ? parsed.githubAppId : null,
     }
   } catch {
     return null
@@ -469,6 +479,7 @@ function buildInstallOAuthUrl(clientId: string, state: string): string {
 
 type InstallOAuthState = {
   state: string
+  githubAppId: string
   userId: string
   organizationId: string
   installationId: string
@@ -498,6 +509,7 @@ function verifyInstallOAuthState(
     ) as Partial<InstallOAuthState>
     if (
       parsed.state !== state ||
+      typeof parsed.githubAppId !== "string" ||
       typeof parsed.userId !== "string" ||
       typeof parsed.organizationId !== "string" ||
       typeof parsed.installationId !== "string" ||
@@ -508,6 +520,7 @@ function verifyInstallOAuthState(
     }
     return {
       state: parsed.state,
+      githubAppId: parsed.githubAppId,
       userId: parsed.userId,
       organizationId: parsed.organizationId,
       installationId: parsed.installationId,
@@ -644,6 +657,7 @@ async function exchangeGitHubUserInstallations(
     accessToken: tokenBody.access_token,
     installations: (body.installations ?? []).map((installation) => ({
       id: installation.id,
+      githubAppId: config.id,
       accountLogin: installation.account?.login ?? "",
       accountType: installation.account?.type ?? "",
       repositorySelection: installation.repository_selection ?? "selected",
@@ -658,10 +672,47 @@ function getApiOrigin(): string {
   return new URL(env.GITHUB_APP_CALLBACK_URL).origin
 }
 
-function getInstallationStartUrl(organizationId?: string): string {
+function getInstallationStartUrl(
+  organizationId?: string,
+  githubAppId?: string
+): string {
   const url = new URL("/github/installations/start", getApiOrigin())
   if (organizationId) url.searchParams.set("organizationId", organizationId)
+  if (githubAppId) url.searchParams.set("appId", githubAppId)
   return url.toString()
+}
+
+/** One install entry point per GitHub App, i.e. per GitHub owner. */
+function getInstallTargets(apps: GitHubAppRow[], organizationId?: string) {
+  return apps.map((app) => ({
+    appId: app.id,
+    name: app.name,
+    slug: app.slug,
+    ownerLogin: app.owner_login,
+    ownerType: app.owner_type,
+    url: getInstallationStartUrl(organizationId, app.id),
+  }))
+}
+
+/**
+ * Picks the App an install flow targets. Without an explicit id the only App
+ * is used; with several Apps the caller must choose, since each one can only
+ * be installed on its own GitHub owner.
+ */
+async function resolveInstallApp(
+  appId: string | undefined
+): Promise<
+  | { app: GitHubAppRow; error?: never }
+  | { app?: never; error: "github_app_not_configured" | "github_app_required" }
+> {
+  if (appId) {
+    const app = await getGitHubAppConfig(db, appId)
+    return app ? { app } : { error: "github_app_not_configured" }
+  }
+  const apps = await listGitHubAppConfigs(db)
+  if (apps.length === 0) return { error: "github_app_not_configured" }
+  if (apps.length > 1) return { error: "github_app_required" }
+  return { app: apps[0]! }
 }
 
 function getUserId(c: {
@@ -1567,6 +1618,10 @@ githubRouter.get("/installations", async (c) => {
         ? { claimableInstallations: enrichedClaimable }
         : {}),
       installUrl: getInstallationStartUrl(scope.organization?.id),
+      installTargets: getInstallTargets(
+        await listGitHubAppConfigs(db),
+        scope.organization?.id
+      ),
     })
   } catch (err) {
     log.error({ err }, "listAppInstallations failed")
@@ -1586,11 +1641,6 @@ githubRouter.get("/installations/start", githubWriteScope, githubOwnerSession, a
   if (!user) {
     return c.json({ error: "unauthenticated" }, 401)
   }
-  const config = await getGitHubAppConfig(db)
-  if (!config) {
-    return c.json({ error: "github_app_not_configured" }, 503)
-  }
-
   const organizationId =
     c.req.query("organizationId") ?? c.req.query("projectId")
   const claimInstallationId = c.req.query("installationId")
@@ -1614,6 +1664,20 @@ githubRouter.get("/installations/start", githubWriteScope, githubOwnerSession, a
     c.req.query("return_to"),
     GITHUB_RETURN_FALLBACK
   )
+  const resolved = await resolveInstallApp(c.req.query("appId"))
+  if (!resolved.app) {
+    if (resolved.error === "github_app_required") {
+      return c.redirect(
+        buildReturnUrl(
+          returnTo,
+          new URLSearchParams({ install_error: resolved.error })
+        ),
+        302
+      )
+    }
+    return c.json({ error: resolved.error }, 503)
+  }
+  const config = resolved.app
   const state = crypto.randomUUID()
   c.header(
     "Set-Cookie",
@@ -1624,7 +1688,8 @@ githubRouter.get("/installations/start", githubWriteScope, githubOwnerSession, a
         user.id,
         returnTo,
         organizationId,
-        claimInstallationId ?? undefined
+        claimInstallationId ?? undefined,
+        config.id
       ),
       APP_STATE_TTL_SECONDS,
       true
@@ -1667,7 +1732,11 @@ for (const method of ["get", "post"] as const) {
       if (!scope || scope.id !== organizationId) {
         return c.json({ error: "organization_owner_required" }, 403)
       }
-      const config = await getGitHubAppConfig(db)
+      const config =
+        (await getGitHubAppConfigForInstallation(db, installationId)) ??
+        (c.req.query("appId")
+          ? await getGitHubAppConfig(db, c.req.query("appId"))
+          : null)
       if (!config) return c.json({ error: "github_app_not_configured" }, 503)
       const returnTo = sanitizeReturnTo(
         c.req.query("return_to") ?? body?.returnTo,
@@ -1683,7 +1752,8 @@ for (const method of ["get", "post"] as const) {
             user.id,
             returnTo,
             organizationId,
-            installationId
+            installationId,
+            config.id
           ),
           APP_STATE_TTL_SECONDS,
           true
@@ -1886,7 +1956,12 @@ githubRouter.get("/app/setup", async (c) => {
       ) {
         params.set("install_error", "installation_mismatch")
       } else {
-        const config = await getGitHubAppConfig(db)
+        const config = installState.githubAppId
+          ? await getGitHubAppConfig(db, installState.githubAppId)
+          : await getGitHubAppConfigForInstallation(
+              db,
+              normalizedInstallationId
+            )
         if (!config) {
           params.set("install_error", "github_app_not_configured")
         } else {
@@ -1897,6 +1972,7 @@ githubRouter.get("/app/setup", async (c) => {
               INSTALL_OAUTH_STATE_COOKIE,
               signInstallOAuthState({
                 state: oauthState,
+                githubAppId: config.id,
                 userId: actorUserId,
                 organizationId: installState.organizationId,
                 installationId: normalizedInstallationId,
@@ -1971,8 +2047,16 @@ githubRouter.get("/app/setup", async (c) => {
 githubRouter.post("/app/manifest", githubWriteScope, async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     return_to?: unknown
+    organization?: unknown
   } | null
   const returnTo = sanitizeReturnTo(body?.return_to, GITHUB_RETURN_FALLBACK)
+  // A private App is installable only on its owner, so an App for a GitHub
+  // organization must be registered under that organization.
+  const organization =
+    typeof body?.organization === "string" ? body.organization.trim() : ""
+  if (organization && !GITHUB_LOGIN_PATTERN.test(organization)) {
+    return c.json({ error: "invalid_github_organization" }, 400)
+  }
   const state = crypto.randomUUID()
 
   // Build self URL (scheme + host from request or env fallback)
@@ -1983,6 +2067,7 @@ githubRouter.post("/app/manifest", githubWriteScope, async (c) => {
   const manifest = buildManifest({
     webBaseUrl: env.WEB_ORIGIN,
     apiBaseUrl: selfUrl,
+    ...(organization ? { ownerLogin: organization } : {}),
   })
 
   // Store HMAC-signed state in httpOnly cookie (10 min)
@@ -1999,7 +2084,9 @@ githubRouter.post("/app/manifest", githubWriteScope, async (c) => {
   return c.json({
     manifest,
     state,
-    post_url: `https://github.com/settings/apps/new?state=${state}`,
+    post_url: organization
+      ? `https://github.com/organizations/${encodeURIComponent(organization)}/settings/apps/new?state=${state}`
+      : `https://github.com/settings/apps/new?state=${state}`,
   })
 })
 
@@ -2034,18 +2121,6 @@ githubRouter.post("/app/import", githubWriteScope, async (c) => {
     )
   }
 
-  const currentConfig = await getGitHubAppConfig(db)
-  if (currentConfig && currentConfig.app_id !== parsed.data.appId) {
-    return c.json(
-      {
-        error: "github_app_mismatch",
-        message:
-          "Reconnect the currently configured GitHub App using its original App ID.",
-      },
-      409
-    )
-  }
-
   let jwt: string
   try {
     jwt = signAppJwt(privateKey, parsed.data.appId)
@@ -2059,7 +2134,13 @@ githubRouter.post("/app/import", githubWriteScope, async (c) => {
     )
   }
 
-  let verifiedApp: { id: number; client_id: string; slug: string; name: string }
+  let verifiedApp: {
+    id: number
+    client_id: string
+    slug: string
+    name: string
+    owner?: { login: string; type: string } | null | undefined
+  }
   try {
     const response = await fetch("https://api.github.com/app", {
       headers: {
@@ -2092,6 +2173,9 @@ githubRouter.post("/app/import", githubWriteScope, async (c) => {
         client_id: z.string().min(1),
         slug: z.string().min(1),
         name: z.string().min(1),
+        owner: z
+          .object({ login: z.string(), type: z.string() })
+          .nullish(),
       })
       .parse(await response.json())
   } catch {
@@ -2124,11 +2208,17 @@ githubRouter.post("/app/import", githubWriteScope, async (c) => {
       encryptField(parsed.data.webhookSecret ?? ""),
     ])
 
-  await saveGitHubAppConfig(db, {
+  const githubAppId = await saveGitHubAppConfig(db, {
     app_id: parsed.data.appId,
     client_id: parsed.data.clientId,
     slug: verifiedApp.slug,
     name: verifiedApp.name,
+    ...(verifiedApp.owner
+      ? {
+          owner_login: verifiedApp.owner.login,
+          owner_type: verifiedApp.owner.type,
+        }
+      : {}),
     client_secret_enc: clientSecretResult.enc,
     client_secret_nonce: clientSecretResult.nonce,
     pem_enc: pemResult.enc,
@@ -2161,10 +2251,11 @@ githubRouter.post("/app/import", githubWriteScope, async (c) => {
 
   return c.json({
     configured: true,
+    id: githubAppId,
     name: verifiedApp.name,
     slug: verifiedApp.slug,
     app_id: parsed.data.appId,
-    install_url: `${getApiOrigin()}/github/installations/start`,
+    install_url: getInstallationStartUrl(undefined, githubAppId),
   })
 })
 
@@ -2194,7 +2285,7 @@ githubRouter.get("/app/callback", async (c) => {
       return c.json({ error: "state_mismatch" }, 400)
     }
 
-    const config = await getGitHubAppConfig(db)
+    const config = await getGitHubAppConfig(db, oauthState.githubAppId)
     if (!config) {
       return c.redirect(
         buildReturnUrl(
@@ -2295,12 +2386,16 @@ githubRouter.get("/app/callback", async (c) => {
     try {
       const committed = await db.transaction(async (tx) => {
         const transactionDb = tx as unknown as typeof db
-        const currentConfig = await lockGitHubAppConfigForUse(transactionDb)
+        const currentConfig = await lockGitHubAppConfigForUse(
+          transactionDb,
+          config.id
+        )
         if (!currentConfig || !isSameStoredGitHubApp(config, currentConfig)) {
           return false
         }
         await upsertInstallation(transactionDb, {
           id: getGitHubInstallationDbId(oauthState.installationId),
+          github_app_id: config.id,
           provider: "github",
           external_id: oauthState.installationId,
           account_login: installation.accountLogin,
@@ -2437,6 +2532,7 @@ githubRouter.get("/app/callback", async (c) => {
     // (loopback dev mode). Treat missing secrets as empty strings — the
     // webhook handler refuses requests when the decrypted secret is empty.
     webhook_secret: string | null
+    owner?: { login?: string; type?: string } | null
   }
 
   const [clientSecretResult, pemResult, webhookSecretResult] =
@@ -2451,6 +2547,8 @@ githubRouter.get("/app/callback", async (c) => {
     client_id: data.client_id,
     slug: data.slug,
     name: data.name,
+    owner_login: data.owner?.login ?? null,
+    owner_type: data.owner?.type ?? null,
     client_secret_enc: clientSecretResult.enc,
     client_secret_nonce: clientSecretResult.nonce,
     pem_enc: pemResult.enc,
@@ -2478,50 +2576,92 @@ githubRouter.get("/app/callback", async (c) => {
 // ---------------------------------------------------------------------------
 
 githubRouter.get("/app/config", async (c) => {
-  const config = await getGitHubAppConfig(db)
-  if (!config) {
-    return c.json({ configured: false })
+  const apps = await listGitHubAppConfigs(db)
+  const first = apps[0]
+  if (!first) {
+    return c.json({ configured: false, apps: [] })
   }
   return c.json({
     configured: true,
-    name: config.name,
-    slug: config.slug,
-    app_id: config.app_id,
-    install_url: `${getApiOrigin()}/github/installations/start`,
+    name: first.name,
+    slug: first.slug,
+    app_id: first.app_id,
+    install_url: getInstallationStartUrl(
+      undefined,
+      apps.length > 1 ? first.id : undefined
+    ),
+    apps: apps.map((app) => ({
+      id: app.id,
+      name: app.name,
+      slug: app.slug,
+      app_id: app.app_id,
+      owner_login: app.owner_login,
+      owner_type: app.owner_type,
+      install_url: getInstallationStartUrl(undefined, app.id),
+    })),
   })
 })
+
+/**
+ * Resolves the App targeted by an admin action: `?appId=` when given, else the
+ * only App. Several Apps without an explicit id is ambiguous and refused.
+ */
+async function resolveAdminApp(c: {
+  req: { query: (name: string) => string | undefined }
+}): Promise<
+  | { app: GitHubAppRow | null; ambiguous?: never }
+  | { app?: never; ambiguous: true }
+> {
+  const appId = c.req.query("appId")
+  if (appId) return { app: await getGitHubAppConfig(db, appId) }
+  const apps = await listGitHubAppConfigs(db)
+  if (apps.length > 1) return { ambiguous: true }
+  return { app: apps[0] ?? null }
+}
+
+const GITHUB_APP_REQUIRED_ERROR = {
+  error: {
+    code: "GITHUB_APP_REQUIRED",
+    message: "Several GitHub Apps are configured. Pass appId to choose one.",
+  },
+}
 
 // ---------------------------------------------------------------------------
 // GET /github/app/credentials/status  (instance admin only)
 // ---------------------------------------------------------------------------
 
 githubRouter.get("/app/credentials/status", async (c) => {
-  const config = await getGitHubAppConfig(db)
-  if (!config) {
+  const apps = await listGitHubAppConfigs(db)
+  if (apps.length === 0) {
     return c.json({ status: "not_configured" as const })
   }
 
-  try {
-    await decryptAppPrivateKey(config)
-    return c.json({ status: "readable" as const })
-  } catch (err) {
-    if (!(err instanceof GitHubAppCredentialsError)) {
-      throw err
+  const unreadable: string[] = []
+  for (const app of apps) {
+    try {
+      await decryptAppPrivateKey(app)
+    } catch (err) {
+      if (!(err instanceof GitHubAppCredentialsError)) {
+        throw err
+      }
+      log.warn({ err, githubAppId: app.id }, "github app credentials check failed")
+      unreadable.push(app.id)
     }
-
-    log.warn({ err }, "github app credentials check failed")
-    return c.json({
-      status: "unreadable" as const,
-      error: {
-        code: "GITHUB_APP_CREDENTIALS_UNREADABLE" as const,
-        message: GITHUB_APP_CREDENTIALS_UNREADABLE_MESSAGE,
-      },
-    })
   }
+  if (unreadable.length === 0) {
+    return c.json({ status: "readable" as const })
+  }
+  return c.json({
+    status: "unreadable" as const,
+    error: {
+      code: "GITHUB_APP_CREDENTIALS_UNREADABLE" as const,
+      message: GITHUB_APP_CREDENTIALS_UNREADABLE_MESSAGE,
+    },
+  })
 })
 
 // ---------------------------------------------------------------------------
-// DELETE /github/app/config/local  (instance admin only — local recovery)
+// DELETE /github/app/config/local?appId=  (instance admin only, local recovery)
 // ---------------------------------------------------------------------------
 
 githubRouter.delete("/app/config/local", githubWriteScope, async (c) => {
@@ -2538,23 +2678,36 @@ githubRouter.delete("/app/config/local", githubWriteScope, async (c) => {
     )
   }
 
-  const reset = await db.transaction(async (tx) => {
-    const transactionDb = tx as unknown as typeof db
-    const config = await lockGitHubAppConfigForReset(transactionDb)
-    if (config) {
-      try {
-        await decryptAppPrivateKey(config)
-        return false
-      } catch (err) {
-        if (!(err instanceof GitHubAppCredentialsError)) {
-          throw err
+  // Without appId every unreadable App is forgotten: a changed MASTER_KEY
+  // breaks them all at once. No App left: still clear the GitHub state an
+  // earlier reset left behind.
+  const appId = c.req.query("appId")
+  const appRowIds = appId
+    ? [appId]
+    : (await listGitHubAppConfigs(db)).map((app) => app.id)
+  if (appRowIds.length === 0) appRowIds.push("")
+
+  let reset = false
+  for (const appRowId of appRowIds) {
+    const forgotten = await db.transaction(async (tx) => {
+      const transactionDb = tx as unknown as typeof db
+      const config = await lockGitHubAppConfigForReset(transactionDb, appRowId)
+      if (config) {
+        try {
+          await decryptAppPrivateKey(config)
+          return false
+        } catch (err) {
+          if (!(err instanceof GitHubAppCredentialsError)) {
+            throw err
+          }
         }
       }
-    }
 
-    await deleteGitHubAppLocalState(transactionDb)
-    return true
-  })
+      await deleteGitHubAppLocalState(transactionDb, appRowId)
+      return true
+    })
+    reset ||= forgotten
+  }
   if (!reset) {
     return c.json(
       {
@@ -2581,7 +2734,7 @@ githubRouter.delete("/app/config/local", githubWriteScope, async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// DELETE /github/app/config  (auth required — destructive admin reset)
+// DELETE /github/app/config?appId=  (auth required, destructive admin reset)
 // ---------------------------------------------------------------------------
 
 githubRouter.delete("/app/config", githubWriteScope, async (c) => {
@@ -2596,34 +2749,16 @@ githubRouter.delete("/app/config", githubWriteScope, async (c) => {
     )
   }
 
-  const config = await getGitHubAppConfig(db)
+  const target = await resolveAdminApp(c)
+  if (target.ambiguous) return c.json(GITHUB_APP_REQUIRED_ERROR, 400)
+  const config = target.app
   if (!config) {
-    const reset = await db.transaction(async (tx) => {
-      const transactionDb = tx as unknown as typeof db
-      const currentConfig = await lockGitHubAppConfigForReset(transactionDb)
-      if (currentConfig) return false
-      await deleteGitHubAppLocalState(transactionDb)
-      return true
-    })
-    if (!reset) {
-      return c.json(
-        {
-          error: {
-            code: "GITHUB_APP_CONFIG_CHANGED",
-            message:
-              "The GitHub App configuration changed during reset. Retry using the appropriate reset flow.",
-          },
-        },
-        409
-      )
-    }
-    evictAllInstallationTokens()
     return c.json({ ok: true, uninstalled: 0 })
   }
 
   let installations: Awaited<ReturnType<typeof listAppInstallations>>
   try {
-    installations = await listAppInstallations()
+    installations = await listAppInstallations(config)
   } catch (err) {
     log.error({ err }, "github app reset failed while listing installations")
     if (err instanceof GitHubAppCredentialsError) {
@@ -2650,7 +2785,7 @@ githubRouter.delete("/app/config", githubWriteScope, async (c) => {
 
   for (const installation of installations) {
     try {
-      await revokeAppInstallation(installation.id)
+      await revokeAppInstallation(installation.id, config)
     } catch (err) {
       log.error(
         { err, installationId: installation.id },
@@ -2671,11 +2806,14 @@ githubRouter.delete("/app/config", githubWriteScope, async (c) => {
 
   const reset = await db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db
-    const currentConfig = await lockGitHubAppConfigForReset(transactionDb)
+    const currentConfig = await lockGitHubAppConfigForReset(
+      transactionDb,
+      config.id
+    )
     if (currentConfig && !isSameStoredGitHubApp(config, currentConfig)) {
       return false
     }
-    await deleteGitHubAppLocalState(transactionDb)
+    await deleteGitHubAppLocalState(transactionDb, config.id)
     return true
   })
   if (!reset) {
@@ -2705,8 +2843,8 @@ githubRouter.delete("/app/config", githubWriteScope, async (c) => {
 // ---------------------------------------------------------------------------
 
 githubRouter.post("/webhook", githubWebhookRateLimit, async (c) => {
-  const config = await getGitHubAppConfig(db)
-  if (!config) {
+  const apps = await listGitHubAppConfigs(db)
+  if (apps.length === 0) {
     return c.json({ error: "app not configured" }, 503)
   }
 
@@ -2720,24 +2858,45 @@ githubRouter.post("/webhook", githubWebhookRateLimit, async (c) => {
   // Compute payload hash for dedup and audit (SHA-256 of raw body)
   const payloadHash = createHash("sha256").update(rawBodyBuffer).digest("hex")
 
-  // Decrypt webhook secret. Empty string = App was created without a webhook
-  // (manifest without hook_attributes, typical of loopback dev setups).
-  const webhookSecret = await decryptField(
-    config.webhook_secret_enc as Buffer,
-    config.webhook_secret_nonce as Buffer
-  )
+  // GitHub names the sending App in this header. It is unauthenticated, so it
+  // only orders the candidates; the HMAC still decides which App signed.
+  const targetAppId = c.req.header("x-github-hook-installation-target-id")
+  const targeted = targetAppId
+    ? await getGitHubAppConfigByAppId(db, targetAppId)
+    : null
+  const candidates = targeted
+    ? [targeted, ...apps.filter((app) => app.id !== targeted.id)]
+    : apps
 
-  if (webhookSecret.length === 0) {
+  // Empty secret = App created without a webhook (manifest without
+  // hook_attributes, typical of loopback dev setups).
+  let signingApp: GitHubAppRow | null = null
+  let anyWebhookSecret = false
+  for (const app of candidates) {
+    const webhookSecret = await decryptField(
+      app.webhook_secret_enc as Buffer,
+      app.webhook_secret_nonce as Buffer
+    )
+    if (webhookSecret.length === 0) continue
+    anyWebhookSecret = true
+    if (verifySignature(body, signature, webhookSecret)) {
+      signingApp = app
+      break
+    }
+  }
+
+  if (!anyWebhookSecret) {
     return c.json({ error: "webhook not configured for this GitHub App" }, 503)
   }
 
-  if (!verifySignature(body, signature, webhookSecret)) {
+  if (!signingApp) {
     log.warn(
       { signature: signature?.slice(0, 20) },
       "webhook signature rejected"
     )
     return c.json({ error: "invalid signature" }, 401)
   }
+  const githubAppId = signingApp.id
 
   // Dedup only after the HMAC passes; otherwise an invalid delivery can shadow
   // a later valid retry with the same body hash.
@@ -2761,7 +2920,7 @@ githubRouter.post("/webhook", githubWebhookRateLimit, async (c) => {
       event,
       payload,
       deliveryId,
-      { payloadHash, rawBodyBuffer },
+      { payloadHash, rawBodyBuffer, githubAppId },
       { enqueue: enqueueProviderReposSync }
     ).catch((err) =>
       log.error({ err, event, deliveryId }, "webhook handler failed")

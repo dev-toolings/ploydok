@@ -137,7 +137,18 @@
       "state_mismatch": "GitHub returned from installation with an invalid or expired state. Please retry.",
       "missing_installation_id": "GitHub did not return an installation id. Please retry from the install button.",
       "sync_failed": "GitHub installation completed, but Ploydok could not queue the repository sync. Please refresh or sync manually.",
-      "generic": "GitHub installation did not complete correctly. Please retry."
+      "generic": "GitHub installation did not complete correctly. Please retry.",
+      "github_app_required": "Several GitHub Apps are configured. Choose the account to install on."
+    },
+    "installOn": "Install on {{owner}}",
+    "ownedBy": "GitHub App owned by {{owner}}. It can only be installed on this account.",
+    "orgApp": {
+      "title": "Connect a GitHub organization",
+      "hint": "GitHub only lets a private App be installed on the account that owns it. Create one App per GitHub organization, then install it from the list below.",
+      "label": "GitHub organization",
+      "placeholder": "my-organization",
+      "create": "Create the App for this organization",
+      "redirecting": "Redirecting to GitHub..."
     }
   },
   "gitlab": {
