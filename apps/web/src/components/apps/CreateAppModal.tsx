@@ -124,7 +124,7 @@ type StepId =
 
 type DomainMode = "generated" | "custom"
 
-type DomainDnsStatus = "valid" | "missing" | "mismatch" | "error"
+type DomainDnsStatus = "valid" | "missing" | "mismatch" | "error" | "unknown"
 type DomainTlsStatus = "pending" | "issued" | "failed" | "not_required"
 
 interface DomainDnsRecord {
@@ -2419,6 +2419,7 @@ function dnsStatusLabel(
     missing: t("create.dnsMissing"),
     mismatch: t("create.dnsMismatch"),
     error: t("create.dnsError"),
+    unknown: t("create.dnsUnknown"),
   }
   return labels[status]
 }
