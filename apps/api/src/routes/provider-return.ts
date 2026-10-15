@@ -2,7 +2,7 @@
 import { env } from "../env"
 
 /**
- * The only paths a Git-provider round-trip is allowed to come back to.
+ * Static paths a Git-provider round-trip is allowed to come back to.
  * Membership is checked both when the value is signed into a state cookie and
  * again right before the redirect is issued, so a cookie minted by an instance
  * running an older allow-list can never widen this one.
@@ -13,7 +13,9 @@ export const PROVIDER_RETURN_PATHS = [
   "/settings/git-providers/gitlab",
 ] as const
 
-export type ProviderReturnPath = (typeof PROVIDER_RETURN_PATHS)[number]
+export type ProviderReturnPath =
+  | (typeof PROVIDER_RETURN_PATHS)[number]
+  | `/orgs/${string}/settings/github`
 
 export const GITHUB_RETURN_FALLBACK: ProviderReturnPath =
   "/settings/git-providers/github"
@@ -21,15 +23,20 @@ export const GITLAB_RETURN_FALLBACK: ProviderReturnPath =
   "/settings/git-providers/gitlab"
 
 /**
- * Resolves an untrusted value to one of the literals above. Never echoes the
- * input, so absolute URLs, scheme-relative `//host` forms and `javascript:`
- * payloads all collapse to the fallback.
+ * Resolves an untrusted value to a static path or an organization GitHub
+ * settings path. Absolute URLs, scheme-relative hosts and dangerous schemes
+ * collapse to the fallback.
  */
 export function sanitizeReturnTo(
   raw: unknown,
   fallback: ProviderReturnPath
 ): ProviderReturnPath {
   if (typeof raw !== "string") return fallback
+  // Only the GitHub settings route is dynamic. Exclude encoded separators,
+  // query strings and dot segments so this can never become an open redirect.
+  if (/^\/orgs\/[a-z0-9]+(?:-[a-z0-9]+)*\/settings\/github$/.test(raw)) {
+    return raw as ProviderReturnPath
+  }
   return PROVIDER_RETURN_PATHS.find((allowed) => allowed === raw) ?? fallback
 }
 

@@ -32,6 +32,11 @@ const installationAssignments: Array<{
   installationId: string
   userId: string
 }> = []
+const organizationGrants: Array<{
+  orgId: string
+  installationId: string
+  grantedBy: string
+}> = []
 const localDisconnects: Array<{ installationId: string; userId: string }> = []
 let userGitHubInstallationIds = ["42"]
 let cacheStatusRows: Array<Record<string, unknown>> = []
@@ -44,6 +49,7 @@ let listInstallationsCalls = 0
 const revokedInstallations: number[] = []
 let revokeFailure: Error | null = null
 let fakeInstanceAdmin = true
+let fakeOrganizationOwnerExists = true
 let recentDelivery: { id: string; decision: string } | null = null
 const deliveryInserts: Array<{
   row: Record<string, unknown>
@@ -96,7 +102,10 @@ const fakeDb = {
   select: mock(() => ({
     from: () => ({
       where: () => ({
-        limit: async () => [{ is_instance_admin: fakeInstanceAdmin }],
+        limit: async () =>
+          fakeOrganizationOwnerExists
+            ? [{ is_instance_admin: fakeInstanceAdmin, id: "membership" }]
+            : [],
       }),
     }),
   })),
@@ -126,6 +135,16 @@ mock.module("@ploydok/db", () => ({
   gitlab_tokens: fakeTable,
   preview_deployments: fakeTable,
   preview_queue_jobs: fakeTable,
+  projects: {
+    id: Symbol("projects.id"),
+  },
+  memberships: {
+    id: Symbol("memberships.id"),
+    org_id: Symbol("memberships.org_id"),
+    user_id: Symbol("memberships.user_id"),
+    role: Symbol("memberships.role"),
+    accepted_at: Symbol("memberships.accepted_at"),
+  },
   provider_credentials: fakeProviderCredentials,
   provider_installations: fakeProviderInstallations,
   users: {
@@ -204,6 +223,7 @@ mock.module("@ploydok/db/queries", () => ({
       ? mockGitHubAppConfig
       : lockedGitHubAppConfigOverride
   },
+  lockGitHubAppConfigForUse: async () => mockGitHubAppConfig,
   deleteGitHubAppLocalState: async () => {
     deletedTables.push(fakeProviderCredentials, fakeProviderInstallations)
     deleteInstallationUsersCalls += 1
@@ -215,6 +235,14 @@ mock.module("@ploydok/db/queries", () => ({
     userId: string
   ) => {
     installationAssignments.push({ installationId, userId })
+  },
+  grantGitHubInstallationToOrganization: async (
+    _db: unknown,
+    orgId: string,
+    installationId: string,
+    grantedBy: string
+  ) => {
+    organizationGrants.push({ orgId, installationId, grantedBy })
   },
   deleteGitHubInstallationUser: async () => undefined,
   deleteGitHubInstallationUsers: async () => {
@@ -287,12 +315,18 @@ function signState(state: string): string {
 function signInstallState(
   state: string,
   userId = FAKE_USER.id,
-  returnTo?: string
+  returnTo?: string,
+  organizationId?: string,
+  claimInstallationId?: string
 ): string {
   const payload = Buffer.from(
-    JSON.stringify(
-      returnTo === undefined ? { state, userId } : { state, userId, returnTo }
-    )
+    JSON.stringify({
+      state,
+      userId,
+      ...(returnTo === undefined ? {} : { returnTo }),
+      ...(organizationId ? { organizationId, issuedAt: Date.now() } : {}),
+      ...(claimInstallationId ? { claimInstallationId } : {}),
+    })
   ).toString("base64url")
   const mac = createHmac("sha256", env.SESSION_SECRET)
     .update(payload)
@@ -324,6 +358,7 @@ beforeEach(() => {
   enqueuedSyncs.length = 0
   syncEnqueueFailure = null
   installationAssignments.length = 0
+  organizationGrants.length = 0
   localDisconnects.length = 0
   userGitHubInstallationIds = ["42"]
   cacheStatusRows = []
@@ -336,6 +371,7 @@ beforeEach(() => {
   revokedInstallations.length = 0
   revokeFailure = null
   fakeInstanceAdmin = true
+  fakeOrganizationOwnerExists = true
   recentDelivery = null
   deliveryInserts.length = 0
 })
@@ -1471,6 +1507,219 @@ describe("DELETE /github/installations/:id", () => {
 })
 
 describe("GET /github/app/setup", () => {
+  it("rejects an organization member before starting an OAuth proof", async () => {
+    fakeOrganizationOwnerExists = false
+    mockGitHubAppConfig = { client_id: "Iv1.org-proof" }
+    const state = "org-member-state"
+    const res = await buildApp().request(
+      `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+      {
+        headers: {
+          cookie: `gh_install_state=${encodeURIComponent(
+            signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+          )}`,
+        },
+      }
+    )
+
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get("location")!)
+    expect(location.searchParams.get("install_error")).toBe(
+      "organization_owner_required"
+    )
+    expect(location.searchParams.get("installed")).toBeNull()
+    expect(organizationGrants).toHaveLength(0)
+  })
+
+  it("requires a GitHub user proof before granting an installation to an organization", async () => {
+    const app = buildApp()
+    mockGitHubAppConfig = { client_id: "Iv1.org-proof" }
+    const state = "org-install-state"
+    const res = await app.request(
+      `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+      {
+        headers: {
+          cookie: `gh_install_state=${encodeURIComponent(
+            signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+          )}`,
+        },
+      }
+    )
+
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get("location")!)
+    expect(location.origin).toBe("https://github.com")
+    expect(location.pathname).toBe("/login/oauth/authorize")
+    expect(location.searchParams.get("client_id")).toBe("Iv1.org-proof")
+    expect(location.searchParams.get("state")).toBeTruthy()
+    expect(organizationGrants).toHaveLength(0)
+  })
+
+  it.each(["admin", "member"])("checks GitHub organization authority for role %s", async (githubRole) => {
+    const realFetch = globalThis.fetch
+    mockGitHubAppConfig = {
+      client_id: "Iv1.org-proof",
+      client_secret_enc: Buffer.from("enc:secret"),
+      client_secret_nonce: Buffer.from("nonce"),
+    }
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "short-lived" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(JSON.stringify({ login: "octocat" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.startsWith("https://api.github.com/user/installations")) {
+        return new Response(
+          JSON.stringify({
+            installations: [
+              {
+                id: 42,
+                account: { login: "acme", type: "Organization" },
+                repository_selection: "selected",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url === "https://api.github.com/orgs/acme/memberships/octocat") {
+        return new Response(JSON.stringify({ state: "active", role: githubRole }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as unknown as typeof fetch
+
+    try {
+      const state = "org-install-oauth"
+      const setup = await buildApp().request(
+        `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+        {
+          headers: {
+            cookie: `gh_install_state=${encodeURIComponent(
+              signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+            )}`,
+          },
+        }
+      )
+      const oauthUrl = new URL(setup.headers.get("location")!)
+      const setCookie = setup.headers.get("set-cookie")
+      expect(setCookie).toBeString()
+      const oauthCookie = setCookie!.split(";", 1)[0]!
+      const callback = await buildApp().request(
+        `/github/app/callback?code=oauth-code&state=${oauthUrl.searchParams.get(
+          "state"
+        )}`,
+        { headers: { cookie: oauthCookie } }
+      )
+
+      expect(callback.status).toBe(302)
+      const location = new URL(callback.headers.get("location")!)
+      expect(location.pathname).toBe("/onboarding")
+      if (githubRole === "admin") {
+        expect(location.searchParams.get("installed")).toBe("1")
+        expect(organizationGrants).toEqual([
+          { orgId: "org-1", installationId: "42", grantedBy: FAKE_USER.id },
+        ])
+      } else {
+        expect(location.searchParams.get("install_error")).toBe(
+          "github_org_membership_unverified"
+        )
+        expect(location.searchParams.get("installed")).toBeNull()
+        expect(organizationGrants).toHaveLength(0)
+      }
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  it("refuses the grant when the Ploydok owner role is removed before OAuth commit", async () => {
+    const realFetch = globalThis.fetch
+    mockGitHubAppConfig = {
+      client_id: "Iv1.org-proof",
+      client_secret_enc: Buffer.from("enc:secret"),
+      client_secret_nonce: Buffer.from("nonce"),
+    }
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "short-lived" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(JSON.stringify({ login: "octocat" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.startsWith("https://api.github.com/user/installations")) {
+        return new Response(
+          JSON.stringify({
+            installations: [
+              {
+                id: 42,
+                account: { login: "acme", type: "Organization" },
+                repository_selection: "selected",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url === "https://api.github.com/orgs/acme/memberships/octocat") {
+        return new Response(JSON.stringify({ state: "active", role: "admin" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as unknown as typeof fetch
+
+    try {
+      const state = "org-owner-removed"
+      const setup = await buildApp().request(
+        `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+        {
+          headers: {
+            cookie: `gh_install_state=${encodeURIComponent(
+              signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+            )}`,
+          },
+        }
+      )
+      const oauthUrl = new URL(setup.headers.get("location")!)
+      const setCookie = setup.headers.get("set-cookie")
+      expect(setCookie).toBeString()
+      fakeOrganizationOwnerExists = false
+      const callback = await buildApp().request(
+        `/github/app/callback?code=oauth-code&state=${oauthUrl.searchParams.get(
+          "state"
+        )}`,
+        { headers: { cookie: setCookie!.split(";", 1)[0]! } }
+      )
+
+      expect(callback.status).toBe(302)
+      const location = new URL(callback.headers.get("location")!)
+      expect(location.searchParams.get("install_error")).toBe(
+        "claim_authority_missing"
+      )
+      expect(organizationGrants).toHaveLength(0)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   it("upserts the installation credential, enqueues sync, and redirects with installed=1 when state is valid", async () => {
     const app = buildApp()
     const state = "abc123"

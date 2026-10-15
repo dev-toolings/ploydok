@@ -8,6 +8,7 @@ import type { GitRepo } from "@ploydok/shared"
 interface RepoSelectorProps {
   selected?: GitRepo | null
   onSelect: (repo: GitRepo) => void
+  organizationId?: string
 }
 
 function useDebounce<T>(value: T, delayMs: number): T {
@@ -24,6 +25,7 @@ function useDebounce<T>(value: T, delayMs: number): T {
 export function RepoSelector({
   selected,
   onSelect,
+  organizationId,
 }: RepoSelectorProps): React.JSX.Element {
   const { t } = useTranslation("apps")
   const [search, setSearch] = React.useState("")
@@ -37,7 +39,25 @@ export function RepoSelector({
     hasNextPage,
     fetchNextPage,
     error,
-  } = useGitHubRepos({ search: debouncedSearch || undefined })
+  } = useGitHubRepos({
+    search: debouncedSearch || undefined,
+    organizationId,
+  })
+
+  const repos = data?.pages.flatMap((p) => p.repos) ?? []
+  const groupedRepos = React.useMemo(() => {
+    const groups = new Map<string, GitRepo[]>()
+    for (const repo of repos) {
+      const accountLogin =
+        "accountLogin" in repo && typeof repo.accountLogin === "string"
+          ? repo.accountLogin
+          : repo.fullName.split("/")[0] ?? ""
+      const current = groups.get(accountLogin) ?? []
+      current.push(repo)
+      groups.set(accountLogin, current)
+    }
+    return [...groups.entries()]
+  }, [repos])
 
   if (!appConfig?.configured) {
     return (
@@ -57,8 +77,6 @@ export function RepoSelector({
       </div>
     )
   }
-
-  const repos = data?.pages.flatMap((p) => p.repos) ?? []
 
   return (
     <div className="space-y-3">
@@ -84,20 +102,29 @@ export function RepoSelector({
             : t("repo.none")}
         </p>
       ) : (
-        <ul
-          className="scrollbar-thin max-h-[clamp(14rem,88dvh_-_40rem,34rem)] divide-y divide-border overflow-y-auto rounded-md border border-border"
-          role="listbox"
-          aria-label={t("repo.repositories")}
-        >
-          {repos.map((repo) => (
-            <RepoItem
-              key={repo.id}
-              repo={repo}
-              isSelected={selected?.fullName === repo.fullName}
-              onSelect={onSelect}
-            />
+        <div className="scrollbar-thin max-h-[clamp(14rem,88dvh_-_40rem,34rem)] overflow-y-auto rounded-md border border-border">
+          {groupedRepos.map(([accountLogin, accountRepos]) => (
+            <section key={accountLogin} className="border-b border-border last:border-b-0">
+              <h3 className="bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+                {accountLogin}
+              </h3>
+              <ul
+                className="divide-y divide-border"
+                role="listbox"
+                aria-label={accountLogin}
+              >
+                {accountRepos.map((repo) => (
+                  <RepoItem
+                    key={repo.id}
+                    repo={repo}
+                    isSelected={selected?.fullName === repo.fullName}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
       )}
 
       {hasNextPage && (

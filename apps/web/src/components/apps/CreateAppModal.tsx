@@ -572,7 +572,8 @@ export function CreateAppModal({
     isLoading: ghBranchesLoading,
     error: ghBranchesError,
   } = useGitHubBranches(
-    form.source === "github" ? form.selectedRepo?.fullName : undefined
+    form.source === "github" ? form.selectedRepo?.fullName : undefined,
+    organizationId
   )
   const {
     data: glBranches,
@@ -589,7 +590,8 @@ export function CreateAppModal({
   const repositoryTargets = useRepositoryTargets(
     classifierSource,
     classifierSource ? form.selectedRepo?.fullName : undefined,
-    form.branch || undefined
+    form.branch || undefined,
+    organizationId
   )
   const targets = repositoryTargets.data?.targets
   const selectedTarget = targets?.find(
@@ -605,7 +607,8 @@ export function CreateAppModal({
     classifierSource,
     classifierSource ? form.selectedRepo?.fullName : undefined,
     form.branch || undefined,
-    form.rootDir || undefined
+    form.rootDir || undefined,
+    organizationId
   )
   const targetClassification = selectedTarget?.classification ?? null
   const classification = targetClassification ?? classifier.data ?? null
@@ -1202,6 +1205,7 @@ export function CreateAppModal({
                   branchesNeedInstall={branchesNeedInstall}
                   generatedPublicUrl={generatedPublicUrl}
                   onOpenBranchDialog={openBranchDialog}
+                  organizationId={organizationId}
                   gitLabAvailability={gitLabAvailability}
                 />
               )}
@@ -1241,6 +1245,7 @@ export function CreateAppModal({
                   probes={classifier.probes}
                   source={form.source}
                   repoFullName={form.selectedRepo?.fullName}
+                  organizationId={organizationId}
                   branch={form.branch}
                   rootDir={form.rootDir}
                   database={form.database}
@@ -1675,6 +1680,7 @@ interface SourceStepProps {
   branchesNeedInstall: boolean
   generatedPublicUrl: string
   onOpenBranchDialog: () => void
+  organizationId?: string
   gitLabAvailability: { enabled: boolean; reason: string | null }
 }
 
@@ -1689,6 +1695,7 @@ function SourceStep({
   branchesNeedInstall,
   generatedPublicUrl,
   onOpenBranchDialog,
+  organizationId,
   gitLabAvailability,
 }: SourceStepProps): React.JSX.Element {
   const { t } = useTranslation("apps")
@@ -1760,7 +1767,11 @@ function SourceStep({
           branchesNeedInstall={branchesNeedInstall}
           onOpenBranchDialog={onOpenBranchDialog}
         >
-          <RepoSelector selected={form.selectedRepo} onSelect={onRepoSelect} />
+          <RepoSelector
+            selected={form.selectedRepo}
+            onSelect={onRepoSelect}
+            organizationId={organizationId}
+          />
         </GitSection>
       )}
 
@@ -3631,6 +3642,7 @@ function EnvStep({
   probes,
   source,
   repoFullName,
+  organizationId,
   branch,
   rootDir,
   database,
@@ -3642,6 +3654,7 @@ function EnvStep({
   probes: ProbeResults | undefined
   source: SourceKind
   repoFullName?: string
+  organizationId?: string
   branch: string
   rootDir: string
   database: DatabaseSelection
@@ -3813,6 +3826,7 @@ function EnvStep({
         ref: branch,
         path: selectedEnvFile,
         rootDir: rootDir || undefined,
+        organizationId,
       })
       const ignoredKeys = new Set<string>()
       const next = vars.filter((item) => {

@@ -54,6 +54,7 @@ export interface AppInstallation {
   id: number
   accountLogin: string
   accountType: string
+  granted?: boolean
   repositorySelection: "all" | "selected"
   suspendedAt: string | null
   htmlUrl: string
@@ -64,6 +65,7 @@ export interface AppInstallation {
 export interface InstallationsResponse {
   installations: Array<AppInstallation>
   installUrl: string
+  claimableInstallations?: Array<AppInstallation>
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ interface ReposPage {
 interface ReposParams {
   search?: string
   perPage?: number
+  organizationId?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -85,15 +88,20 @@ interface ReposParams {
 // ---------------------------------------------------------------------------
 
 export function useGitHubRepos(params: ReposParams = {}) {
-  const { search, perPage = 30 } = params
+  const { search, perPage = 30, organizationId } = params
 
   return useInfiniteQuery<ReposPage, ApiError>({
-    queryKey: ["github", "repos", search ?? ""],
+    queryKey: ["github", "repos", organizationId ?? "", search ?? ""],
     queryFn: ({ pageParam }) => {
       const page = (pageParam as number | undefined) ?? 1
-      const searchParam = search ? `&search=${encodeURIComponent(search)}` : ""
+      const query = new URLSearchParams({
+        page: String(page),
+        per_page: String(perPage),
+      })
+      if (search) query.set("search", search)
+      if (organizationId) query.set("organizationId", organizationId)
       return apiFetch<ReposPage>(
-        `/github/repos?page=${page}&per_page=${perPage}${searchParam}`
+        `/github/repos?${query.toString()}`
       )
     },
     getNextPageParam: (last, pages) =>
@@ -119,16 +127,22 @@ export interface GitHubBranchesResult {
   needsInstall: boolean
 }
 
-export function useGitHubBranches(fullName?: string) {
+export function useGitHubBranches(
+  fullName?: string,
+  organizationId?: string
+) {
   return useQuery<GitHubBranchesResult, ApiError>({
-    queryKey: ["github", "branches", fullName ?? ""],
+    queryKey: ["github", "branches", organizationId ?? "", fullName ?? ""],
     queryFn: async () => {
       if (!fullName) return { branches: [], needsInstall: false }
       const [owner, repo] = fullName.split("/")
+      const query = organizationId
+        ? `?organizationId=${encodeURIComponent(organizationId)}`
+        : ""
       const res = await apiFetch<{
         branches: Array<GitBranch>
         needsInstall?: boolean
-      }>(`/github/repos/${owner}/${repo}/branches`)
+      }>(`/github/repos/${owner}/${repo}/branches${query}`)
       return { branches: res.branches, needsInstall: res.needsInstall ?? false }
     },
     enabled: Boolean(fullName),
@@ -143,15 +157,28 @@ export function useGitHubBranches(fullName?: string) {
 export function useGitHubFileExists(
   fullName: string | undefined,
   filePath: string,
-  ref: string | undefined
+  ref: string | undefined,
+  organizationId?: string
 ) {
   return useQuery<boolean, ApiError>({
-    queryKey: ["github", "file-exists", fullName ?? "", filePath, ref ?? ""],
+    queryKey: [
+      "github",
+      "file-exists",
+      organizationId ?? "",
+      fullName ?? "",
+      filePath,
+      ref ?? "",
+    ],
     queryFn: async () => {
       if (!fullName || !ref) return false
       const [owner, repo] = fullName.split("/")
+      const query = new URLSearchParams({
+        path: filePath,
+        ref,
+      })
+      if (organizationId) query.set("organizationId", organizationId)
       const res = await apiFetch<{ exists: boolean }>(
-        `/github/repos/${owner}/${repo}/file-exists?path=${encodeURIComponent(filePath)}&ref=${encodeURIComponent(ref)}`
+        `/github/repos/${owner}/${repo}/file-exists?${query.toString()}`
       )
       return res.exists
     },
@@ -385,6 +412,31 @@ export function useInstallations() {
   })
 }
 
+/** Installations granted to one Ploydok organization, plus optional claims. */
+export function useOrganizationGitHubInstallations(
+  organizationId?: string
+) {
+  return useQuery<InstallationsResponse, ApiError>({
+    queryKey: ["github", "installations", organizationId ?? ""],
+    queryFn: () => {
+      const query = new URLSearchParams()
+      if (organizationId) query.set("organizationId", organizationId)
+      return apiFetch<InstallationsResponse>(
+        `/github/installations?${query.toString()}`
+      )
+    },
+    enabled: Boolean(organizationId),
+    staleTime: 5_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
+    retry: (failureCount, error) => {
+      if (error.status === 401 || error.status === 403 || error.status === 503)
+        return false
+      return failureCount < 2
+    },
+  })
+}
+
 // ---------------------------------------------------------------------------
 // useRemoveGitHubInstallation — role-aware DELETE /github/installations/:id
 // ---------------------------------------------------------------------------
@@ -406,6 +458,42 @@ export function useRemoveGitHubInstallation() {
       qc.invalidateQueries({ queryKey: ["github", "installations"] })
       qc.invalidateQueries({ queryKey: ["github", "repos"] })
       qc.invalidateQueries({ queryKey: ["git-providers", "status"] })
+    },
+  })
+}
+
+export interface OrganizationGitHubInstallationGrantVariables {
+  organizationId: string
+  installationId: number | string
+}
+
+export function useRevokeOrganizationGitHubInstallation() {
+  const qc = useQueryClient()
+  return useMutation<
+    { ok: true; revoked: boolean; installationId: string },
+    ApiError,
+    OrganizationGitHubInstallationGrantVariables
+  >({
+    mutationFn: ({ organizationId, installationId }) =>
+      apiFetch<{
+        ok: true
+        revoked: boolean
+        installationId: string
+      }>(
+        `/github/installations/${encodeURIComponent(String(installationId))}/grant?organizationId=${encodeURIComponent(organizationId)}`,
+        { method: "DELETE" }
+      ),
+    onSuccess: async (_result, variables) => {
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: ["github", "installations", variables.organizationId],
+        }),
+        qc.invalidateQueries({ queryKey: ["github", "repos"] }),
+        qc.invalidateQueries({ queryKey: ["github", "branches"] }),
+        qc.invalidateQueries({ queryKey: ["github", "file-exists"] }),
+        qc.invalidateQueries({ queryKey: ["repository-targets"] }),
+        qc.invalidateQueries({ queryKey: ["stack-classifier"] }),
+      ])
     },
   })
 }

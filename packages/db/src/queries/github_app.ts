@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Db } from '../client';
-import { and, eq, sql } from "drizzle-orm"
+import { and, eq, or, sql } from "drizzle-orm"
 import {
   github_app,
   github_installation_users,
-  provider_credentials,
+  org_github_installations,
   provider_installations,
+  provider_credentials,
 } from "../schema"
 
 const SINGLETON_ID = 'singleton';
@@ -175,6 +176,136 @@ export async function userOwnsGitHubInstallation(
     )
     .limit(1)
   return rows.length > 0
+}
+
+function githubInstallationDbId(installationId: string): string {
+  return installationId.startsWith("github:")
+    ? installationId
+    : `github:${installationId}`
+}
+
+/** Grants an installation to one Ploydok organization. */
+export async function grantGitHubInstallationToOrganization(
+  db: Db,
+  orgId: string,
+  installationId: string,
+  grantedBy: string
+): Promise<void> {
+  const now = new Date()
+  await db
+    .insert(org_github_installations)
+    .values({
+      org_id: orgId,
+      installation_id: githubInstallationDbId(installationId),
+      granted_by: grantedBy,
+      created_at: now,
+      updated_at: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        org_github_installations.org_id,
+        org_github_installations.installation_id,
+      ],
+      set: { granted_by: grantedBy, updated_at: now },
+    })
+}
+
+/** Removes an organization's explicit grant without touching the installation. */
+export async function revokeGitHubInstallationFromOrganization(
+  db: Db,
+  orgId: string,
+  installationId: string
+): Promise<boolean> {
+  const rows = await db
+    .delete(org_github_installations)
+    .where(
+      and(
+        eq(org_github_installations.org_id, orgId),
+        eq(
+          org_github_installations.installation_id,
+          githubInstallationDbId(installationId)
+        )
+      )
+    )
+    .returning({ org_id: org_github_installations.org_id })
+  return rows.length > 0
+}
+
+/** Checks only explicit organization grants, never a caller's personal link. */
+export async function organizationHasGitHubInstallationGrant(
+  db: Db,
+  orgId: string,
+  installationId: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ org_id: org_github_installations.org_id })
+    .from(org_github_installations)
+    .where(
+      and(
+        eq(org_github_installations.org_id, orgId),
+        eq(
+          org_github_installations.installation_id,
+          githubInstallationDbId(installationId)
+        )
+      )
+    )
+    .limit(1)
+  return rows.length > 0
+}
+
+export async function listGitHubInstallationIdsForOrganization(
+  db: Db,
+  orgId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ installation_id: org_github_installations.installation_id })
+    .from(org_github_installations)
+    .where(eq(org_github_installations.org_id, orgId))
+  return rows.map((row) => row.installation_id.replace(/^github:/, ""))
+}
+
+/** Lists organization grants plus the caller's own personal GitHub install. */
+export async function listGitHubInstallationIdsForOrganizationAndUser(
+  db: Db,
+  orgId: string,
+  userId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ installation_id: org_github_installations.installation_id })
+    .from(org_github_installations)
+    .where(eq(org_github_installations.org_id, orgId))
+
+  const personalRows = await db
+    .select({ installation_id: provider_installations.external_id })
+    .from(github_installation_users)
+    .innerJoin(
+      provider_installations,
+      or(
+        eq(
+          provider_installations.id,
+          sql`'github:' || regexp_replace(${github_installation_users.installation_id}, '^github:', '')`
+        ),
+        eq(
+          provider_installations.external_id,
+          sql`regexp_replace(${github_installation_users.installation_id}, '^github:', '')`
+        )
+      )
+    )
+    .where(
+      and(
+        eq(github_installation_users.user_id, userId),
+        eq(provider_installations.provider, "github"),
+        eq(provider_installations.account_type, "User")
+      )
+    )
+
+  return Array.from(
+    new Set(
+      [...rows.map((row) => row.installation_id),
+        ...personalRows.map((row) => row.installation_id),
+      ].map((id) => id.replace(/^github:/, ""))
+    )
+  )
 }
 
 export async function deleteGitHubInstallationUser(

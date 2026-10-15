@@ -225,7 +225,32 @@
     "deleteConfirm": "Supprimer cet espace ?",
     "deleteBody": "Toutes les ressources de {{name}} seront supprimées en cascade — applications, bases, domaines, variables d'environnement, historique d'audit. Irréversible.",
     "typeToConfirm": "Saisissez {{name}} pour confirmer",
-    "deleting": "Suppression…"
+    "deleting": "Suppression…",
+    "github": "GitHub"
+  },
+  "github": {
+    "title": "Dépôts GitHub",
+    "description": "Choisissez les installations GitHub App que cet espace peut utiliser pour ses déploiements.",
+    "ownerOnly": "Seuls les owners de l'espace peuvent gérer les installations GitHub.",
+    "install": "Installer sur un compte GitHub",
+    "claim": "Accorder à l'espace",
+    "grant": "Accorder",
+    "revoke": "Révoquer",
+    "revokeConfirm": "Révoquer cette installation GitHub ?",
+    "revokeHint": "Les membres ne verront plus les dépôts de @{{login}}. Les applications existantes conservent leur référence d'installation.",
+    "cancel": "Annuler",
+    "empty": "Aucune installation GitHub n'est encore accordée à cet espace.",
+    "personal": "Installation personnelle",
+    "organization": "Organisation GitHub",
+    "claimableTitle": "Installations disponibles",
+    "claimableHint": "Ces installations sont liées à votre compte GitHub et peuvent être accordées à cet espace.",
+    "loading": "Chargement des installations GitHub…",
+    "loadFailed": "Impossible de charger les installations GitHub : {{message}}",
+    "installError": "L'installation GitHub n'a pas pu être terminée. Réessayez.",
+    "membersPermissionError": "GitHub n'a pas permis à Ploydok de vérifier la propriété de l'organisation. Activez Members: read sur la GitHub App, puis réessayez en approuvant l'accès demandé.",
+    "installed": "Installation GitHub accordée à cet espace.",
+    "revoked": "Installation GitHub révoquée pour cet espace.",
+    "revokeFailed": "Impossible de révoquer l'installation GitHub."
   },
   "sso": {
     "title": "Configuration SSO",

@@ -17,6 +17,7 @@ import {
   app_delete_jobs,
   app_deploy_leases,
   github_installation_users,
+  org_github_installations,
   gitlab_tokens,
   provider_installations,
   provider_repos,
@@ -63,6 +64,27 @@ afterAll(async () => {
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
 let rollbackCalls = 0
+
+async function grantTestInstallation(
+  db: TestDb,
+  orgId: string,
+  userId: string,
+  installationId: string
+) {
+  await db.insert(provider_installations).values({
+    id: `github:${installationId}`,
+    provider: "github",
+    external_id: installationId,
+    account_login: "owner",
+    account_type: "Organization",
+    last_synced_at: new Date(),
+  }).onConflictDoNothing()
+  await db.insert(org_github_installations).values({
+    org_id: orgId,
+    installation_id: `github:${installationId}`,
+    granted_by: userId,
+  })
+}
 
 describe("deriveCurrentBuildMetadata", () => {
   it("uses the latest successful build commit as the current deployed commit", () => {
@@ -596,6 +618,7 @@ describe.skipIf(skip)("POST /apps", () => {
       created_at: new Date(),
       updated_at: new Date(),
     })
+    await grantTestInstallation(db, projectId, userId, githubInstallationId)
     spyOn(gitlabConnectionModule, "resolveGitLabConnection").mockImplementation(
       async () => {
         if (!gitLabConnectionReady) throw new Error("not connected")
@@ -655,7 +678,9 @@ describe.skipIf(skip)("POST /apps", () => {
     }
   }, 15_000)
 
-  it("creates an app with valid body → 201 + app in response", async () => {
+  it("creates an app from an organization grant without a personal link", async () => {
+    await db.delete(github_installation_users)
+      .where(eq(github_installation_users.user_id, userId))
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await app.request("/apps", {
       method: "POST",
@@ -697,10 +722,10 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(body.app.id).toBeString()
   })
 
-  it("refuses a GitHub app when the user has not connected GitHub", async () => {
+  it("refuses a personal link without an organization grant", async () => {
     await db
-      .delete(github_installation_users)
-      .where(eq(github_installation_users.user_id, userId))
+      .delete(org_github_installations)
+      .where(eq(org_github_installations.org_id, projectId))
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
 
     const res = await app.request("/apps", {
@@ -718,7 +743,7 @@ describe.skipIf(skip)("POST /apps", () => {
 
     expect(res.status).toBe(412)
     expect(await res.json()).toMatchObject({
-      error: { code: "GIT_PROVIDER_NOT_CONNECTED" },
+      error: { code: "GITHUB_INSTALLATION_NOT_ACCESSIBLE" },
     })
 
     const imageRes = await app.request("/apps", {
@@ -734,7 +759,8 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(imageRes.status).toBe(201)
   })
 
-  it("refuses a GitHub installation owned by another user", async () => {
+  it("refuses an installation granted only to another organization", async () => {
+    const otherOrganization = await createTestProject(db, userId)
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
 
     const res = await app.request("/apps", {
@@ -742,9 +768,9 @@ describe.skipIf(skip)("POST /apps", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         name: "Blocked GitHub Installation",
-        projectId,
+        projectId: otherOrganization.id,
         gitProvider: "github",
-        installationId: "654321",
+        installationId: githubInstallationId,
         repoFullName: "owner/repo",
         branch: "main",
       }),
@@ -2247,6 +2273,7 @@ describe.skipIf(skip)("POST /apps — auto-inject suggestedEnvVars", () => {
       created_at: new Date(),
       updated_at: new Date(),
     })
+    await grantTestInstallation(db, projectId, userId, githubInstallationId)
   })
 
   it("Symfony repo: injects PHP root/fallback and composer allow-superuser", async () => {

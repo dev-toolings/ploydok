@@ -69,8 +69,7 @@ import {
   recordClaimedCreationSagaStep,
 } from "@ploydok/db/queries"
 import {
-  hasGitHubInstallationForUser,
-  userOwnsGitHubInstallation,
+  organizationHasGitHubInstallationGrant,
 } from "@ploydok/db/queries"
 import {
   assertGitLabProjectSelection,
@@ -1384,41 +1383,10 @@ export function createAppsRouter(db: Db): Hono {
       )
     }
 
-    const [hasGitHubConnection, gitLabConnected] = await Promise.all([
-      hasGitHubInstallationForUser(db, user.id),
-      resolveGitLabConnection(db, user.id).then(
-        () => true,
-        () => false
-      ),
-    ])
-    if (body.gitProvider === "github") {
-      if (!hasGitHubConnection) {
-        return c.json(
-          {
-            error: {
-              code: "GIT_PROVIDER_NOT_CONNECTED",
-              message: "Connect GitHub before creating a GitHub app",
-            },
-          },
-          412
-        )
-      }
-      if (
-        !body.installationId ||
-        !(await userOwnsGitHubInstallation(db, user.id, body.installationId))
-      ) {
-        return c.json(
-          {
-            error: {
-              code: "GITHUB_INSTALLATION_NOT_ACCESSIBLE",
-              message:
-                "The selected GitHub installation is not accessible to this user",
-            },
-          },
-          412
-        )
-      }
-    }
+    const gitLabConnected = await resolveGitLabConnection(db, user.id).then(
+      () => true,
+      () => false
+    )
     if (body.gitProvider === "gitlab" && !gitLabConnected) {
       return c.json(
         {
@@ -1491,6 +1459,27 @@ export function createAppsRouter(db: Db): Hono {
         user.display_name
       )
       projectId = organization.id
+    }
+
+    if (
+      body.gitProvider === "github" &&
+      (!body.installationId ||
+        !(await organizationHasGitHubInstallationGrant(
+          db,
+          projectId,
+          body.installationId
+        )))
+    ) {
+      return c.json(
+        {
+          error: {
+            code: "GITHUB_INSTALLATION_NOT_ACCESSIBLE",
+            message:
+              "The selected GitHub installation is not granted to this organization",
+          },
+        },
+        412
+      )
     }
 
     const creationKey = body.idempotencyKey ?? null
@@ -2050,13 +2039,18 @@ export function createAppsRouter(db: Db): Hono {
         body.installationId ?? existing.github_installation_id
       if (
         !installationId ||
-        !(await userOwnsGitHubInstallation(db, user.id, installationId))
+        !(await organizationHasGitHubInstallationGrant(
+          db,
+          existing.project_id,
+          installationId
+        ))
       ) {
         return c.json(
           {
             error: {
               code: "GITHUB_INSTALLATION_NOT_ACCESSIBLE",
-              message: "The selected GitHub installation is not accessible",
+              message:
+                "The selected GitHub installation is not granted to this organization",
             },
           },
           412
