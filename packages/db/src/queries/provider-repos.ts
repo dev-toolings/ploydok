@@ -24,6 +24,11 @@ export type ProviderInstallationRow = InferSelectModel<
   typeof provider_installations
 >
 export type ProviderRepoRow = InferSelectModel<typeof provider_repos>
+/** An unknown App (undefined) never overwrites an installation's stored App. */
+export type ProviderInstallationInput = Omit<
+  ProviderInstallationRow,
+  "github_app_id"
+> & { github_app_id?: string | null | undefined }
 
 // ---------------------------------------------------------------------------
 // Repos
@@ -78,7 +83,7 @@ export async function listRepos(
 
 export async function upsertInstallation(
   db: Db,
-  row: ProviderInstallationRow
+  row: ProviderInstallationInput
 ): Promise<void> {
   await db
     .insert(provider_installations)
@@ -99,6 +104,9 @@ export async function upsertInstallation(
         html_url: row.html_url,
         avatar_url: row.avatar_url,
         repository_count: row.repository_count,
+        ...(row.github_app_id !== undefined
+          ? { github_app_id: row.github_app_id }
+          : {}),
         last_synced_at: sql`now()`,
       },
     })
@@ -296,7 +304,7 @@ async function replaceInstallationReposInTransaction(
 /** Atomically publishes installation freshness and its complete repository set. */
 export async function replaceInstallationSnapshot(
   db: Db,
-  installation: ProviderInstallationRow,
+  installation: ProviderInstallationInput,
   rows: ProviderRepoRow[]
 ): Promise<void> {
   await db.transaction(async (tx) => {

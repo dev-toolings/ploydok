@@ -14,6 +14,8 @@ import { env } from "../env"
 import { GitHubAppCredentialsError } from "../github/errors"
 
 let mockGitHubAppConfig: Record<string, unknown> | null = null
+let extraGitHubApps: Array<Record<string, unknown> & { id: string }> = []
+type StoredGitHubApp = Record<string, unknown> & { id: string }
 let lockedGitHubAppConfigOverride: Record<string, unknown> | null | undefined
 let decryptAppPrivateKeyFailure: Error | null = null
 const importedConfigs: Array<Record<string, unknown>> = []
@@ -225,11 +227,26 @@ mock.module("../webhooks/deliveries", () => ({
 // Only override the GitHub-app config getters — other queries (jobs, builds…)
 // must keep their real implementations because `mock.module` is process-wide
 // in Bun and would otherwise break sibling test files.
+// Stored App rows always carry their row id; the fixtures leave it implicit.
+const storedGitHubAppConfig = () =>
+  mockGitHubAppConfig ? { id: "singleton", ...mockGitHubAppConfig } : null
+const storedGitHubApps = (): StoredGitHubApp[] => {
+  const config = storedGitHubAppConfig()
+  return [...(config ? [config] : []), ...extraGitHubApps]
+}
 mock.module("@ploydok/db/queries", () => ({
   ...realQueries,
-  getGitHubAppConfig: async () => mockGitHubAppConfig,
+  getGitHubAppConfig: async (_db: unknown, id?: string) =>
+    id
+      ? (storedGitHubApps().find((app) => app.id === id) ?? null)
+      : storedGitHubAppConfig(),
+  getGitHubAppConfigByAppId: async (_db: unknown, appId: string) =>
+    storedGitHubApps().find((app) => app.app_id === appId) ?? null,
+  getGitHubAppConfigForInstallation: async () => storedGitHubAppConfig(),
+  listGitHubAppConfigs: async () => storedGitHubApps(),
   saveGitHubAppConfig: async (_db: unknown, cfg: Record<string, unknown>) => {
     importedConfigs.push(cfg)
+    return "singleton"
   },
   deleteGitHubAppConfig: async () => {
     deleteConfigCalls += 1
@@ -237,10 +254,11 @@ mock.module("@ploydok/db/queries", () => ({
   lockGitHubAppConfigForReset: async () => {
     lockConfigCalls += 1
     return lockedGitHubAppConfigOverride === undefined
-      ? mockGitHubAppConfig
-      : lockedGitHubAppConfigOverride
+      ? storedGitHubAppConfig()
+      : lockedGitHubAppConfigOverride &&
+          { id: "singleton", ...lockedGitHubAppConfigOverride }
   },
-  lockGitHubAppConfigForUse: async () => mockGitHubAppConfig,
+  lockGitHubAppConfigForUse: async () => storedGitHubAppConfig(),
   deleteGitHubAppLocalState: async () => {
     deletedTables.push(fakeProviderCredentials, fakeProviderInstallations)
     deleteInstallationUsersCalls += 1
@@ -386,6 +404,7 @@ function extractCookie(headers: Headers, name: string): string {
 
 beforeEach(() => {
   mockGitHubAppConfig = null
+  extraGitHubApps = []
   lockedGitHubAppConfigOverride = undefined
   decryptAppPrivateKeyFailure = null
   importedConfigs.length = 0
@@ -509,6 +528,72 @@ describe("POST /github/webhook", () => {
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: "invalid signature" })
     expect(deliveryInserts).toHaveLength(0)
+  })
+
+  it("accepts a delivery signed by a second GitHub App", async () => {
+    mockGitHubAppConfig = {
+      app_id: "1",
+      webhook_secret_enc: Buffer.from("enc:personal-secret"),
+      webhook_secret_nonce: Buffer.from("nonce"),
+    }
+    extraGitHubApps = [
+      {
+        id: "ghapp_org",
+        app_id: "2",
+        webhook_secret_enc: Buffer.from("enc:org-secret"),
+        webhook_secret_nonce: Buffer.from("nonce"),
+      },
+    ]
+    const body = JSON.stringify({ zen: "ok" })
+    const signature =
+      "sha256=" + createHmac("sha256", "org-secret").update(body).digest("hex")
+
+    const res = await buildApp().request("/github/webhook", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signature,
+        "X-GitHub-Event": "ping",
+        "X-GitHub-Delivery": "delivery-org-app",
+        "X-GitHub-Hook-Installation-Target-ID": "2",
+      },
+      body,
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+})
+
+describe("POST /github/app/manifest", () => {
+  it("registers an organization App under that organization", async () => {
+    const res = await buildApp(FAKE_USER).request("/github/app/manifest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organization: "dev-toolings" }),
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      post_url: string
+      manifest: { name: string; public: boolean }
+    }
+    expect(body.post_url).toStartWith(
+      "https://github.com/organizations/dev-toolings/settings/apps/new?state="
+    )
+    expect(body.manifest.name).toContain("dev-toolings")
+    expect(body.manifest.public).toBe(false)
+  })
+
+  it("rejects an invalid GitHub organization login", async () => {
+    const res = await buildApp(FAKE_USER).request("/github/app/manifest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organization: "../evil" }),
+    })
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: "invalid_github_organization" })
   })
 })
 
@@ -1533,6 +1618,27 @@ describe("GET /github/installations/start", () => {
         message: "Token missing required scope: apps:write",
       },
     })
+  })
+
+  it("requires choosing an App when several are configured", async () => {
+    mockGitHubAppConfig = { slug: "ploydok-personal" }
+    extraGitHubApps = [{ id: "ghapp_org", slug: "ploydok-org" }]
+
+    const res = await buildApp(FAKE_USER).request(
+      "/github/installations/start?organizationId=org-1"
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get("location")).toContain(
+      "install_error=github_app_required"
+    )
+
+    const chosen = await buildApp(FAKE_USER).request(
+      "/github/installations/start?organizationId=org-1&appId=ghapp_org"
+    )
+    expect(chosen.status).toBe(302)
+    expect(chosen.headers.get("location")).toContain(
+      "https://github.com/apps/ploydok-org/installations/new?state="
+    )
   })
 
   it("allows an authenticated organization owner to start an installation", async () => {

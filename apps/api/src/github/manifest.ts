@@ -4,7 +4,11 @@ export interface ManifestOptions {
   webBaseUrl: string // e.g. http://localhost:5173
   apiBaseUrl: string // e.g. http://localhost:3335
   webhookUrl?: string // Public webhook URL (ngrok/cloudflared). Omit in local dev.
+  ownerLogin?: string // GitHub organization that will own the App.
 }
+
+// GitHub App names are unique across GitHub and limited to 34 characters.
+const GITHUB_APP_NAME_MAX = 34
 
 function isLoopbackHost(url: string): boolean {
   try {
@@ -32,8 +36,17 @@ export function buildManifest(opts: ManifestOptions) {
       ? null
       : `${opts.apiBaseUrl}/github/webhook`)
 
+  const hostname = new URL(opts.webBaseUrl).hostname
+  const name = (
+    opts.ownerLogin
+      ? `Ploydok ${opts.ownerLogin} (${hostname})`
+      : `Ploydok (${hostname})`
+  )
+    .slice(0, GITHUB_APP_NAME_MAX)
+    .trim()
+
   const base = {
-    name: `Ploydok (${new URL(opts.webBaseUrl).hostname})`,
+    name,
     url: opts.webBaseUrl,
     redirect_url: `${opts.apiBaseUrl}/github/app/callback`,
     callback_urls: [`${opts.apiBaseUrl}/github/app/callback`],

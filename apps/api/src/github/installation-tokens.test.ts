@@ -16,7 +16,7 @@ mock.module("@ploydok/db", () => ({
 
 mock.module("@ploydok/db/queries", () => ({
   ...realQueries,
-  getGitHubAppConfig: async () => {
+  getGitHubAppConfigForInstallation: async () => {
     configReads += 1
     return currentConfig
   },
@@ -75,7 +75,7 @@ describe("getInstallationToken cache fencing", () => {
     currentConfig = null
 
     await expect(getInstallationToken("42")).rejects.toThrow(
-      "GitHub App not configured"
+      "No GitHub App owns this installation"
     )
     expect(fetchCalls).toBe(1)
     expect(configReads).toBe(3)

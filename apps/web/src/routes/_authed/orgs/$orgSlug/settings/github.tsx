@@ -43,7 +43,8 @@ function flowUrl(
   installUrl: string,
   organizationId: string,
   returnTo: string,
-  installationId?: number
+  installationId?: number,
+  appId?: string
 ): string {
   const url = new URL(installUrl, window.location.origin)
   url.pathname = installationId
@@ -52,6 +53,7 @@ function flowUrl(
   url.search = ""
   url.searchParams.set("organizationId", organizationId)
   url.searchParams.set("return_to", returnTo)
+  if (appId) url.searchParams.set("appId", appId)
   return url.toString()
 }
 
@@ -78,6 +80,8 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
     | "error"
     | null
   >(null)
+  const [pendingAppId, setPendingAppId] = React.useState<string | null>(null)
+  const installTargets = installationsQuery.data?.installTargets ?? []
   const externalFlow = usePendingAction(
     async (url: string): Promise<void> => {
       window.location.href = url
@@ -112,16 +116,19 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
     )
   }, [])
 
-  const startInstall = (installationId?: number): void => {
+  const startInstall = (installationId?: number, appId?: string): void => {
     if (!organizationId || !installationsQuery.data?.installUrl) return
     const returnTo = window.location.pathname
+    setPendingAppId(appId ?? null)
     void externalFlow
       .run(
         flowUrl(
           installationsQuery.data.installUrl,
           organizationId,
           returnTo,
-          installationId
+          installationId,
+          appId ??
+            (installTargets.length === 1 ? installTargets[0]?.appId : undefined)
         )
       )
       .catch(() => undefined)
@@ -177,15 +184,36 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
                 <CardDescription>{t("github.description")}</CardDescription>
               </div>
             </div>
-            {isOwner && (
+            {isOwner && installTargets.length > 1 && (
+              <div className="flex flex-col gap-2 self-start sm:shrink-0 sm:flex-row sm:flex-wrap sm:justify-end">
+                {installTargets.map((target) => (
+                  <Button
+                    key={target.appId}
+                    size="sm"
+                    loading={
+                      externalFlow.pending && pendingAppId === target.appId
+                    }
+                    disabled={!organizationId || externalFlow.pending}
+                    onClick={() => startInstall(undefined, target.appId)}
+                  >
+                    {t("github.installOn", {
+                      owner: target.ownerLogin ?? target.name,
+                    })}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {isOwner && installTargets.length <= 1 && (
               <Button
                 size="sm"
                 className="self-start sm:shrink-0"
-                loading={externalFlow.pending}
+                loading={externalFlow.pending && pendingAppId === null}
                 disabled={!organizationId || !installationsQuery.data?.installUrl}
                 onClick={() => startInstall()}
               >
-                {t("github.install")}
+                {installTargets[0]?.ownerLogin
+                  ? t("github.installOn", { owner: installTargets[0].ownerLogin })
+                  : t("github.install")}
               </Button>
             )}
           </div>
