@@ -33,6 +33,7 @@ mod audit_signer;
 mod boot_guard;
 mod host_stats;
 mod pki;
+#[allow(clippy::result_large_err)]
 mod service;
 mod socket_config;
 mod validator;

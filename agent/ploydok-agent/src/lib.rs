@@ -7,6 +7,9 @@ pub mod audit_signer;
 pub mod boot_guard;
 pub mod host_stats;
 pub mod pki;
+// tonic::Status is the gRPC error type of every service helper; boxing it
+// would only add noise at each call site.
+#[allow(clippy::result_large_err)]
 pub mod service;
 pub mod socket_config;
 pub mod validator;
