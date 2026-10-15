@@ -164,4 +164,3 @@ describe("S3 destination witness testing", () => {
     )
   })
 })
-

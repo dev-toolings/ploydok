@@ -384,4 +384,3 @@ describe.skipIf(skip)("workspace storage destination routes", () => {
     expect(failedRow[0]?.last_test_error).toBe("Storage destination test failed")
   })
 })
-

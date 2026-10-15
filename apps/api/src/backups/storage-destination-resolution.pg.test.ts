@@ -108,4 +108,3 @@ describe.skipIf(skip)("shared backup destination resolution", () => {
     expect(volumeConfig.s3_prefix).toBe("volume/tenant-a")
   })
 })
-

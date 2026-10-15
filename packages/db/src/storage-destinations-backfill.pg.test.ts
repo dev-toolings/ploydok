@@ -351,4 +351,3 @@ describe.skipIf(skip)("storage destination legacy backfill", () => {
     ).toHaveLength(3)
   })
 })
-
