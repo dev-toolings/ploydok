@@ -27,7 +27,9 @@ function isomorphicRandomUUID(): string {
 
 export interface DslContext {
   projectSlug: string
-  serverIp?: string
+  domainBase?: string | undefined
+  publicOrigin?: string | undefined
+  publicScheme?: "http" | "https" | undefined
 }
 
 export interface ResolveResult {
@@ -66,10 +68,72 @@ function numericArg(varName: string, defaultVal: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal
 }
 
-export function generateDomain(projectSlug: string, serverIp?: string): string {
+function normalizeDomainBase(domainBase: string | undefined): string {
+  const value = domainBase?.trim() ?? ""
+  if (!value) return "demo.localhost"
+  try {
+    const parsed = new URL(value.includes("://") ? value : `http://${value}`)
+    return parsed.hostname.replace(/\.$/, "").toLowerCase()
+  } catch {
+    return value
+      .replace(/^\w+:\/\//, "")
+      .replace(/\/$/, "")
+      .toLowerCase()
+  }
+}
+
+function generatedDomainOrigin(
+  domain: string,
+  context: Pick<DslContext, "publicOrigin" | "publicScheme">
+): string {
+  let port = ""
+  let originScheme = context.publicScheme ?? "https"
+  if (context.publicOrigin) {
+    try {
+      const origin = new URL(context.publicOrigin)
+      port = origin.port ? `:${origin.port}` : ""
+      if (
+        !context.publicScheme &&
+        (origin.protocol === "http:" || origin.protocol === "https:")
+      ) {
+        originScheme = origin.protocol.slice(0, -1) as "http" | "https"
+      }
+    } catch {
+      // The explicit scheme remains a safe fallback for malformed optional origins.
+    }
+  }
+  return `${originScheme}://${domain}${port}`
+}
+
+export function rewriteGeneratedDomainUrls(
+  value: string,
+  generatedDomain: string | readonly string[] | null,
+  context: Pick<DslContext, "publicOrigin" | "publicScheme">
+): string {
+  const domains = Array.isArray(generatedDomain)
+    ? generatedDomain
+    : generatedDomain
+      ? [generatedDomain]
+      : []
+  return domains.reduce((result, domain) => {
+    const escapedDomain = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const targetOrigin = generatedDomainOrigin(domain, context)
+    return result.replace(
+      new RegExp(
+        `https?://${escapedDomain}(?::\\d+)?(?![A-Za-z0-9.@_:-])`,
+        "gi"
+      ),
+      targetOrigin
+    )
+  }, value)
+}
+
+export function generateDomain(
+  projectSlug: string,
+  domainBase?: string
+): string {
   const hash = randomBytesHex(3)
-  const slugIp = serverIp ? serverIp.replaceAll(".", "-") : ""
-  return `${projectSlug}-${hash}${slugIp === "" ? "" : `-${slugIp}`}.traefik.me`
+  return `${projectSlug}-${hash}.${normalizeDomainBase(domainBase)}`
 }
 
 function generatePassword(length: number): string {
@@ -115,7 +179,7 @@ export function resolveTemplate(
     let value: string
 
     if (varName === "domain") {
-      value = generateDomain(context.projectSlug, context.serverIp)
+      value = generateDomain(context.projectSlug, context.domainBase)
       domain = value
     } else if (varName === "password") {
       value = generatePassword(16)
@@ -146,5 +210,13 @@ export function resolveTemplate(
     return value
   })
 
-  return { composeResolved, generatedVars, domain }
+  return {
+    composeResolved: rewriteGeneratedDomainUrls(
+      composeResolved,
+      domain,
+      context
+    ),
+    generatedVars,
+    domain,
+  }
 }

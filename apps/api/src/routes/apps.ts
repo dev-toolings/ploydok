@@ -102,6 +102,12 @@ import {
   DEFAULT_DATABASE_ENV_PREFIX,
   parseConnectionString,
 } from "./apps-databases-link"
+import {
+  buildPublicUrl as buildDomainPublicUrl,
+  deriveDefaultAppDomainBase,
+} from "../domains/app-domain"
+
+export { deriveDefaultAppDomainBase } from "../domains/app-domain"
 
 // ---------------------------------------------------------------------------
 // Validation schemas
@@ -390,59 +396,6 @@ export async function removeQueuedDeployBuild(
   }
 }
 
-function normalizeHostname(value: string | null | undefined): string {
-  const raw = value?.trim()
-  if (!raw) return ""
-  try {
-    const parsed = new URL(raw.includes("://") ? raw : `http://${raw}`)
-    return parsed.hostname.replace(/\.$/, "").toLowerCase()
-  } catch {
-    return raw
-      .replace(/^\w+:\/\//, "")
-      .replace(/:\d+$/, "")
-      .replace(/\.$/, "")
-      .toLowerCase()
-  }
-}
-
-function isIpv4Host(host: string): boolean {
-  const parts = host.split(".")
-  return (
-    parts.length === 4 &&
-    parts.every((part) => {
-      if (!/^\d{1,3}$/.test(part)) return false
-      const n = Number(part)
-      return n >= 0 && n <= 255
-    })
-  )
-}
-
-export function deriveDefaultAppDomainBase(opts: {
-  explicitBase?: string | null | undefined
-  publicHost?: string | null | undefined
-}): string {
-  const explicitBase = normalizeHostname(opts.explicitBase)
-  if (explicitBase) return explicitBase
-
-  const publicHost = normalizeHostname(opts.publicHost)
-  if (isIpv4Host(publicHost)) {
-    return `${publicHost.replace(/\./g, "-")}.sslip.io`
-  }
-
-  // `.localhost` resolves to loopback without any DNS or /etc/hosts entry, and
-  // wildcards work out of the box. A `.local` base would be swallowed by mDNS
-  // on most Linux hosts (`nsswitch` stops at `[NOTFOUND=return]`).
-  if (
-    !publicHost ||
-    publicHost === "localhost" ||
-    publicHost.endsWith(".local")
-  ) {
-    return "demo.localhost"
-  }
-
-  return `apps.${publicHost}`
-}
-
 function dnsSafeToken(value: string, length: number): string {
   const token = value
     .toLowerCase()
@@ -552,9 +505,10 @@ async function resolveDeployJobAppIdFromPayload(
 }
 
 function buildPublicUrl(domain: string | null): string | null {
-  if (!domain) return null
-  const port = env.PLOYDOK_PUBLIC_PORT ? `:${env.PLOYDOK_PUBLIC_PORT}` : ""
-  return `${env.PLOYDOK_PUBLIC_SCHEME}://${domain}${port}`
+  return buildDomainPublicUrl(domain, {
+    scheme: env.PLOYDOK_PUBLIC_SCHEME,
+    port: env.PLOYDOK_PUBLIC_PORT,
+  })
 }
 
 export function deriveCurrentBuildMetadata(

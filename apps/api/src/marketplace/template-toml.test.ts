@@ -219,7 +219,7 @@ host = "ignored.example"
 `,
     })
 
-    expect(result.domain).toMatch(/^n8n-demo-[0-9a-f]{6}\.traefik\.me$/)
+    expect(result.domain).toMatch(/^n8n-demo-[0-9a-f]{6}\.demo\.localhost$/)
     expect(result.declaredEntrypoint).toEqual({ serviceName: "n8n", port: 5678 })
     expect(result.composeResolved).not.toContain("${main_domain}")
   })
@@ -268,6 +268,9 @@ LITERAL = '$UNSET'
 
 it("prepares an n8n-style template with its declared port and only generated secrets", () => {
   const result = prepareTemplateInstall({ projectSlug: "n8n-demo",
+    domainBase: "demo.localhost",
+    publicOrigin: "http://localhost:8181",
+    publicScheme: "http",
     templateToml: `[variables]
 main_domain = "\${domain}"
 encryption_key = "\${password:32}"
@@ -297,9 +300,60 @@ host = "\${main_domain}"
   const values = parse(result.composeResolved).services.n8n.environment;
   expect(values.N8N_HOST).toBe(result.domain);
   expect(values.N8N_PORT).toBe("5678");
+  expect(values.WEBHOOK_URL).toBe(`http://${result.domain}:8181/`)
   expect(result.declaredEntrypoint).toEqual({ serviceName: "n8n", port: 5678 });
   expect(Object.values(result.generatedVars)).not.toContain("5678");
 });
+
+it("rewrites every generated domain independently and preserves unrelated URLs", () => {
+  const result = prepareTemplateInstall({
+    projectSlug: "multi-domain",
+    domainBase: "apps.example.test",
+    publicOrigin: "https://panel.example.test:8443",
+    publicScheme: "https",
+    templateToml: `[variables]
+domain_a = "\${domain}"
+domain_b = "\${domain}"
+webhook_a = "https://\${domain_a}/"
+unrelated_suffix = "https://\${domain_a}.external.test/"
+unrelated_userinfo = "https://\${domain_a}@external.test/"
+[config.env]
+WEBHOOK_A = "\${webhook_a}"
+WEBHOOK_B = "https://\${domain_b}/"
+UNRELATED_SUFFIX = "\${unrelated_suffix}"
+UNRELATED_USERINFO = "\${unrelated_userinfo}"
+[[config.domains]]
+serviceName = "web"
+port = 8080
+host = "\${domain_a}"
+`,
+    compose: `services:
+  web:
+    image: nginx
+    expose: [8080]
+    environment:
+      WEBHOOK_A: \${WEBHOOK_A}
+      WEBHOOK_B: \${WEBHOOK_B}
+      UNRELATED_SUFFIX: \${UNRELATED_SUFFIX}
+      UNRELATED_USERINFO: \${UNRELATED_USERINFO}
+`,
+  })
+
+  const values = parse(result.composeResolved).services.web.environment
+  const domainA = String(values.WEBHOOK_A).match(/^https:\/\/([^/:]+):8443\/$/)?.[1]
+  const domainB = String(values.WEBHOOK_B).match(/^https:\/\/([^/:]+):8443\/$/)?.[1]
+
+  expect(domainA).toBeDefined()
+  expect(domainB).toBeDefined()
+  expect(domainA).toMatch(/^multi-domain-[0-9a-f]{6}\.apps\.example\.test$/)
+  expect(domainB).toMatch(/^multi-domain-[0-9a-f]{6}\.apps\.example\.test$/)
+  expect(domainA).not.toBe(domainB)
+  expect(result.domain).toBe(domainA!)
+  expect(values.WEBHOOK_A).toBe(`https://${domainA!}:8443/`)
+  expect(values.WEBHOOK_B).toBe(`https://${domainB!}:8443/`)
+  expect(values.UNRELATED_SUFFIX).toBe(`https://${domainA!}.external.test/`)
+  expect(values.UNRELATED_USERINFO).toBe(`https://${domainA!}@external.test/`)
+})
 
 it("supports helper lengths, dated timestamps and unset versus empty operators", () => {
   const result = prepareTemplateInstall({ projectSlug: "demo", templateToml: '[variables]\nEMPTY = ""\n',

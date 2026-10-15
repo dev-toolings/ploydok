@@ -14,6 +14,7 @@ import {
 } from "@ploydok/db/queries"
 import { CreateServiceFromTemplateBody } from "@ploydok/shared"
 import { env } from "../env"
+import { buildPublicOrigin } from "../domains/app-domain"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
 import type { AuthUser } from "../auth/middleware"
@@ -31,6 +32,29 @@ type AppEnv = { Variables: { user?: AuthUser } }
 
 function getUser(c: { get: (k: string) => unknown }): AuthUser {
   return c.get("user") as AuthUser
+}
+
+function servicePublicUrl(domain: string | null): string | null {
+  if (!domain) return null
+  return buildPublicOrigin({
+    scheme: env.PLOYDOK_PUBLIC_SCHEME,
+    host: domain,
+    port: env.PLOYDOK_PUBLIC_PORT,
+  })
+}
+
+function serializeService<
+  T extends {
+    domain: string | null
+    compose_raw: string
+    generated_env: unknown
+    secrets_encrypted?: boolean
+  },
+>(service: T): T & { publicUrl: string | null } {
+  return {
+    ...maskServiceSecrets(service),
+    publicUrl: servicePublicUrl(service.domain),
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,12 +85,12 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
         )
       }
       const rows = await listServicesForProject(db, projectId)
-      return c.json({ services: rows.map(maskServiceSecrets) })
+      return c.json({ services: rows.map(serializeService) })
     }
 
     // All services across projects the user owns (accepted owner membership)
     const rows = await listServicesForOwner(db, user.id)
-    return c.json({ services: rows.map(maskServiceSecrets) })
+    return c.json({ services: rows.map(serializeService) })
   })
 
   // GET /services/:id
@@ -79,7 +103,7 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
         404
       )
     }
-    return c.json({ service: maskServiceSecrets(svc) })
+    return c.json({ service: serializeService(svc) })
   })
 
   // POST /services/from-template
@@ -107,7 +131,7 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
           ? { templateToml: parsed.data.templateToml }
           : {}),
       })
-      return c.json({ service: maskServiceSecrets(row) }, 201)
+      return c.json({ service: serializeService(row) }, 201)
     } catch (err) {
       const code = (err as { code?: string }).code
       if (code === "VALIDATION_ERROR") return c.json({ error: { code, message: (err as Error).message } }, 400)

@@ -3,6 +3,7 @@ import { describe, it, expect, mock } from "bun:test"
 import {
   upsertServiceRoute,
   removeServiceRoute,
+  normalizeCaddyHost,
   ServiceHasNoEntrypointError,
 } from "./service-routes"
 import type { CaddyClient } from "./client"
@@ -47,14 +48,14 @@ describe("upsertServiceRoute", () => {
 
     await upsertServiceRoute(client as unknown as CaddyClient, {
       serviceId: "svc-123",
-      domain: "myservice-abc123.traefik.me",
+      domain: "myservice-abc123.demo.localhost",
       containers: [container],
     })
 
     expect(client.upsertRoute).toHaveBeenCalledTimes(1)
     expect(client.upsertRoute).toHaveBeenCalledWith(
       expect.objectContaining({
-        host: "myservice-abc123.traefik.me",
+        host: "myservice-abc123.demo.localhost",
         upstream: "svc-app:8080",
         appId: "svc-123",
       })
@@ -77,6 +78,26 @@ describe("upsertServiceRoute", () => {
 
     expect(client.upsertRoute).toHaveBeenCalledWith(
       expect.objectContaining({ upstream: "svc-web:3000" })
+    )
+  })
+
+  it("normalizes a generated public origin before writing the Caddy host", async () => {
+    const client = makeClient()
+    await upsertServiceRoute(client as unknown as CaddyClient, {
+      serviceId: "svc-origin",
+      domain: "HTTP://Service-ABC123.Demo.Localhost:8181",
+      containers: [
+        makeContainer({
+          ports: [{ containerPort: 8080, hostPort: 8080, proto: "tcp" }],
+        }),
+      ],
+    })
+
+    expect(client.upsertRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "service-abc123.demo.localhost",
+        upstream: "svc-app:8080",
+      })
     )
   })
 
@@ -163,6 +184,14 @@ describe("upsertServiceRoute", () => {
     ).rejects.toBeInstanceOf(ServiceHasNoEntrypointError)
 
     expect(client.upsertRoute).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    "https://service.example.test/path",
+    "https://service.example.test?redirect=1",
+    "https://user:password@service.example.test",
+  ])("rejects a non-host service domain: %s", async (domain) => {
+    expect(() => normalizeCaddyHost(domain)).toThrow()
   })
 })
 

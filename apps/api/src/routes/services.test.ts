@@ -218,6 +218,25 @@ describe("GET /services/:id", () => {
     expect(body.service.id).toBe("svc-1")
     expect(body.service.status).toBe("running")
   })
+
+  it("keeps the stored domain and derives its instance public URL", async () => {
+    const storedDomain = "n8n-abc123.demo.localhost"
+    mockGetServiceForUser.mockResolvedValueOnce({
+      id: "svc-1",
+      status: "running",
+      domain: storedDomain,
+      compose_raw: "services:\n  web:\n    image: nginx",
+      generated_env: {},
+    })
+    const app = makeApp(makeDb())
+    const res = await app.request("/services/svc-1")
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.service.domain).toBe(storedDomain)
+    expect(body.service.publicUrl).toBe(
+      `http://${storedDomain}:8181`
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,11 @@ import {
 } from "@ploydok/db/queries"
 import type { ServiceRow, Db } from "@ploydok/db"
 import { childLogger } from "../logger"
+import { env } from "../env"
+import {
+  buildPublicOrigin,
+  deriveDefaultAppDomainBase,
+} from "../domains/app-domain"
 import { enqueueWithDbRow } from "../worker/queue-enqueue"
 import { serviceInstallQueue } from "../worker/queues"
 import { isAlreadyExists, isNotFound, toAgentError } from "../agent"
@@ -185,6 +190,15 @@ export async function installFromTemplate(
   const serviceId = nanoid()
   const baseSlug = slugify(input.name) || "service"
   const slug = await uniqueServiceSlug(db, input.projectId, baseSlug)
+  const domainBase = deriveDefaultAppDomainBase({
+    explicitBase: env.PLOYDOK_DOMAIN_BASE,
+    publicHost: env.PLOYDOK_PUBLIC_HOST,
+  })
+  const publicOrigin = buildPublicOrigin({
+    scheme: env.PLOYDOK_PUBLIC_SCHEME,
+    host: env.PLOYDOK_PUBLIC_HOST,
+    port: env.PLOYDOK_PUBLIC_PORT,
+  })
 
   const prepared = prepareTemplateInstall({
     compose: input.compose,
@@ -193,6 +207,9 @@ export async function installFromTemplate(
       : {}),
     projectSlug: slug,
     serviceId,
+    domainBase,
+    publicOrigin,
+    publicScheme: env.PLOYDOK_PUBLIC_SCHEME,
   })
   const {
     composeResolved,

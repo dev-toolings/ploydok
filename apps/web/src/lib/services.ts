@@ -5,11 +5,14 @@ import { apiFetch } from "./api"
 import i18n from "./i18n"
 import type {
   CreateServiceFromTemplateBody,
-  ServiceDetail,
-  ServiceSummary,
+  ServiceDetail as SharedServiceDetail,
+  ServiceSummary as SharedServiceSummary,
 } from "@ploydok/shared"
 
-export type { ServiceSummary, ServiceDetail }
+type ServicePublicUrl = { publicUrl: string | null }
+
+export type ServiceSummary = SharedServiceSummary & ServicePublicUrl
+export type ServiceDetail = SharedServiceDetail & ServicePublicUrl
 export type { ServiceStatus } from "@ploydok/shared"
 
 export const servicesKeys = {
