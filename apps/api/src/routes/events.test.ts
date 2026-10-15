@@ -155,10 +155,20 @@ describe.skipIf(skip)("GET /events", () => {
     const events = await collectSseEvents(res, 2)
     expect(events).toHaveLength(2)
 
-    const first = JSON.parse(events[0]!) as { type: string; message: string }
+    const first = JSON.parse(events[0]!) as {
+      type: string
+      message: string
+      replay?: boolean
+    }
     expect(first.type).toBe("build.started")
-    const second = JSON.parse(events[1]!) as { type: string; message: string }
+    expect(first.replay).toBe(true)
+    const second = JSON.parse(events[1]!) as {
+      type: string
+      message: string
+      replay?: boolean
+    }
     expect(second.type).toBe("build.succeeded")
+    expect(second.replay).toBe(true)
   })
 
   // -------------------------------------------------------------------------
