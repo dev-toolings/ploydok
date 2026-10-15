@@ -2,6 +2,10 @@
 import { z } from "zod"
 
 import { GitProviderKindSchema } from "./git-providers"
+import {
+  FrameworkDetectionSchema,
+  FrameworkPresetIdSchema,
+} from "./deployment-presets"
 
 // ---------------------------------------------------------------------------
 // Status enums
@@ -188,6 +192,8 @@ export const AppConfigSchema = z
     installCommand: z.string().optional(),
     buildCommand: z.string().optional(),
     startCommand: z.string().optional(),
+    frameworkPreset: FrameworkPresetIdSchema.optional(),
+    frameworkDetection: FrameworkDetectionSchema.optional(),
     watchPaths: z.array(z.string()).optional(),
     buildMethod: BuildMethodSchema.optional(),
     staticOutputDir: z.string().optional(),

@@ -3,6 +3,34 @@
 This runbook applies to the first production milestone: one Docker Swarm node
 on Debian 12 or Ubuntu 24.04 LTS. It does not claim high availability.
 
+## Framework detection and saved build settings
+
+The application wizard shows the framework proposal, confidence and positive
+file probes for the selected repository target. A repository containing several
+applications requires a root-directory choice. Conflicting framework signals
+require an explicit preset choice before deployment.
+
+Preset defaults live in `packages/shared/src/deployment-presets.ts`. The API,
+dashboard and workers consume this registry. A null command means that the
+builder determines the command from the repository; it is not a guessed entry
+point. Inspect the proposed commands before overriding them, especially for
+Python module names, Svelte adapters and release binaries.
+
+Selecting a preset and editing its commands, output directory, runtime port or
+healthcheck does not modify the repository. The app stores the preset in
+`framework_preset` and stores the effective edits in its existing configuration
+columns. Repository detection remains informational once a preset is selected.
+Normal and preview deployments use the saved choice instead of replacing it
+with a newly detected framework. Existing applications without a preset retain
+their explicit build settings and legacy automatic detection behavior.
+
+GitHub and GitLab deployment-target responses include framework, confidence,
+evidence and preset information for each target. Oversized optional manifests
+are skipped within the inspection size cap, so an oversized `composer.lock`
+does not hide a Laravel target identified by `composer.json` and `artisan`.
+Provider authorization and network failures remain errors, not empty detection
+results.
+
 ## Monitoring architecture
 
 ```text

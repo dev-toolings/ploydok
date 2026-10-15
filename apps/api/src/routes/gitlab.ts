@@ -5,8 +5,10 @@ import { createHash, createHmac, randomBytes } from "node:crypto"
 import { eq } from "drizzle-orm"
 import {
   discoverRepositoryTargets,
+  defaultRepositoryTarget,
   ENV_FILE_PROBE_KEYS,
   MANIFEST_FILE_PROBE_KEYS,
+  ManifestTooLargeError,
 } from "@ploydok/shared"
 import { createDb, createRedis } from "@ploydok/db"
 import type { Redis } from "@ploydok/db"
@@ -876,7 +878,14 @@ gitlabRouter.get("/repos/:fullName{.+}/deployment-targets", async (c) => {
     const targets = await discoverRepositoryTargets(paths, (path) =>
       ctx.provider.readFile(ctx.accessToken, fullName, path, ref)
     )
-    return c.json({ targets })
+    const defaultTarget = defaultRepositoryTarget(targets)
+    return c.json({
+      targets,
+      ambiguous:
+        targets.some((target) => target.classification.ambiguous === true) ||
+        (defaultTarget === undefined && targets.length > 1),
+      defaultRootDir: defaultTarget?.rootDir ?? null,
+    })
   } catch (err) {
     log.warn({ err, fullName }, "repository target detection failed")
     return c.json({ error: "repository_detection_unavailable" }, 502)
@@ -934,6 +943,9 @@ gitlabRouter.get("/repos/:fullName{.+}/manifest-file", async (c) => {
     )
     return c.json({ path: filePath, content })
   } catch (err) {
+    if (err instanceof ManifestTooLargeError) {
+      return c.json({ error: "MANIFEST_TOO_LARGE", detail: filePath }, 413)
+    }
     log.error({ err, fullName, filePath }, "manifestFile read failed")
     return c.json({ error: "gitlab_api_error" }, 502)
   }

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { getFrameworkPreset, presetIdForStack } from "./deployment-presets"
+import type { FrameworkPreset } from "./deployment-presets"
+
 /**
  * Stack classifier — pure function that maps a set of file-exists probes
  * against a Git repo to a stack classification with build recommendation.
@@ -23,6 +26,8 @@ export type Stack =
   | "php"
   | "hono"
   | "next"
+  | "nuxt"
+  | "sveltekit"
   | "remix"
   | "astro"
   | "node"
@@ -75,6 +80,11 @@ export type ProbeKey =
   | "next.config.js"
   | "next.config.mjs"
   | "next.config.ts"
+  | "nuxt.config.js"
+  | "nuxt.config.mjs"
+  | "nuxt.config.ts"
+  | "svelte.config.js"
+  | "svelte.config.ts"
   | "remix.config.js"
   | "astro.config.mjs"
   | "astro.config.ts"
@@ -116,6 +126,11 @@ export type ManifestProbeKey =
   | "vite.config.mts"
   | "astro.config.mjs"
   | "astro.config.ts"
+  | "nuxt.config.js"
+  | "nuxt.config.mjs"
+  | "nuxt.config.ts"
+  | "svelte.config.js"
+  | "svelte.config.ts"
   | "composer.json"
   | "composer.lock"
   | "Cargo.toml"
@@ -153,7 +168,19 @@ export interface StackClassification {
   framework?: string
   confidence: "high" | "medium" | "low"
   /** Ordered signals that triggered the classification. */
-  signals: ProbeKey[]
+  signals: string[]
+  /** Alias used by API consumers that present the signals as evidence. */
+  evidence?: string[]
+  /** Stable registry entry consumed by API, dashboard and workers. */
+  presetId?: string
+  preset?: FrameworkPreset
+  /** True when the caller must select a target or preset explicitly. */
+  ambiguous?: boolean
+  candidates?: Array<{
+    stack: Stack
+    framework?: string
+    presetId: string
+  }>
   recommendedBuild: BuildMethodRecommendation
   /** Human-readable warnings to show the user in the wizard. */
   warnings: string[]
@@ -199,6 +226,11 @@ export const ALL_PROBE_KEYS: ReadonlyArray<ProbeKey> = [
   "next.config.js",
   "next.config.mjs",
   "next.config.ts",
+  "nuxt.config.js",
+  "nuxt.config.mjs",
+  "nuxt.config.ts",
+  "svelte.config.js",
+  "svelte.config.ts",
   "remix.config.js",
   "astro.config.mjs",
   "astro.config.ts",
@@ -244,6 +276,11 @@ export const MANIFEST_FILE_PROBE_KEYS: ReadonlyArray<ManifestProbeKey> = [
   "vite.config.mts",
   "astro.config.mjs",
   "astro.config.ts",
+  "nuxt.config.js",
+  "nuxt.config.mjs",
+  "nuxt.config.ts",
+  "svelte.config.js",
+  "svelte.config.ts",
   "composer.json",
   "composer.lock",
   "Cargo.toml",
@@ -255,6 +292,182 @@ export const MANIFEST_FILE_PROBE_KEYS: ReadonlyArray<ManifestProbeKey> = [
   "requirements.txt",
   "pyproject.toml",
 ]
+
+function withPreset(classification: StackClassification): StackClassification {
+  const presetId =
+    classification.framework === "Dockerfile"
+      ? "dockerfile"
+      : classification.framework === "Docker Compose"
+        ? "compose"
+        : presetIdForStack(classification.stack, classification.framework)
+  const preset = getFrameworkPreset(presetId)
+  if (!preset) return classification
+  return {
+    ...classification,
+    evidence: [...classification.signals],
+    presetId,
+    preset,
+  }
+}
+
+type Candidate = {
+  stack: Stack
+  framework?: string
+  presetId: string
+}
+
+function uniqueCandidates(candidates: Candidate[]): Candidate[] {
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate.presetId)) return false
+    seen.add(candidate.presetId)
+    return true
+  })
+}
+
+function ambiguousClassification(
+  candidates: Candidate[],
+  signals: string[]
+): StackClassification {
+  return {
+    stack: "unknown",
+    confidence: "low",
+    signals,
+    recommendedBuild: "auto",
+    warnings: ["framework_choice_required"],
+    suggestedEnvVars: {},
+    ambiguous: true,
+    candidates,
+  }
+}
+
+function probeCandidates(probes: ProbeResults): {
+  candidates: Candidate[]
+  signals: string[]
+} {
+  const candidates: Candidate[] = []
+  const signals: string[] = []
+  const hasComposerApp = has(probes, "composer.json") && has(probes, "artisan")
+  const hasSymfonyApp =
+    has(probes, "composer.json") &&
+    hasAny(probes, ["symfony.lock", "bin/console"])
+
+  if (hasComposerApp) {
+    candidates.push({
+      stack: "laravel",
+      framework: "Laravel",
+      presetId: "laravel",
+    })
+    signals.push("composer.json", "artisan")
+  }
+  if (hasSymfonyApp) {
+    candidates.push({
+      stack: "symfony",
+      framework: "Symfony",
+      presetId: "symfony",
+    })
+    if (!signals.includes("composer.json")) signals.push("composer.json")
+    if (has(probes, "symfony.lock")) signals.push("symfony.lock")
+    if (has(probes, "bin/console")) signals.push("bin/console")
+  }
+
+  if (has(probes, "package.json") && !hasComposerApp && !hasSymfonyApp) {
+    const jsFrameworks: Array<[ProbeKey, Stack, string, string]> = [
+      ["next.config.js", "next", "Next.js", "next"],
+      ["next.config.mjs", "next", "Next.js", "next"],
+      ["next.config.ts", "next", "Next.js", "next"],
+      ["nuxt.config.js", "nuxt", "Nuxt", "nuxt"],
+      ["nuxt.config.mjs", "nuxt", "Nuxt", "nuxt"],
+      ["nuxt.config.ts", "nuxt", "Nuxt", "nuxt"],
+      ["svelte.config.js", "sveltekit", "SvelteKit", "sveltekit"],
+      ["svelte.config.ts", "sveltekit", "SvelteKit", "sveltekit"],
+      ["remix.config.js", "remix", "Remix", "remix"],
+      ["astro.config.mjs", "astro", "Astro", "astro"],
+      ["astro.config.ts", "astro", "Astro", "astro"],
+    ]
+    for (const [probe, stack, framework, presetId] of jsFrameworks) {
+      if (!has(probes, probe)) continue
+      candidates.push({ stack, framework, presetId })
+      signals.push(probe)
+    }
+    if (candidates.length === 0) {
+      if (hasAny(probes, ["bun.lock", "bun.lockb"])) {
+        candidates.push({ stack: "bun", framework: "Bun", presetId: "bun" })
+        signals.push(has(probes, "bun.lock") ? "bun.lock" : "bun.lockb")
+      } else {
+        candidates.push({
+          stack: "node",
+          framework: "Node.js",
+          presetId: "node",
+        })
+      }
+    }
+    signals.unshift("package.json")
+  }
+
+  if (has(probes, "manage.py")) {
+    candidates.push({
+      stack: "django",
+      framework: "Django",
+      presetId: "django",
+    })
+    signals.push("manage.py")
+    if (has(probes, "requirements.txt")) signals.push("requirements.txt")
+    else if (has(probes, "pyproject.toml")) signals.push("pyproject.toml")
+  }
+  if (
+    hasAny(probes, ["requirements.txt", "pyproject.toml"]) &&
+    !has(probes, "manage.py")
+  ) {
+    candidates.push({
+      stack: "python",
+      framework: "Python",
+      presetId: "python",
+    })
+    signals.push(
+      has(probes, "requirements.txt") ? "requirements.txt" : "pyproject.toml"
+    )
+  }
+  if (has(probes, "composer.json") && !hasComposerApp && !hasSymfonyApp) {
+    candidates.push({ stack: "php", framework: "PHP", presetId: "php" })
+    signals.push("composer.json")
+  }
+  if (has(probes, "go.mod")) {
+    candidates.push({ stack: "go", framework: "Go", presetId: "go" })
+    signals.push("go.mod")
+  }
+  if (has(probes, "Cargo.toml")) {
+    candidates.push({ stack: "rust", framework: "Rust", presetId: "rust" })
+    signals.push("Cargo.toml")
+  }
+  if (hasAny(probes, ["pom.xml", "build.gradle", "build.gradle.kts"])) {
+    candidates.push({ stack: "java", framework: "Java/JVM", presetId: "java" })
+    signals.push(
+      has(probes, "pom.xml")
+        ? "pom.xml"
+        : has(probes, "build.gradle")
+          ? "build.gradle"
+          : "build.gradle.kts"
+    )
+  }
+  if (has(probes, "Gemfile")) {
+    candidates.push({ stack: "ruby", framework: "Ruby", presetId: "ruby" })
+    signals.push("Gemfile")
+  }
+  if (has(probes, "mix.exs")) {
+    candidates.push({
+      stack: "elixir",
+      framework: "Elixir",
+      presetId: "elixir",
+    })
+    signals.push("mix.exs")
+  }
+
+  return {
+    candidates: uniqueCandidates(candidates),
+    signals: [...new Set(signals)],
+  }
+}
 
 function has(probes: ProbeResults, key: ProbeKey): boolean {
   return probes[key] === true
@@ -378,7 +591,7 @@ function mergeSuggestedEnvVars(
 /**
  * classify a repository from probe results. Pure function, deterministic.
  */
-export function classifyStack(probes: ProbeResults): StackClassification {
+function classifyStackBase(probes: ProbeResults): StackClassification {
   // 1. User-provided Dockerfile wins — no other signal can override.
   if (has(probes, "Dockerfile")) {
     return {
@@ -406,6 +619,13 @@ export function classifyStack(probes: ProbeResults): StackClassification {
       requiresExplicitBuildChoice: true,
     }
   }
+
+  const probeCandidateSet = probeCandidates(probes)
+  if (probeCandidateSet.candidates.length > 1)
+    return ambiguousClassification(
+      probeCandidateSet.candidates,
+      probeCandidateSet.signals
+    )
 
   // 3. PHP — Laravel, Symfony, generic
   if (has(probes, "composer.json")) {
@@ -499,6 +719,34 @@ export function classifyStack(probes: ProbeResults): StackClassification {
         framework: "Next.js",
         confidence: "high",
         signals: ["package.json", nextCfg],
+        recommendedBuild: "nixpacks",
+        warnings: [],
+        suggestedEnvVars: {},
+      }
+    }
+    const nuxtCfg = (
+      ["nuxt.config.js", "nuxt.config.mjs", "nuxt.config.ts"] as const
+    ).find((key) => has(probes, key))
+    if (nuxtCfg) {
+      return {
+        stack: "nuxt",
+        framework: "Nuxt",
+        confidence: "high",
+        signals: ["package.json", nuxtCfg],
+        recommendedBuild: "nixpacks",
+        warnings: [],
+        suggestedEnvVars: {},
+      }
+    }
+    const svelteCfg = (["svelte.config.js", "svelte.config.ts"] as const).find(
+      (key) => has(probes, key)
+    )
+    if (svelteCfg) {
+      return {
+        stack: "sveltekit",
+        framework: "SvelteKit",
+        confidence: "high",
+        signals: ["package.json", svelteCfg],
         recommendedBuild: "nixpacks",
         warnings: [],
         suggestedEnvVars: {},
@@ -702,19 +950,130 @@ export function classifyStack(probes: ProbeResults): StackClassification {
   }
 }
 
-export function classifyStackWithManifests(
+export function classifyStack(probes: ProbeResults): StackClassification {
+  return withPreset(classifyStackBase(probes))
+}
+
+function classifyStackWithManifestsBase(
   probes: ProbeResults,
   manifests: ManifestContents = {}
 ): StackClassification {
   const base = classifyStack(probes)
+  if (
+    base.recommendedBuild === "dockerfile" ||
+    base.recommendedBuild === "compose"
+  )
+    return base
   const packageJson = parseJsonObject(manifests["package.json"])
   const composerJson = parseJsonObject(manifests["composer.json"])
   const composerText = `${manifests["composer.json"] ?? ""}\n${
     manifests["composer.lock"] ?? ""
   }`
+  const manifestCandidates = probeCandidates(probes)
+  const manifestCandidateIds = new Set(
+    manifestCandidates.candidates.map((candidate) => candidate.presetId)
+  )
+  const addManifestCandidate = (candidate: Candidate, signal: string) => {
+    if (manifestCandidateIds.has(candidate.presetId)) return
+    manifestCandidates.candidates.push(candidate)
+    manifestCandidateIds.add(candidate.presetId)
+    manifestCandidates.signals.push(signal)
+  }
+  const removeManifestCandidate = (presetId: string) => {
+    manifestCandidates.candidates = manifestCandidates.candidates.filter(
+      (candidate) => candidate.presetId !== presetId
+    )
+    manifestCandidateIds.delete(presetId)
+  }
+  if (packageJson) {
+    const specificPackageCandidate =
+      hasPackage(packageJson, "next") ||
+      hasPackage(packageJson, "nuxt") ||
+      hasPackage(packageJson, "@sveltejs/kit")
+    if (specificPackageCandidate) {
+      manifestCandidates.candidates = manifestCandidates.candidates.filter(
+        (candidate) => candidate.presetId !== "node" && candidate.presetId !== "bun"
+      )
+      if (hasPackage(packageJson, "next"))
+        addManifestCandidate(
+          { stack: "next", framework: "Next.js", presetId: "next" },
+          "package.json"
+        )
+      if (hasPackage(packageJson, "nuxt"))
+        addManifestCandidate(
+          { stack: "nuxt", framework: "Nuxt", presetId: "nuxt" },
+          "package.json"
+        )
+      if (hasPackage(packageJson, "@sveltejs/kit"))
+        addManifestCandidate(
+          { stack: "sveltekit", framework: "SvelteKit", presetId: "sveltekit" },
+          "package.json"
+        )
+    }
+  }
+  if (hasPackage(composerJson, "laravel/framework")) {
+    removeManifestCandidate("php")
+    addManifestCandidate(
+      { stack: "laravel", framework: "Laravel", presetId: "laravel" },
+      "composer.json"
+    )
+  }
+  if (
+    hasPackage(composerJson, "symfony/framework-bundle") ||
+    hasPackage(composerJson, "symfony/runtime") ||
+    hasPackage(composerJson, "symfony/flex")
+  ) {
+    removeManifestCandidate("php")
+    addManifestCandidate(
+      { stack: "symfony", framework: "Symfony", presetId: "symfony" },
+      "composer.json"
+    )
+  }
+  if (
+    manifestCandidates.candidates.some(
+      (candidate) =>
+        candidate.presetId === "laravel" || candidate.presetId === "symfony"
+    ) &&
+    manifestCandidates.candidates.every(
+      (candidate) =>
+        candidate.presetId === "node" ||
+        candidate.presetId === "bun" ||
+        candidate.presetId === "php" ||
+        candidate.presetId === "laravel" ||
+        candidate.presetId === "symfony"
+    )
+  ) {
+    manifestCandidates.candidates = manifestCandidates.candidates.filter(
+      (candidate) => candidate.presetId !== "node" && candidate.presetId !== "bun"
+    )
+    manifestCandidates.candidates = manifestCandidates.candidates.filter(
+      (candidate) => candidate.presetId !== "php"
+    )
+  }
+  if (manifestContains(manifests, ["Gemfile"], /\brails\b/)) {
+    removeManifestCandidate("ruby")
+    addManifestCandidate(
+      { stack: "ruby", framework: "Rails", presetId: "rails" },
+      "Gemfile"
+    )
+  }
+  if (manifestContains(manifests, ["mix.exs"], /\bphoenix\b/)) {
+    removeManifestCandidate("elixir")
+    addManifestCandidate(
+      { stack: "elixir", framework: "Phoenix", presetId: "phoenix" },
+      "mix.exs"
+    )
+  }
+  manifestCandidates.candidates = uniqueCandidates(
+    manifestCandidates.candidates
+  )
+  if (manifestCandidates.candidates.length > 1)
+    return ambiguousClassification(manifestCandidates.candidates, [
+      ...new Set(manifestCandidates.signals),
+    ])
 
   if (
-    base.stack === "php" &&
+    (base.stack === "php" || base.ambiguous) &&
     (hasPackage(composerJson, "laravel/framework") ||
       /"name"\s*:\s*"laravel\/framework"/.test(composerText))
   ) {
@@ -737,7 +1096,7 @@ export function classifyStackWithManifests(
   }
 
   if (
-    base.stack === "php" &&
+    (base.stack === "php" || base.ambiguous) &&
     (hasPackage(composerJson, "symfony/framework-bundle") ||
       hasPackage(composerJson, "symfony/runtime") ||
       hasPackage(composerJson, "symfony/flex") ||
@@ -766,6 +1125,40 @@ export function classifyStackWithManifests(
   const scripts = asObject(packageJson?.scripts)
   const hasStart =
     typeof scripts?.start === "string" && scripts.start.trim().length > 0
+  const nuxtFromPackage =
+    (base.stack === "node" || base.stack === "bun") &&
+    hasPackage(packageJson, "nuxt")
+  if (nuxtFromPackage) {
+    return {
+      ...base,
+      stack: "nuxt",
+      framework: "Nuxt",
+      confidence: "high",
+      signals: ["package.json"],
+      suggestedEnvVars: {
+        ...base.suggestedEnvVars,
+        NIXPACKS_NODE_VERSION: "22",
+        HOSTNAME: "0.0.0.0",
+      },
+    }
+  }
+  const svelteKitFromPackage =
+    (base.stack === "node" || base.stack === "bun") &&
+    hasPackage(packageJson, "@sveltejs/kit")
+  if (svelteKitFromPackage) {
+    return {
+      ...base,
+      stack: "sveltekit",
+      framework: "SvelteKit",
+      confidence: "high",
+      signals: ["package.json"],
+      suggestedEnvVars: {
+        ...base.suggestedEnvVars,
+        NIXPACKS_NODE_VERSION: "22",
+        HOSTNAME: "0.0.0.0",
+      },
+    }
+  }
   const viteConfig =
     manifests["vite.config.ts"] ??
     manifests["vite.config.js"] ??
@@ -1000,7 +1393,7 @@ export function classifyStackWithManifests(
   }
 
   if (
-    base.stack === "ruby" &&
+    (base.stack === "ruby" || base.ambiguous) &&
     manifestContains(manifests, ["Gemfile"], /\brails\b/)
   ) {
     return {
@@ -1016,7 +1409,7 @@ export function classifyStackWithManifests(
   }
 
   if (
-    base.stack === "elixir" &&
+    (base.stack === "elixir" || base.ambiguous) &&
     manifestContains(manifests, ["mix.exs"], /\bphoenix\b/)
   ) {
     return {
@@ -1049,50 +1442,28 @@ export function classifyStackWithManifests(
   return base
 }
 
+export function classifyStackWithManifests(
+  probes: ProbeResults,
+  manifests: ManifestContents = {}
+): StackClassification {
+  return withPreset(classifyStackWithManifestsBase(probes, manifests))
+}
+
 export function frameworkGuardrailDefaults(
   classification: StackClassification
 ): FrameworkGuardrailReport {
   const suggestedEnvVars = { ...classification.suggestedEnvVars }
   const warnings = [...classification.warnings]
   const fatal: string[] = []
-  let runtimePort: number | undefined
-
-  switch (classification.stack) {
-    case "laravel":
-    case "symfony":
-    case "php":
-      runtimePort = 80
-      break
-    case "django":
-    case "flask":
-    case "fastapi":
-    case "python":
-      runtimePort = 8000
-      break
-    case "astro":
-      runtimePort = 4321
-      break
-    case "elixir":
-      runtimePort = 4000
-      break
-    case "go":
-    case "rust":
-    case "java":
-      runtimePort = 8080
-      break
-    case "static":
-      runtimePort = 80
-      break
-    case "next":
-    case "hono":
-    case "remix":
-    case "node":
-    case "bun":
-    case "deno":
-    case "ruby":
-      runtimePort = 3000
-      break
-  }
+  const preset =
+    classification.preset ??
+    getFrameworkPreset(
+      classification.presetId ??
+        presetIdForStack(classification.stack, classification.framework)
+    )
+  const runtimePort = preset?.defaults.port ?? undefined
+  const healthcheckPath = preset?.defaults.healthcheck.path ?? "/"
+  const healthcheckPort = preset?.defaults.healthcheck.port ?? runtimePort
 
   return {
     repairs: [],
@@ -1100,9 +1471,12 @@ export function frameworkGuardrailDefaults(
     fatal,
     defaults: {
       ...(runtimePort !== undefined
-        ? { runtimePort, healthcheckPort: runtimePort }
+        ? {
+            runtimePort,
+            ...(healthcheckPort !== undefined ? { healthcheckPort } : {}),
+          }
         : {}),
-      healthcheckPath: "/",
+      healthcheckPath,
       suggestedEnvVars,
     },
   }

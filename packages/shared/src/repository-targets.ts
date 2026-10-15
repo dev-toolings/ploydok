@@ -138,7 +138,7 @@ export async function discoverRepositoryTargets(
     const pom = manifests["pom.xml"]
     if (pom && /<packaging>\s*pom\s*<\/packaging>/.test(pom)) continue
     const classification = classifyStackWithManifests(probes, manifests)
-    if (classification.stack !== "unknown")
+    if (classification.stack !== "unknown" || classification.ambiguous)
       targets.push({ rootDir, classification })
   }
   return targets
@@ -151,9 +151,12 @@ export function defaultRepositoryTarget(
   const root = targets.find((target) => target.rootDir === ".")
   if (
     root &&
+    !root.classification.ambiguous &&
     (root.classification.recommendedBuild === "dockerfile" ||
       root.classification.recommendedBuild === "compose")
   )
     return root
-  return targets.length === 1 ? targets[0] : undefined
+  return targets.length === 1 && !targets[0]?.classification.ambiguous
+    ? targets[0]
+    : undefined
 }

@@ -5,6 +5,7 @@ import type {
   AppStatus,
   Build,
   BuildStatus,
+  FrameworkPresetId,
   RestartPolicy,
 } from "@ploydok/shared"
 
@@ -31,7 +32,6 @@ export interface AppListItem {
   lastImageDigest?: string | null
   pendingImageDigest?: string | null
 }
-
 export interface AppDetail extends AppListItem {
   gitProvider?: string
   imagePullPolicy?: "always" | "if_not_present" | null
@@ -43,6 +43,7 @@ export interface AppDetail extends AppListItem {
   buildCommand?: string
   startCommand?: string
   buildMethod?: string
+  frameworkPreset?: FrameworkPresetId | null
   staticOutputDir?: string
   staticSpaFallback?: boolean
   runtimePort?: number | null
@@ -128,6 +129,7 @@ export type AppSettingsPatch = Partial<
     | "buildCommand"
     | "startCommand"
     | "buildMethod"
+    | "frameworkPreset"
     | "staticOutputDir"
     | "staticSpaFallback"
     | "runtimePort"
@@ -186,4 +188,3 @@ export interface RegistryUsage {
   bytes: number
   diskPct: number
 }
-

@@ -30,10 +30,18 @@ import {
   ALL_PROBE_KEYS,
   MANIFEST_FILE_PROBE_KEYS,
   classifyStackWithManifests,
+  getFrameworkPreset,
+  FrameworkDetectionSchema,
+  FrameworkPresetIdSchema,
+  classificationForPreset,
   AppQuickLinkSchema,
   SafeHttpUrlSchema,
 } from "@ploydok/shared"
-import type { ManifestContents, StackClassification } from "@ploydok/shared"
+import type {
+  FrameworkDetection,
+  ManifestContents,
+  StackClassification,
+} from "@ploydok/shared"
 import {
   getAppActivity,
   getAppForOwner,
@@ -95,6 +103,7 @@ import {
 import { dispatch as notifyDispatch } from "../notify/index"
 import { createRedis } from "@ploydok/db"
 import { ensureDefaultOrganizationForUser } from "../services/organizations"
+import { frameworkPresetCreateFields } from "../services/framework-preset"
 import { ensureFrameworkEnvVars } from "../services/framework-env"
 import { encryptSecret } from "../secrets/crypto"
 import { getConnectionString } from "../databases/spawner"
@@ -125,6 +134,8 @@ function frameworkEnvClassificationForExplicitNixpacks(
     ...classification,
     stack: "symfony",
     framework: "Symfony",
+    presetId: "symfony",
+    preset: getFrameworkPreset("symfony")!,
     confidence: "high",
     signals: [
       ...classification.signals,
@@ -274,6 +285,7 @@ const CreateAppBodyBase = z.object({
   installCommand: z.string().optional(),
   buildCommand: z.string().optional(),
   startCommand: z.string().optional(),
+  frameworkPreset: FrameworkPresetIdSchema.nullable().optional(),
   watchPaths: z.array(z.string()).optional(),
   buildMethod: DeployableBuildMethodSchema.optional(),
   staticOutputDir: StaticOutputDirSchema.optional(),
@@ -476,6 +488,44 @@ function nullToUndefined<T>(value: T | null): T | undefined {
   return value ?? undefined
 }
 
+function parseFrameworkDetection(
+  raw: string | null
+): FrameworkDetection | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = FrameworkDetectionSchema.safeParse(JSON.parse(raw))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function frameworkDetectionForClassification(
+  classification: StackClassification,
+  rootDir?: string | null
+): FrameworkDetection {
+  const parsedPresetId = FrameworkPresetIdSchema.safeParse(
+    classification.presetId
+  )
+  return {
+    stack: classification.stack,
+    ...(classification.framework
+      ? { framework: classification.framework }
+      : {}),
+    presetId: parsedPresetId.success ? parsedPresetId.data : "unknown",
+    confidence: classification.confidence,
+    signals: [...classification.signals],
+    evidence: [...(classification.evidence ?? classification.signals)],
+    ...(classification.ambiguous !== undefined
+      ? { ambiguous: classification.ambiguous }
+      : {}),
+    ...(classification.candidates
+      ? { candidates: classification.candidates }
+      : {}),
+    ...(rootDir ? { rootDir } : {}),
+  }
+}
+
 async function resolveDeployJobAppIdFromPayload(
   db: Db,
   data: unknown
@@ -560,6 +610,8 @@ function serializeApp(
     installCommand: nullToUndefined(row.install_command),
     buildCommand: nullToUndefined(row.build_command),
     startCommand: nullToUndefined(row.start_command),
+    frameworkPreset: nullToUndefined(row.framework_preset),
+    frameworkDetection: parseFrameworkDetection(row.framework_detection),
     watchPaths: row.watch_paths
       ? (JSON.parse(row.watch_paths) as string[])
       : undefined,
@@ -629,6 +681,8 @@ type AppPartialRow = {
   image_ref: string | null
   branch: string | null
   build_method: string | null
+  framework_preset: string | null
+  framework_detection: string | null
   domain: string | null
   container_id: string | null
   icon_url: string | null
@@ -653,6 +707,8 @@ function serializeAppPartial(row: AppPartialRow) {
     imageRef: row.image_ref,
     branch: nullToUndefined(row.branch),
     buildMethod: nullToUndefined(row.build_method),
+    frameworkPreset: nullToUndefined(row.framework_preset),
+    frameworkDetection: parseFrameworkDetection(row.framework_detection),
     domain: nullToUndefined(row.domain),
     publicUrl: nullToUndefined(buildPublicUrl(row.domain)),
     // Exposed so the dashboard can pin runtime/health to the canonical container
@@ -1023,10 +1079,8 @@ export function createAppsRouter(db: Db): Hono {
     const domain =
       existingCreationApp?.domain ?? body.domain ?? defaultAppDomain(slug, id)
 
-    // 4. Build healthcheck fields
-    const hc = body.healthcheck ?? {}
-
-    const resolvedRuntimePort: number | null = body.runtimePort ?? null
+    // Snapshot registry defaults alongside explicit user values.
+    const presetFields = frameworkPresetCreateFields(body)
     const initialSecretRows = initialDatabaseVars
       ? (body.initialSecrets ?? []).filter(
           (item) => !Object.hasOwn(initialDatabaseVars!, item.key)
@@ -1094,17 +1148,11 @@ export function createAppsRouter(db: Db): Hono {
             dockerfile_path: body.dockerfilePath ?? null,
             nixpacks_config_path: body.nixpacksConfigPath ?? null,
             node_version: body.nodeVersion ?? null,
-            install_command: body.installCommand ?? null,
-            build_command: body.buildCommand ?? null,
-            start_command: body.startCommand ?? null,
+            framework_detection: null,
             watch_paths: body.watchPaths
               ? JSON.stringify(body.watchPaths)
               : null,
-            build_method:
-              body.buildMethod === "docker"
-                ? "dockerfile"
-                : (body.buildMethod ?? "auto"),
-            static_output_dir: body.staticOutputDir ?? "dist",
+            ...presetFields,
             static_spa_fallback: body.staticSpaFallback ?? true,
             runtime_mode: body.runtime?.runtimeMode ?? "swarm",
             replicas: body.runtime?.replicas ?? 1,
@@ -1114,15 +1162,8 @@ export function createAppsRouter(db: Db): Hono {
             update_monitor_s: body.runtime?.updateMonitorS ?? 30,
             failure_action: body.runtime?.failureAction ?? "rollback",
             stop_grace_period_s: body.runtime?.stopGracePeriodS ?? 10,
-            runtime_port: resolvedRuntimePort,
             restart_policy: body.restartPolicy ?? "unless-stopped",
             domain,
-            healthcheck_path: hc.path ?? "/",
-            healthcheck_port: hc.port ?? resolvedRuntimePort ?? null,
-            healthcheck_interval_s: hc.intervalS ?? 5,
-            healthcheck_timeout_s: hc.timeoutS ?? 3,
-            healthcheck_retries: hc.retries ?? 6,
-            healthcheck_start_period_s: hc.startPeriodS ?? 0,
             creation_idempotency_key: creationKey,
           })
           await createCreationSaga(tx, {
@@ -1188,10 +1229,7 @@ export function createAppsRouter(db: Db): Hono {
 
     // Auto-inject framework-aware env vars (Nixpacks only, git sources only).
     // Runs best-effort — failure must never block app creation.
-    const resolvedBuildMethod =
-      body.buildMethod === "docker"
-        ? "dockerfile"
-        : (body.buildMethod ?? "auto")
+    const resolvedBuildMethod = presetFields.build_method ?? "auto"
     const shouldAutoInject =
       body.gitProvider === "github" &&
       body.installationId &&
@@ -1242,13 +1280,20 @@ export function createAppsRouter(db: Db): Hono {
           probeResults,
           manifests
         )
-        const classification =
-          resolvedBuildMethod === "nixpacks"
-            ? frameworkEnvClassificationForExplicitNixpacks(
-                baseClassification,
-                probeResults
-              )
-            : baseClassification
+        const detectedClassification = baseClassification
+        const runtimeClassification = resolvedBuildMethod === "nixpacks"
+          ? frameworkEnvClassificationForExplicitNixpacks(baseClassification, probeResults)
+          : baseClassification
+        const classification = body.frameworkPreset
+          ? classificationForPreset(body.frameworkPreset, runtimeClassification)
+          : runtimeClassification
+        const detection = frameworkDetectionForClassification(
+          detectedClassification,
+          body.rootDir
+        )
+        newApp = await updateApp(db, id, {
+          framework_detection: JSON.stringify(detection),
+        })
         const { injected, skipped, repaired } = await ensureFrameworkEnvVars({
           db,
           appId: id,
@@ -1560,6 +1605,8 @@ export function createAppsRouter(db: Db): Hono {
       patch.install_command = body.installCommand
     if (body.buildCommand !== undefined) patch.build_command = body.buildCommand
     if (body.startCommand !== undefined) patch.start_command = body.startCommand
+    if (body.frameworkPreset !== undefined)
+      patch.framework_preset = body.frameworkPreset
     if (body.watchPaths !== undefined)
       patch.watch_paths = JSON.stringify(body.watchPaths)
     if (body.buildMethod !== undefined) {

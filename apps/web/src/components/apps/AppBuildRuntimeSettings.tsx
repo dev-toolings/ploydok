@@ -30,6 +30,7 @@ import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
 import { NIXPACKS_SUPPORTED_PHP_VERSIONS_LABEL } from "@ploydok/shared"
 import { useUpdateAppSettings } from "../../lib/apps-mutations"
+import { getBuildPresets } from "../../lib/build-presets"
 import { useStackClassification } from "../../lib/stack-classifier-hook"
 import type { Stack } from "@ploydok/shared"
 import type { AppDetail, AppSettingsPatch } from "../../lib/apps"
@@ -88,239 +89,42 @@ const BUILD_METHOD_OPTIONS: Array<FieldOption> = [
 
 const PHP_STACKS = new Set<Stack>(["laravel", "symfony", "php"])
 
-const DEFAULT_PLACEHOLDERS: BuildRuntimePlaceholders = {
-  branch: "main",
-  rootDir: "/",
-  buildMethod: "auto",
-  dockerfilePath: "Dockerfile",
-  nixpacksConfigPath: "nixpacks.toml",
-  nodeVersion: "22",
-  installCommand: "npm install",
-  buildCommand: "npm run build",
-  startCommand: "npm start",
-  staticOutputDir: "dist",
-  healthcheckPath: "/",
-  runtimePort: "3000",
-  healthcheckPort: "3000",
-}
-
-function withDefaultPlaceholders(
-  overrides: Partial<BuildRuntimePlaceholders>
-): BuildRuntimePlaceholders {
-  return { ...DEFAULT_PLACEHOLDERS, ...overrides }
-}
-
 function getBuildRuntimePlaceholders(
   stack: Stack | undefined,
-  buildMethod: string | undefined
+  buildMethod: string | undefined,
+  frameworkPreset?: string | null
 ): BuildRuntimePlaceholders {
-  if (buildMethod === "static") {
-    return withDefaultPlaceholders({
-      buildMethod: "static",
-      nodeVersion: "22",
-      installCommand: "npm install",
-      buildCommand: "npm run build",
-      startCommand: "managed static server",
-      staticOutputDir: "dist",
-      runtimePort: "80",
-      healthcheckPort: "80",
-    })
-  }
-
-  switch (stack) {
-    case "laravel":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand:
-          "composer install --no-interaction --prefer-dist --optimize-autoloader && npm install",
-        buildCommand: "npm run build",
-        startCommand: "php artisan serve --host=0.0.0.0 --port=$PORT",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    case "symfony":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand:
-          "composer install --no-interaction --prefer-dist --optimize-autoloader && npm install",
-        buildCommand: "composer dump-env prod && php bin/console cache:clear",
-        startCommand: "php -S 0.0.0.0:$PORT -t public",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    case "php":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand:
-          "composer install --no-interaction --prefer-dist --optimize-autoloader",
-        buildCommand: "composer dump-autoload --optimize",
-        startCommand: "php -S 0.0.0.0:$PORT -t public",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    case "next":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run start",
-        runtimePort: "3000",
-        healthcheckPort: "3000",
-      })
-    case "hono":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run start",
-        runtimePort: "3000",
-        healthcheckPort: "3000",
-      })
-    case "remix":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run start",
-      })
-    case "astro":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run preview -- --host 0.0.0.0 --port $PORT",
-        runtimePort: "4321",
-        healthcheckPort: "4321",
-      })
-    case "node":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-      })
-    case "bun":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "bun install",
-        buildCommand: "bun run build",
-        startCommand: "bun run start",
-      })
-    case "deno":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "deno install",
-        buildCommand: "deno task build",
-        startCommand: "deno task start",
-      })
-    case "django":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python manage.py collectstatic --noinput",
-        startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "flask":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python -m compileall .",
-        startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "fastapi":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python -m compileall .",
-        startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "python":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python -m compileall .",
-        startCommand: "python app.py",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "go":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "go mod download",
-        buildCommand: "go build -o app ./...",
-        startCommand: "./app",
-        runtimePort: "8080",
-        healthcheckPort: "8080",
-      })
-    case "rust":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "cargo fetch",
-        buildCommand: "cargo build --release",
-        startCommand: "./target/release/app",
-        runtimePort: "8080",
-        healthcheckPort: "8080",
-      })
-    case "ruby":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "bundle install",
-        buildCommand: "bundle exec rake assets:precompile",
-        startCommand: "bundle exec rails server -b 0.0.0.0 -p $PORT",
-      })
-    case "elixir":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "mix deps.get",
-        buildCommand: "mix assets.deploy",
-        startCommand: "mix phx.server",
-        runtimePort: "4000",
-        healthcheckPort: "4000",
-      })
-    case "java":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "./mvnw -B dependency:go-offline",
-        buildCommand: "./mvnw -B package -DskipTests",
-        startCommand: "java -jar target/*.jar",
-        runtimePort: "8080",
-        healthcheckPort: "8080",
-      })
-    case "static":
-      return withDefaultPlaceholders({
-        buildMethod: "static",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "managed static server",
-        staticOutputDir: "dist",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    default:
-      return DEFAULT_PLACEHOLDERS
+  const presets = getBuildPresets()
+  const preset =
+    presets.find((candidate) => candidate.id === frameworkPreset) ??
+    presets.find((candidate) =>
+      buildMethod === "static"
+        ? candidate.id === "static"
+        : candidate.stack === stack || candidate.id === stack
+    )
+  const defaults = preset?.defaults
+  const empty = ""
+  return {
+    branch: "main",
+    rootDir: "/",
+    buildMethod: buildMethod ?? defaults?.buildMethod ?? "auto",
+    dockerfilePath: "Dockerfile",
+    nixpacksConfigPath: "nixpacks.toml",
+    nodeVersion: "22",
+    installCommand: defaults?.installCommand ?? empty,
+    buildCommand: defaults?.buildCommand ?? empty,
+    startCommand: defaults?.startCommand ?? empty,
+    staticOutputDir: defaults?.outputDirectory ?? empty,
+    healthcheckPath: defaults?.healthcheck.path ?? "/",
+    runtimePort:
+      defaults?.port === null || defaults?.port === undefined
+        ? empty
+        : String(defaults.port),
+    healthcheckPort:
+      defaults?.healthcheck.port === null ||
+      defaults?.healthcheck.port === undefined
+        ? empty
+        : String(defaults.healthcheck.port),
   }
 }
 
@@ -441,9 +245,10 @@ export function AppBuildRuntimeSettings({
     () =>
       getBuildRuntimePlaceholders(
         stackClassification.data?.stack,
-        app.buildMethod
+        app.buildMethod,
+        app.frameworkPreset
       ),
-    [app.buildMethod, stackClassification.data?.stack]
+    [app.buildMethod, app.frameworkPreset, stackClassification.data?.stack]
   )
   const detectedStack = stackClassification.data?.stack
   const [editing, setEditing] = React.useState(false)

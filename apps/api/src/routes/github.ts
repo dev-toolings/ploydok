@@ -6,8 +6,10 @@ import { z } from "zod"
 import { and, eq, or } from "drizzle-orm"
 import {
   discoverRepositoryTargets,
+  defaultRepositoryTarget,
   ENV_FILE_PROBE_KEYS,
   MANIFEST_FILE_PROBE_KEYS,
+  ManifestTooLargeError,
 } from "@ploydok/shared"
 import { createDb } from "@ploydok/db"
 import {
@@ -875,7 +877,14 @@ githubRouter.get("/repos/:owner/:repo/deployment-targets", async (c) => {
       const targets = await discoverRepositoryTargets(paths, (path) =>
         ghProvider.readFile(id, fullName, path, ref)
       )
-      return c.json({ targets })
+      const defaultTarget = defaultRepositoryTarget(targets)
+      return c.json({
+        targets,
+        ambiguous:
+          targets.some((target) => target.classification.ambiguous === true) ||
+          (defaultTarget === undefined && targets.length > 1),
+        defaultRootDir: defaultTarget?.rootDir ?? null,
+      })
     } catch (err) {
       log.warn({ err, fullName }, "repository target detection failed")
     }
@@ -955,6 +964,9 @@ githubRouter.get("/repos/:owner/:repo/manifest-file", async (c) => {
       )
       return c.json({ path: filePath, content })
     } catch (err) {
+      if (err instanceof ManifestTooLargeError) {
+        return c.json({ error: "MANIFEST_TOO_LARGE", detail: filePath }, 413)
+      }
       log.warn(
         { err, installationId: inst.id, fullName, filePath },
         "manifestFile read failed; trying next"

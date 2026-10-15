@@ -7,7 +7,7 @@ import {
   classifyStackWithManifests,
   parseEnvFile,
 } from "@ploydok/shared";
-import { apiFetch } from "./api";
+import { ApiError, apiFetch } from "./api";
 import type {
   ManifestContents,
   ManifestProbeKey,
@@ -16,14 +16,12 @@ import type {
   RepositoryTarget,
   StackClassification,
 } from "@ploydok/shared";
-import type { ApiError } from "./api";
 
 type Source = "github" | "gitlab";
 
 interface FileExistsBatchResponse {
   files: Record<string, boolean>;
 }
-
 interface ManifestFileResponse {
   path: string;
   content: string;
@@ -110,15 +108,27 @@ export async function runStackClassificationProbes(
   const manifestEntries = await Promise.all(
     MANIFEST_FILE_PROBE_KEYS.map(async (path) => {
       if (files[path] !== true) return null
-      const response = await apiFetch<ManifestFileResponse>(
-        buildManifestFileUrl(
-          source,
-          fullName,
-          pathWithinRoot(path, rootDir),
-          ref
+      try {
+        const response = await apiFetch<ManifestFileResponse>(
+          buildManifestFileUrl(
+            source,
+            fullName,
+            pathWithinRoot(path, rootDir),
+            ref
+          )
         )
-      )
-      return [path, response.content] as const
+        return [path, response.content] as const
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          (error.status === 413 ||
+            error.code === "MANIFEST_TOO_LARGE" ||
+            error.code === "manifest_too_large")
+        ) {
+          return null
+        }
+        throw error
+      }
     })
   )
   const manifests: ManifestContents = Object.fromEntries(

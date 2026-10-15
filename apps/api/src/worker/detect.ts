@@ -7,6 +7,7 @@ import {
   classifyStackWithManifests,
 } from "@ploydok/shared"
 import type { ManifestContents, ProbeResults } from "@ploydok/shared"
+import { FatalDeployError } from "./errors"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,6 +95,11 @@ export async function detectBuildMethod(
     })
   )
   const classification = classifyStackWithManifests(probes, manifests)
+  if (classification.ambiguous) {
+    throw new FatalDeployError(
+      "Several framework candidates were detected; select a framework preset before deploying"
+    )
+  }
   const method = classification.recommendedBuild
   return {
     method: method === "static" || method === "compose" ? method : "nixpacks",

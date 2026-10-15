@@ -16,6 +16,10 @@ import {
   MANIFEST_FILE_PROBE_KEYS,
   PLANS,
   classifyStackWithManifests,
+  frameworkGuardrailDefaults,
+  classificationForPreset,
+  getFrameworkPreset,
+  FRAMEWORK_PRESETS,
 } from "@ploydok/shared"
 import type { ManifestContents, StackClassification } from "@ploydok/shared"
 import {
@@ -76,6 +80,7 @@ interface AppForPreview {
   build_command: string | null
   start_command: string | null
   build_method: string | null
+  framework_preset: string | null
   static_output_dir: string | null
   static_spa_fallback: boolean | null
   runtime_port: number | null
@@ -153,6 +158,7 @@ async function getAppForPreview(db: Db, appId: string): Promise<AppForPreview> {
       build_command: apps.build_command,
       start_command: apps.start_command,
       build_method: apps.build_method,
+      framework_preset: apps.framework_preset,
       static_output_dir: apps.static_output_dir,
       static_spa_fallback: apps.static_spa_fallback,
       runtime_port: apps.runtime_port,
@@ -272,6 +278,8 @@ async function classifyWorkspaceStack(params: {
     ...base,
     stack: "symfony",
     framework: "Symfony",
+    presetId: "symfony",
+    preset: FRAMEWORK_PRESETS.symfony,
     confidence: "high",
     suggestedEnvVars: {
       NIXPACKS_PHP_ROOT_DIR: "/app/public",
@@ -286,46 +294,8 @@ function defaultRuntimePortForStack(
   method: "docker" | "nixpacks" | "static",
   classification: StackClassification
 ): number | null {
-  if (method === "static") return null
-  if (
-    method === "nixpacks" &&
-    (classification.stack === "laravel" ||
-      classification.stack === "symfony" ||
-      classification.stack === "php")
-  ) {
-    return 80
-  }
-  if (method === "nixpacks") {
-    if (
-      classification.stack === "django" ||
-      classification.stack === "flask" ||
-      classification.stack === "fastapi" ||
-      classification.stack === "python"
-    ) {
-      return 8000
-    }
-    if (classification.stack === "astro") return 4321
-    if (classification.stack === "elixir") return 4000
-    if (
-      classification.stack === "go" ||
-      classification.stack === "rust" ||
-      classification.stack === "java"
-    ) {
-      return 8080
-    }
-    if (
-      classification.stack === "hono" ||
-      classification.stack === "next" ||
-      classification.stack === "remix" ||
-      classification.stack === "node" ||
-      classification.stack === "bun" ||
-      classification.stack === "deno" ||
-      classification.stack === "ruby"
-    ) {
-      return 3000
-    }
-  }
-  return null
+  if (method !== "nixpacks") return null
+  return frameworkGuardrailDefaults(classification).defaults.runtimePort ?? null
 }
 
 function resolveResourceLimits(
@@ -630,12 +600,21 @@ export async function handlePreviewDeploy(
       app.root_dir = resolvedRoot
     }
 
+    const selectedPreset = getFrameworkPreset(app.framework_preset)
+    if (app.framework_preset && !selectedPreset) {
+      throw new Error(
+      "Stored framework preset is invalid; select a preset again"
+    )
+    }
+    const buildMethod = app.build_method && app.build_method !== "auto"
+      ? app.build_method
+      : selectedPreset?.defaults.buildMethod ?? "auto"
     const normalizedMethod =
-      app.build_method === "docker" || app.build_method === "dockerfile"
+      buildMethod === "docker" || buildMethod === "dockerfile"
         ? "docker"
-        : app.build_method === "nixpacks"
+        : buildMethod === "nixpacks"
           ? "nixpacks"
-          : app.build_method === "static"
+          : buildMethod === "static"
             ? "static"
             : "auto"
 
@@ -650,12 +629,24 @@ export async function handlePreviewDeploy(
       throw new Error("Preview deployments do not support compose apps yet")
     }
 
-    const classification = await classifyWorkspaceStack({
+    const detectedClassification = await classifyWorkspaceStack({
       workspacePath,
       rootDir: app.root_dir,
     })
-    const inferredStartCommand =
-      app.start_command ?? classification.suggestedStartCommand ?? null
+    if (
+      detected.method === "nixpacks" &&
+      detectedClassification.ambiguous &&
+      !selectedPreset
+    ) {
+      throw new Error(
+        "Several framework candidates were detected; select a framework preset before deploying"
+      )
+    }
+    const classification = selectedPreset
+      ? classificationForPreset(selectedPreset.id, detectedClassification)
+      : detectedClassification
+    const inferredStartCommand = app.start_command ??
+      (selectedPreset ? null : classification.suggestedStartCommand ?? null)
     await ensureFrameworkEnvVars({
       db,
       appId: app.id,

@@ -129,6 +129,32 @@ describe("detectBuildMethod", () => {
     expect(result.method).toBe("nixpacks")
   })
 
+  it("auto-detection refuses an ambiguous Node plus Django repository", async () => {
+    await writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { start: "node server.js" } })
+    )
+    await writeFile(path.join(tmpDir, "manage.py"), "#!/usr/bin/env python\n")
+    await writeFile(path.join(tmpDir, "requirements.txt"), "Django==5.2\n")
+
+    await expect(detectBuildMethod({ workspacePath: tmpDir })).rejects.toThrow(
+      "Several framework candidates were detected"
+    )
+  })
+
+  it("an explicit build override remains usable for an ambiguous repository", async () => {
+    await writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { start: "node server.js" } })
+    )
+    await writeFile(path.join(tmpDir, "manage.py"), "#!/usr/bin/env python\n")
+    await writeFile(path.join(tmpDir, "requirements.txt"), "Django==5.2\n")
+
+    await expect(
+      detectBuildMethod({ workspacePath: tmpDir, override: "nixpacks" })
+    ).resolves.toEqual({ method: "nixpacks" })
+  })
+
   // ---------------------------------------------------------------------------
   // Railpack is planned but unavailable without a local Docker daemon
   // ---------------------------------------------------------------------------

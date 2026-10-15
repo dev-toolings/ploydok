@@ -8,6 +8,7 @@ import {
   frameworkGuardrailDefaults,
   type ProbeResults,
   type Stack,
+  type StackClassification,
   type BuildMethodRecommendation,
 } from "./stack-classifier"
 
@@ -425,14 +426,41 @@ describe("classifyStack — static + unknown", () => {
 })
 
 describe("classifyStack — tie-breaking & edge cases", () => {
-  it("Node + Django markers: manage.py wins (Django is more specific)", () => {
+  it("Node + Django markers: asks for a choice instead of guessing", () => {
     const r = classifyStack(
       probes(["package.json", "manage.py", "requirements.txt"])
     )
-    // Note: current order checks PHP then JS then Python. package.json triggers node
-    // BEFORE django check is reached. This is by design: if both exist, the repo is
-    // a hybrid and we default to Node. Document this behavior.
-    expect(r.stack).toBe("node")
+    const candidates = (r as StackClassification & { candidates?: unknown[] })
+      .candidates
+    expect(r.ambiguous).toBe(true)
+    expect(r.confidence).toBe("low")
+    expect(Array.isArray(candidates)).toBe(true)
+    expect(candidates?.length).toBeGreaterThan(1)
+    const candidateStacks = (candidates ?? []).map((candidate) =>
+      typeof candidate === "string"
+        ? candidate
+        : (candidate as { stack?: string; id?: string }).stack ??
+          (candidate as { id?: string }).id
+    )
+    expect(candidateStacks).toEqual(
+      expect.arrayContaining(["node", "django"])
+    )
+  })
+
+  it("Next.js + Nuxt markers: asks for a choice instead of using config order", () => {
+    const r = classifyStack(
+      probes(["package.json", "next.config.mjs", "nuxt.config.ts"])
+    )
+    const candidates = (r as StackClassification & { candidates?: unknown[] })
+      .candidates
+    expect(r.ambiguous).toBe(true)
+    expect(r.confidence).toBe("low")
+    expect(candidates?.map((candidate) =>
+      typeof candidate === "string"
+        ? candidate
+        : (candidate as { stack?: string; id?: string }).stack ??
+          (candidate as { id?: string }).id
+    )).toEqual(expect.arrayContaining(["next", "nuxt"]))
   })
 
   it("Laravel + compose.yaml: compose wins (user is explicit about compose)", () => {
