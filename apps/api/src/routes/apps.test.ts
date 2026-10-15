@@ -46,11 +46,14 @@ const skip = !TEST_PG_URL
 if (skip) console.log("[apps.test] PLOYDOK_TEST_PG_URL not set — skipping")
 
 async function makeTestDb() {
-  const { db } = await makePgTestDb()
-  return db
+  if (!testDbPromise) {
+    testDbPromise = makePgTestDb().then(({ db }) => db)
+  }
+  return testDbPromise
 }
 
 type TestDb = Db
+let testDbPromise: Promise<TestDb> | null = null
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
 
