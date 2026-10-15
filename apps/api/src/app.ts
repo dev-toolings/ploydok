@@ -38,6 +38,7 @@ import { secretsRouter } from "./routes/secrets"
 import { createDatabasesRouter } from "./routes/databases"
 import { createAdminerRouter } from "./routes/adminer"
 import { createBackupsRouter } from "./routes/backups"
+import { createStorageDestinationsRouter } from "./routes/storage-destinations"
 import { createAppsDatabasesLinkRouter } from "./routes/apps-databases-link"
 import { appsProtectionRouter } from "./routes/apps-protection"
 import { createOrganizationsRouter } from "./routes/organizations"
@@ -541,6 +542,10 @@ app.use("/databases/*/backup-now*", requireAuth(db))
 app.use("/databases/*/restore*", requireAuth(db))
 app.use("/backups/*", requireAuth(db))
 app.route("/", createBackupsRouter(db))
+
+// Workspace backup destinations: members can inspect; owners can mutate.
+app.use("/orgs/*/storage-destinations*", requireAuth(db))
+app.route("/orgs", createStorageDestinationsRouter(db))
 
 // Apps ↔ Databases link routes
 app.use("/apps/*/databases/*", requireAuth(db))

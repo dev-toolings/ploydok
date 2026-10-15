@@ -8,6 +8,7 @@
 import {
   S3Client,
   GetObjectCommand,
+  PutObjectCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -74,9 +75,10 @@ export async function downloadStream(
   client: S3Client,
   bucket: string,
   key: string,
+  abortSignal?: AbortSignal,
 ): Promise<Readable> {
   const cmd = new GetObjectCommand({ Bucket: bucket, Key: key })
-  const res = await client.send(cmd)
+  const res = await client.send(cmd, abortSignal ? { abortSignal } : undefined)
   if (!res.Body) throw new Error(`S3 object ${bucket}/${key} returned empty body`)
   return res.Body as Readable
 }
@@ -121,7 +123,20 @@ export async function deleteObject(
   client: S3Client,
   bucket: string,
   key: string,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
   const cmd = new DeleteObjectCommand({ Bucket: bucket, Key: key })
-  await client.send(cmd)
+  await client.send(cmd, abortSignal ? { abortSignal } : undefined)
+}
+
+/** Upload a bounded witness object with caller-controlled cancellation. */
+export async function putObject(
+  client: S3Client,
+  bucket: string,
+  key: string,
+  body: string | Uint8Array,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const cmd = new PutObjectCommand({ Bucket: bucket, Key: key, Body: body })
+  await client.send(cmd, abortSignal ? { abortSignal } : undefined)
 }

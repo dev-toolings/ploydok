@@ -17,6 +17,7 @@ import { env } from "../env"
 import {
   buildBackupFilename,
   deleteBackupArtifact,
+  resolveBackupDestination,
   writeBackupStream,
 } from "./storage"
 
@@ -78,12 +79,13 @@ export async function runVolumeBackupOnce(
       )
     )
     .limit(1)
-  const config = configRows[0]
-  if (!config) {
+  const rawConfig = configRows[0]
+  if (!rawConfig) {
     throw new Error(
       `No enabled backup config for app volume ${appId}/${volumeId}`
     )
   }
+  const config = await resolveBackupDestination(db, rawConfig)
 
   const ageEncrypted = Boolean(config.age_recipient_public_key)
   const filename = buildBackupFilename(

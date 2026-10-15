@@ -617,6 +617,20 @@
       "when": 1792092125200,
       "tag": "0088_framework_detection",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792092125201,
+      "tag": "0089_storage_destinations",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792092125202,
+      "tag": "0090_storage_destination_secret_ownership",
+      "breakpoints": true
     }
   ]
 }

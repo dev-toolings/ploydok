@@ -24,8 +24,10 @@ const roleScopeMap: Record<RoleLevel, string[]> = {
     "databases:read",
     "databases:write",
     "databases:*",
+    "storage:read",
+    "storage:write",
   ],
-  member: ["apps:read", "databases:read"],
+  member: ["apps:read", "databases:read", "storage:read"],
   guest: ["apps:read"],
 }
 

@@ -12,6 +12,8 @@ export const ALL_SCOPES = [
   "databases:read",
   "databases:write",
   "databases:*",
+  "storage:read",
+  "storage:write",
   "admin:*",
 ] as const
 

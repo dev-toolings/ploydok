@@ -143,6 +143,10 @@
     "title": "Database details",
     "description": "Inspect and configure your database."
   },
+  "storageDestinations": {
+    "title": "Storage",
+    "description": "Manage reusable backup destinations."
+  },
   "scheduledJobs": {
     "title": "Scheduled jobs",
     "description": "Manage scheduled tasks for your resources."

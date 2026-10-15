@@ -18,6 +18,8 @@ import {
   useTargetBackupConfig,
   useUpdateTargetBackupConfig,
 } from "../../lib/backups"
+import { useCurrentOrganizationSlug } from "../../lib/organizations"
+import { useStorageDestinations } from "../../lib/storage-destinations"
 import type { BackupTarget, UpdateBackupConfigInput } from "../../lib/backups"
 
 interface BackupConfigPanelProps {
@@ -30,13 +32,12 @@ export function BackupConfigPanel({
   const { t } = useTranslation("databases")
   const { data: config, isLoading } = useTargetBackupConfig(target)
   const update = useUpdateTargetBackupConfig(target)
+  const currentOrgSlug = useCurrentOrganizationSlug()
+  const { data: destinations = [], isLoading: destinationsLoading } =
+    useStorageDestinations(currentOrgSlug)
 
-  const [destination, setDestination] = React.useState<"s3" | "local">("local")
-  const [s3Endpoint, setS3Endpoint] = React.useState("")
-  const [s3Bucket, setS3Bucket] = React.useState("")
+  const [destinationId, setDestinationId] = React.useState("")
   const [s3Prefix, setS3Prefix] = React.useState("")
-  const [s3Region, setS3Region] = React.useState("")
-  const [s3CredentialsSecretId, setS3CredentialsSecretId] = React.useState("")
   const [scheduleCron, setScheduleCron] = React.useState("0 3 * * *")
   const [retentionDays, setRetentionDays] = React.useState(7)
   const [agePublicKey, setAgePublicKey] = React.useState("")
@@ -44,12 +45,8 @@ export function BackupConfigPanel({
 
   React.useEffect(() => {
     if (!config) return
-    setDestination(config.destinationKind)
-    setS3Endpoint(config.s3Endpoint ?? "")
-    setS3Bucket(config.s3Bucket ?? "")
+    setDestinationId(config.destinationId ?? "")
     setS3Prefix(config.s3Prefix ?? "")
-    setS3Region(config.s3Region ?? "")
-    setS3CredentialsSecretId(config.s3CredentialsSecretId ?? "")
     setScheduleCron(config.scheduleCron)
     setRetentionDays(config.retentionDays)
     setAgePublicKey(config.ageRecipientPublicKey ?? "")
@@ -59,21 +56,13 @@ export function BackupConfigPanel({
   function handleSave(e: React.FormEvent) {
     e.preventDefault()
     const input: UpdateBackupConfigInput = {
-      destinationKind: destination,
+      destinationId: destinationId || null,
       scheduleCron,
       retentionDays,
       ageRecipientPublicKey: agePublicKey || null,
       enabled,
     }
-    if (destination === "s3") {
-      Object.assign(input, {
-        s3Endpoint: s3Endpoint || undefined,
-        s3Bucket,
-        s3Prefix: s3Prefix || undefined,
-        s3Region: s3Region || "auto",
-        s3CredentialsSecretId: s3CredentialsSecretId || undefined,
-      })
-    }
+    input.s3Prefix = s3Prefix.trim()
     update.mutate(input)
   }
 
@@ -99,72 +88,42 @@ export function BackupConfigPanel({
       <div className="space-y-1.5">
         <Label>{t("backup.destination")}</Label>
         <Select
-          value={destination}
-          onValueChange={(value) => setDestination(value as "s3" | "local")}
+          value={destinationId}
+          onValueChange={setDestinationId}
+          disabled={destinationsLoading || destinations.length === 0}
         >
           <SelectTrigger>
-            <SelectValue />
+            <SelectValue placeholder={t("backup.chooseDestination")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="local">{t("backup.local")}</SelectItem>
-            <SelectItem value="s3">{t("backup.s3Option")}</SelectItem>
+            {destinations.map((destination) => (
+              <SelectItem key={destination.id} value={destination.id}>
+                {destination.name} ·{" "}
+                {destination.kind === "s3"
+                  ? t("backup.s3Option")
+                  : t("backup.local")}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
+        <p className="text-xs text-muted-foreground">
+          {destinations.length === 0
+            ? t("backup.noDestinations")
+            : t("backup.destinationHint")}
+        </p>
       </div>
 
-      {destination === "s3" && (
-        <div className="space-y-3 rounded-md border p-4">
-          <div className="space-y-1.5">
-            <Label>{t("backup.endpoint")}</Label>
-            <Input
-              placeholder="https://<account>.r2.cloudflarestorage.com"
-              value={s3Endpoint}
-              onChange={(e) => setS3Endpoint(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t("backup.endpointHint")}
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("backup.bucket")}</Label>
-            <Input
-              placeholder="my-ploydok-backups"
-              value={s3Bucket}
-              onChange={(e) => setS3Bucket(e.target.value)}
-              required
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>{t("backup.prefix")}</Label>
-              <Input
-                placeholder="backups/"
-                value={s3Prefix}
-                onChange={(e) => setS3Prefix(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t("backup.region")}</Label>
-              <Input
-                placeholder="auto"
-                value={s3Region}
-                onChange={(e) => setS3Region(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("backup.secretId")}</Label>
-            <Input
-              placeholder="secret-id containing {accessKeyId, secretAccessKey}"
-              value={s3CredentialsSecretId}
-              onChange={(e) => setS3CredentialsSecretId(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t("backup.secretHint")}
-            </p>
-          </div>
-        </div>
-      )}
+      <div className="space-y-1.5">
+        <Label>{t("backup.prefix")}</Label>
+        <Input
+          placeholder={t("backup.prefixPlaceholder")}
+          value={s3Prefix}
+          onChange={(e) => setS3Prefix(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("backup.prefixHint")}
+        </p>
+      </div>
 
       <div className="space-y-1.5">
         <Label>{t("backup.schedule")}</Label>
@@ -203,7 +162,11 @@ export function BackupConfigPanel({
         </p>
       </div>
 
-      <Button type="submit" loading={update.isPending}>
+      <Button
+        type="submit"
+        loading={update.isPending}
+        disabled={!destinationId || destinationsLoading}
+      >
         {update.isPending ? t("common:saving") : t("backup.save")}
       </Button>
     </form>

@@ -84,6 +84,7 @@
     "dashboard": "Dashboard",
     "applications": "Applications",
     "databases": "Databases",
+    "storage": "Storage",
     "services": "Services",
     "deployments": "Deployments",
     "marketplace": "Marketplace",

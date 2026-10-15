@@ -14,11 +14,11 @@
 import { createReadStream } from "node:fs"
 import { nanoid } from "nanoid"
 import { eq } from "drizzle-orm"
-import { databases, backups, backup_configs, secrets } from "@ploydok/db"
+import { databases, backups, backup_configs } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
-import { decryptSecret } from "../secrets/crypto"
 import { getSharedAgent } from "../debug/singletons"
 import { createS3Client, downloadStream } from "../storage/s3"
+import { resolveBackupDestination, resolveS3Credentials } from "../backups/storage"
 import { childLogger } from "../logger"
 import type { RestoreChunk } from "@ploydok/agent-proto"
 
@@ -74,20 +74,10 @@ export async function runRestore(db: Db, opts: RestoreOptions): Promise<{ ok: bo
       .from(backup_configs)
       .where(eq(backup_configs.id, backup.config_id!))
       .limit(1)
-    const config = configRows[0]
-    if (!config) throw new Error(`Backup config not found for backup ${backupId}`)
-
-    const credsSecretRows = await db
-      .select()
-      .from(secrets)
-      .where(eq(secrets.id, config.s3_credentials_secret_id!))
-      .limit(1)
-    const secretRow = credsSecretRows[0]
-    if (!secretRow || !secretRow.value_ciphertext || !secretRow.nonce) {
-      throw new Error("S3 credentials secret missing")
-    }
-    const plaintext = await decryptSecret(secretRow.value_ciphertext as Buffer, secretRow.nonce as Buffer)
-    const creds = JSON.parse(plaintext) as { accessKeyId: string; secretAccessKey: string }
+    const rawConfig = configRows[0]
+    if (!rawConfig) throw new Error(`Backup config not found for backup ${backupId}`)
+    const config = await resolveBackupDestination(db, rawConfig)
+    const creds = await resolveS3Credentials(db, config)
 
     const client = createS3Client({
       ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),

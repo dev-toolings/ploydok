@@ -23,6 +23,7 @@ import { env } from "../env"
 import {
   buildBackupFilename,
   deleteBackupArtifact,
+  resolveBackupDestination,
   writeBackupStream,
 } from "../backups/storage"
 
@@ -61,8 +62,9 @@ export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Da
     .from(backup_configs)
     .where(and(eq(backup_configs.database_id, databaseId), eq(backup_configs.enabled, true)))
     .limit(1)
-  const config = configRows[0]
-  if (!config) throw new Error(`No enabled backup config for database ${databaseId}`)
+  const rawConfig = configRows[0]
+  if (!rawConfig) throw new Error(`No enabled backup config for database ${databaseId}`)
+  const config = await resolveBackupDestination(db, rawConfig)
 
   // 2. Insert backups row with status=running
   const backupId = nanoid()

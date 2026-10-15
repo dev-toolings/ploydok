@@ -143,6 +143,10 @@
     "title": "Détails de la base de données",
     "description": "Consultez et configurez votre base de données."
   },
+  "storageDestinations": {
+    "title": "Stockage",
+    "description": "Gérez les destinations de sauvegarde réutilisables."
+  },
   "scheduledJobs": {
     "title": "Tâches planifiées",
     "description": "Gérez les tâches planifiées de vos ressources."

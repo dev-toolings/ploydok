@@ -223,7 +223,12 @@ describe("volume backup routes", () => {
       last_error: null,
       created_at: new Date("2026-04-28T10:00:00.000Z"),
     }
-    const { db, inserts } = buildDb([[volumeRow], [], [createdRow]])
+    const { db, inserts } = buildDb([
+      [volumeRow],
+      [{ projectId: "proj-1" }],
+      [],
+      [createdRow],
+    ])
 
     const res = await wrapRouter(db).fetch(
       req("PUT", "/apps/app-1/volumes/vol-1/backup-config", {
@@ -264,6 +269,155 @@ describe("volume backup routes", () => {
     expect(inserts).toHaveLength(0)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe("FORBIDDEN")
+  })
+})
+
+describe("shared destinations in backup config routes", () => {
+  it("rejects a database destination owned by another workspace", async () => {
+    const { db, inserts } = buildDb([
+      [{ db: { id: "db-1", project_id: "proj-1" } }],
+      [],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/databases/db-1/backup-config", {
+        destinationId: "foreign-destination",
+      })
+    )
+
+    expect(res.status).toBe(404)
+    expect(inserts).toHaveLength(0)
+  })
+
+  it("rejects a volume destination owned by another workspace", async () => {
+    const volumeRow = {
+      id: "vol-1",
+      app_id: "app-1",
+      name: "data",
+      mount_path: "/data",
+      size_limit_bytes: null,
+      created_at: new Date("2026-04-28T09:00:00.000Z"),
+    }
+    const { db, inserts } = buildDb([
+      [volumeRow],
+      [{ projectId: "proj-1" }],
+      [],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/apps/app-1/volumes/vol-1/backup-config", {
+        destinationId: "foreign-destination",
+      })
+    )
+
+    expect(res.status).toBe(404)
+    expect(inserts).toHaveLength(0)
+  })
+
+  it("stores the selected database destination id while retaining its config prefix", async () => {
+    const destination = {
+      id: "destination-1",
+      org_id: "proj-1",
+      kind: "s3",
+    }
+    const created = {
+      id: "cfg-created",
+      database_id: "db-1",
+      destination_id: "destination-1",
+      destination_kind: "s3",
+      s3_prefix: "database/tenant-a",
+      schedule_cron: "0 3 * * *",
+      retention_days: 7,
+      age_recipient_public_key: null,
+      enabled: true,
+      last_run_at: null,
+      last_error: null,
+      created_at: new Date("2026-04-28T10:00:00.000Z"),
+    }
+    const { db, inserts } = buildDb([
+      [{ db: { id: "db-1", project_id: "proj-1" } }],
+      [destination],
+      [],
+      [created],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/databases/db-1/backup-config", {
+        destinationId: "destination-1",
+        s3Prefix: "database/tenant-a",
+      })
+    )
+
+    expect(res.status).toBe(201)
+    expect(inserts[0]).toMatchObject({
+      values: expect.objectContaining({
+        destination_id: "destination-1",
+        destination_kind: "s3",
+        s3_prefix: "database/tenant-a",
+        s3_endpoint: null,
+        s3_bucket: null,
+        s3_region: null,
+        s3_credentials_secret_id: null,
+      }),
+    })
+  })
+
+  it("stores the selected volume destination id while retaining its config prefix", async () => {
+    const volumeRow = {
+      id: "vol-1",
+      app_id: "app-1",
+      name: "data",
+      mount_path: "/data",
+      size_limit_bytes: null,
+      created_at: new Date("2026-04-28T09:00:00.000Z"),
+    }
+    const destination = {
+      id: "destination-1",
+      org_id: "proj-1",
+      kind: "s3",
+    }
+    const created = {
+      id: "volume-cfg-created",
+      app_id: "app-1",
+      volume_id: "vol-1",
+      destination_id: "destination-1",
+      destination_kind: "s3",
+      s3_prefix: "volume/tenant-a",
+      schedule_cron: "0 3 * * *",
+      retention_days: 7,
+      age_recipient_public_key: null,
+      enabled: true,
+      last_run_at: null,
+      last_error: null,
+      created_at: new Date("2026-04-28T10:00:00.000Z"),
+    }
+    const { db, inserts } = buildDb([
+      [volumeRow],
+      [{ projectId: "proj-1" }],
+      [destination],
+      [],
+      [created],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/apps/app-1/volumes/vol-1/backup-config", {
+        destinationId: "destination-1",
+        s3Prefix: "volume/tenant-a",
+      })
+    )
+
+    expect(res.status).toBe(201)
+    expect(inserts[0]).toMatchObject({
+      values: expect.objectContaining({
+        destination_id: "destination-1",
+        destination_kind: "s3",
+        s3_prefix: "volume/tenant-a",
+        s3_endpoint: null,
+        s3_bucket: null,
+        s3_region: null,
+        s3_credentials_secret_id: null,
+      }),
+    })
   })
 })
 

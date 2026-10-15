@@ -126,3 +126,8 @@ export {
 } from "./resource-creation-sagas"
 
 export { preview_queue_jobs } from "./preview-queue-jobs"
+export {
+  storage_destinations,
+  type StorageDestinationRow,
+  type StorageDestinationInsert,
+} from "./storage-destinations"
