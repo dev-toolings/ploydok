@@ -261,6 +261,7 @@ interface CreateAppOpts {
   projectId: string
   name?: string
   branch?: string
+  runtimeMode?: "docker" | "swarm"
 }
 
 async function createTestApp(db: TestDb, opts: CreateAppOpts) {
@@ -291,8 +292,9 @@ async function createTestApp(db: TestDb, opts: CreateAppOpts) {
     start_command: null,
     watch_paths: null,
     container_id: null,
+    runtime_mode: opts.runtimeMode ?? "swarm",
     restart_policy: "unless-stopped",
-    domain: `${slug}.demo.ploydok.local`,
+    domain: `${slug}.demo.localhost`,
     build_method: "auto",
     healthcheck_path: "/",
     healthcheck_port: null,
@@ -640,7 +642,7 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(body.app.slug).toBe("my-app")
     expect(body.app.status).toBe("pending")
     expect(body.app.domain).toMatch(
-      /^my-app-[a-z0-9-]{8}\.demo\.ploydok\.local$/
+      /^my-app-[a-z0-9-]{8}\.demo\.localhost$/
     )
     expect(body.app.restartPolicy).toBe("unless-stopped")
     expect(body.app.id).toBeString()
@@ -680,10 +682,7 @@ describe.skipIf(skip)("POST /apps", () => {
         imageRef: "nginx:stable",
       }),
     })
-    expect(imageRes.status).toBe(412)
-    expect(await imageRes.json()).toMatchObject({
-      error: { code: "GIT_PROVIDER_NOT_CONNECTED" },
-    })
+    expect(imageRes.status).toBe(201)
   })
 
   it("refuses a GitHub installation owned by another user", async () => {
@@ -1800,7 +1799,11 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   })
 
   it("rollback with explicit succeeded buildId → 200", async () => {
-    const { id: appId } = await createTestApp(db, { userId, projectId })
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
     const { id: buildId } = await createTestBuild(db, appId, "succeeded")
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
@@ -1832,7 +1835,11 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   })
 
   it("rollback without buildId (legacy) — calls runner and returns 200", async () => {
-    const { id: appId } = await createTestApp(db, { userId, projectId })
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     // No body — legacy behaviour
