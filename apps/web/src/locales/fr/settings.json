@@ -90,7 +90,7 @@
     "uninstalling": "Désinstallation...",
     "resetApp": "Réinitialiser l'App",
     "resetAppConfirm": "Réinitialiser cette GitHub App ?",
-    "resetAppHint": "Cela désinstallera {{name}} de chaque compte ou organisation GitHub connecté et supprimera sa configuration Ploydok locale. Vous devrez créer et installer l'App à nouveau. Cette action est irréversible.",
+    "resetAppHint": "Cela désinstalle {{name}} de chaque compte ou organisation GitHub connecté et supprime sa configuration Ploydok locale. L'App reste enregistrée sur GitHub : supprimez-la depuis les Developer settings du compte si vous n'en avez plus besoin. Cette action est irréversible.",
     "unknownRepos": "inconnu",
     "allRepositories": "tous les dépôts",
     "repository_one": "{{count}} dépôt",
