@@ -424,6 +424,7 @@ export async function resumeServiceCreation(
             containerId: dependencyId,
             dependency,
             condition,
+            restartPolicy: dependencySpec.restartPolicy,
             onPoll: fence,
           })
           await fence()
@@ -490,12 +491,50 @@ export async function resumeServiceCreation(
         await recordContainer(containerId, spec.name)
         await fence()
         let alreadyCompleted = false
-        if (
-          existing &&
-          (spec.restartPolicy === "no" || completedDependencies.has(spec.composeName ?? spec.name)) &&
-          deps.agent.inspectContainerHealth
-        ) {
-          const state = await deps.agent.inspectContainerHealth({ containerId })
+        const isOneShot =
+          spec.restartPolicy === "no" ||
+          completedDependencies.has(spec.composeName ?? spec.name)
+        if (existing && isOneShot) {
+          if (!deps.agent.inspectContainerHealth) {
+            throw new DependencyWaitError({
+              dependency: spec.composeName ?? spec.name,
+              condition: "service_completed_successfully",
+              message:
+                `Cannot safely resume one-shot Docker dependency ` +
+                `${spec.composeName ?? spec.name}: the agent does not support ` +
+                "container inspection; refusing to restart an already finished container",
+            })
+          }
+          let state
+          try {
+            state = await deps.agent.inspectContainerHealth({ containerId })
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            const wrapped = new DependencyWaitError({
+              dependency: spec.composeName ?? spec.name,
+              condition: "service_completed_successfully",
+              message:
+                `Failed to inspect one-shot Docker dependency ` +
+                `${spec.composeName ?? spec.name}: ${detail}`,
+            })
+            ;(wrapped as Error & { cause?: unknown }).cause = error
+            throw wrapped
+          }
+          if (
+            state.containerMissing ||
+            state.state === undefined ||
+            state.running === undefined ||
+            state.exitCode === undefined
+          ) {
+            throw new DependencyWaitError({
+              dependency: spec.composeName ?? spec.name,
+              condition: "service_completed_successfully",
+              message:
+                `Cannot safely resume one-shot Docker dependency ` +
+                `${spec.composeName ?? spec.name}: container inspection ` +
+                "did not return a complete state; refusing to restart an ambiguous container",
+            })
+          }
           alreadyCompleted =
             state.state === "exited" &&
             state.running === false &&
@@ -578,6 +617,7 @@ export async function resumeServiceCreation(
             serviceName: dependencyService.name,
             condition,
             replicas: dependencyService.replicas,
+            restartPolicy: dependencyService.restartPolicy,
             onPoll: fence,
           })
           await fence()

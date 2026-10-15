@@ -762,6 +762,55 @@ describe("marketplace Docker dependency readiness", () => {
     expect(starts).toEqual(startsInit ? ["init-1", "app-1"] : ["app-1"]);
   });
 
+  it("refuses to resume a one-shot when an older agent omits structured state", async () => {
+    mockClaimCreationSaga.mockResolvedValueOnce(sagaClaim as never);
+    mockGetServiceById.mockResolvedValueOnce(oneShotServiceRow() as never);
+    const agent = makeAgent({
+      imagePull: async function* () {},
+      listContainers: mock(async () => ({
+        containers: [{
+          id: "init-1",
+          name: "ploydok-svc-svc-ready-migrate",
+          serviceId: "svc-ready",
+        }],
+      })),
+      inspectContainerHealth: mock(async () => ({
+        status: 1,
+        containerMissing: false,
+        running: false,
+        exitCode: 0,
+        statusText: "Exited (0) 1s ago",
+      })),
+    } as never);
+
+    await expect(
+      resumeServiceCreation({ agent, db: makeDb(), caddy: makeCaddy() }, "svc-ready")
+    ).rejects.toThrow(/refusing to restart|ambiguous|complete state/i);
+    expect(agent.containerStart).not.toHaveBeenCalled();
+    expect(agent.containerCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to resume a one-shot when an older agent lacks inspection support", async () => {
+    mockClaimCreationSaga.mockResolvedValueOnce(sagaClaim as never);
+    mockGetServiceById.mockResolvedValueOnce(oneShotServiceRow() as never);
+    const agent = makeAgent({
+      imagePull: async function* () {},
+      listContainers: mock(async () => ({
+        containers: [{
+          id: "init-1",
+          name: "ploydok-svc-svc-ready-migrate",
+          serviceId: "svc-ready",
+        }],
+      })),
+    } as never);
+
+    await expect(
+      resumeServiceCreation({ agent, db: makeDb(), caddy: makeCaddy() }, "svc-ready")
+    ).rejects.toThrow(/does not support container inspection|refusing to restart/i);
+    expect(agent.containerStart).not.toHaveBeenCalled();
+    expect(agent.containerCreate).not.toHaveBeenCalled();
+  });
+
   it("times out a Swarm dependency and compensates the services on the next saga step", async () => {
     mockClaimCreationSaga.mockResolvedValueOnce(sagaClaim as never);
     mockGetServiceById.mockResolvedValueOnce({

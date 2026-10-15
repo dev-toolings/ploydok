@@ -1290,7 +1290,9 @@ export async function handleDeploy(
       })
       const swarm = swarmAgentFromGrpc(createAgentClient())
       await fenceDeploySideEffect()
-      const names = await deployPlannedComposeStack(swarm, plan)
+      const names = await deployPlannedComposeStack(swarm, plan, {
+        onPoll: fenceDeploySideEffect,
+      })
       if (app.domain && plan.entrypoint) {
         await fenceDeploySideEffect()
         await new CaddyClient().setUpstream(

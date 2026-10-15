@@ -479,6 +479,16 @@ fn reject_unsupported_swarm_topology(info: &SwarmInfoResponse) -> Result<(), Sta
     Ok(())
 }
 
+fn validate_swarm_task_inspection_topology(info: &SwarmInfoResponse) -> Result<(), Status> {
+    if info.local_node_state == "active" && info.control_available && info.nodes == 1 {
+        return Ok(());
+    }
+    Err(Status::failed_precondition(format!(
+        "Cannot inspect Swarm dependency tasks cluster-wide: requires an active single-node manager (state={}, control_available={}, nodes={})",
+        info.local_node_state, info.control_available, info.nodes
+    )))
+}
+
 fn swarm_info_response(info: bollard::models::SystemInfo) -> SwarmInfoResponse {
     let swarm = info.swarm;
     SwarmInfoResponse {
@@ -2526,6 +2536,17 @@ impl Agent for AgentService {
         self.validator
             .validate_list_service_tasks(&req)
             .map_err(|e| *e)?;
+        let swarm = self
+            .docker
+            .info()
+            .await
+            .map(swarm_info_response)
+            .map_err(|e| bollard_err("info", e))?;
+        validate_swarm_task_inspection_topology(&swarm)?;
+        // Bollard 0.17 does not expose Docker's `/tasks` endpoint. The
+        // container snapshot below is therefore a deliberate single-node
+        // fallback. Refuse workers and multi-node managers before any local
+        // snapshot can be mistaken for cluster-wide dependency health.
         let mut filters = HashMap::new();
         filters.insert(
             "label".to_string(),
@@ -3170,7 +3191,10 @@ mod sec02_tests {
 
 #[cfg(test)]
 mod swarm_topology_tests {
-    use super::{reject_unsupported_swarm_topology, SwarmInfoResponse};
+    use super::{
+        reject_unsupported_swarm_topology, validate_swarm_task_inspection_topology,
+        SwarmInfoResponse,
+    };
 
     fn swarm_info(state: &str, control: bool, nodes: i64) -> SwarmInfoResponse {
         SwarmInfoResponse {
@@ -3207,6 +3231,32 @@ mod swarm_topology_tests {
         let error = reject_unsupported_swarm_topology(&swarm_info("active", true, 0))
             .expect_err("unverifiable topology must fail closed");
         assert!(error.message().contains("unverifiable topology"));
+    }
+
+    #[test]
+    fn task_inspection_accepts_only_an_active_single_node_manager() {
+        assert!(validate_swarm_task_inspection_topology(&swarm_info("active", true, 1)).is_ok());
+    }
+
+    #[test]
+    fn task_inspection_rejects_multinode_cluster() {
+        let error = validate_swarm_task_inspection_topology(&swarm_info("active", true, 2))
+            .expect_err("cluster-wide health is unavailable on multiple nodes");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("dependency tasks"));
+    }
+
+    #[test]
+    fn task_inspection_rejects_unknown_or_inactive_topology() {
+        for info in [
+            swarm_info("inactive", false, 0),
+            swarm_info("unknown", false, 0),
+        ] {
+            let error = validate_swarm_task_inspection_topology(&info)
+                .expect_err("dependency inspection must fail closed");
+            assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+            assert!(error.message().contains("active single-node manager"));
+        }
     }
 }
 

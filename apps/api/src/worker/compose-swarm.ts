@@ -12,6 +12,7 @@ import {
   type ComposeDependencyCondition,
 } from "../marketplace/compose-to-containers.js"
 
+/** Maximum wait for each dependency edge, in milliseconds. */
 export const DEFAULT_DEPENDENCY_WAIT_TIMEOUT_MS = 300_000
 const DEFAULT_DEPENDENCY_POLL_MS = 500
 const DEFAULT_AGENT_RPC_TIMEOUT_MS = 30_000
@@ -252,6 +253,23 @@ export class DependencyWaitError extends Error {
   }
 }
 
+function dependencyProbeError(
+  dependency: string,
+  condition: ComposeDependencyCondition,
+  action: string,
+  error: unknown
+): DependencyWaitError {
+  if (error instanceof DependencyWaitError) return error
+  const detail = error instanceof Error ? error.message : String(error)
+  const wrapped = new DependencyWaitError({
+    dependency,
+    condition,
+    message: `Failed to ${action} for dependency ${dependency}: ${detail}`,
+  })
+  ;(wrapped as Error & { cause?: unknown }).cause = error
+  return wrapped
+}
+
 function conditionSatisfied(
   condition: ComposeDependencyCondition,
   status: string
@@ -284,6 +302,7 @@ export async function waitForSwarmServiceCondition(
     serviceName: string
     condition: ComposeDependencyCondition
     replicas?: number
+    restartPolicy?: ComposeContainer["restartPolicy"]
     timeoutMs?: number
     pollMs?: number
     onPoll?: () => void | Promise<void>
@@ -299,17 +318,41 @@ export async function waitForSwarmServiceCondition(
   const timeoutMs = input.timeoutMs ?? DEFAULT_DEPENDENCY_WAIT_TIMEOUT_MS
   const pollMs = input.pollMs ?? DEFAULT_DEPENDENCY_POLL_MS
   const deadline = Date.now() + timeoutMs
-  let lastTasks: Array<{ status: string }> = []
+  let lastTasks: Array<{
+    status: string
+    running?: boolean
+    exitCode?: number | undefined
+    healthStatus?: string | undefined
+    state?: string | undefined
+  }> = []
   const requiredReplicas = Math.max(1, input.replicas ?? 1)
   while (Date.now() < deadline) {
     await input.onPoll?.()
     const remaining = Math.max(1, deadline - Date.now())
-    const result = await agent.listServiceTasks(
-      { serviceName: input.serviceName },
-      Math.min(DEFAULT_AGENT_PROBE_TIMEOUT_MS, remaining)
-    )
+    let result: Awaited<ReturnType<NonNullable<typeof agent.listServiceTasks>>>
+    try {
+      result = await agent.listServiceTasks(
+        { serviceName: input.serviceName },
+        Math.min(DEFAULT_AGENT_PROBE_TIMEOUT_MS, remaining)
+      )
+    } catch (error) {
+      throw dependencyProbeError(
+        input.serviceName,
+        input.condition,
+        "inspect Swarm tasks",
+        error
+      )
+    }
     lastTasks = result.tasks
     await input.onPoll?.()
+    const failedTasks = result.tasks.filter(
+      (task) =>
+        task.state === "exited" &&
+        task.running === false &&
+        task.exitCode !== undefined &&
+        task.exitCode !== -1 &&
+        task.exitCode !== 0
+    )
     const satisfied = result.tasks.filter((task) => {
       if (input.condition === "service_completed_successfully") {
         return task.state === "exited" && task.running === false && task.exitCode === 0
@@ -322,6 +365,20 @@ export async function waitForSwarmServiceCondition(
       }
       return conditionSatisfied(input.condition, task.status)
     }).length
+    if (
+      result.tasks.length >= requiredReplicas &&
+      failedTasks.length === result.tasks.length &&
+      input.restartPolicy === "no"
+    ) {
+      throw new DependencyWaitError({
+        dependency: input.serviceName,
+        condition: input.condition,
+        message:
+          `Swarm dependency ${input.serviceName} exited with non-zero status ` +
+          `before satisfying ${input.condition}; ` +
+          `latest tasks: ${JSON.stringify(result.tasks)}`,
+      })
+    }
     if (
       satisfied >= requiredReplicas &&
       (input.condition !== "service_completed_successfully" ||
@@ -337,7 +394,7 @@ export async function waitForSwarmServiceCondition(
     condition: input.condition,
     timedOut: true,
     message:
-      `Timed out after ${timeoutMs}ms waiting for Swarm dependency ` +
+      `Timed out after ${timeoutMs}ms (per dependency edge) waiting for Swarm dependency ` +
       `${input.serviceName} to satisfy ${input.condition}; ` +
       `last tasks: ${JSON.stringify(lastTasks)}`,
   })
@@ -349,6 +406,7 @@ export async function waitForDockerContainerCondition(
     containerId: string
     dependency: string
     condition: ComposeDependencyCondition
+    restartPolicy?: ComposeContainer["restartPolicy"]
     timeoutMs?: number
     pollMs?: number
     onPoll?: () => void | Promise<void>
@@ -368,10 +426,20 @@ export async function waitForDockerContainerCondition(
   while (Date.now() < deadline) {
     await input.onPoll?.()
     const remaining = Math.max(1, deadline - Date.now())
-    const result = await agent.inspectContainerHealth(
-      { containerId: input.containerId },
-      Math.min(DEFAULT_AGENT_PROBE_TIMEOUT_MS, remaining)
-    )
+    let result: Awaited<ReturnType<NonNullable<typeof agent.inspectContainerHealth>>>
+    try {
+      result = await agent.inspectContainerHealth(
+        { containerId: input.containerId },
+        Math.min(DEFAULT_AGENT_PROBE_TIMEOUT_MS, remaining)
+      )
+    } catch (error) {
+      throw dependencyProbeError(
+        input.dependency,
+        input.condition,
+        "inspect Docker container",
+        error
+      )
+    }
     lastStatus = result
     await input.onPoll?.()
     if (result.containerMissing) {
@@ -398,16 +466,19 @@ export async function waitForDockerContainerCondition(
       return
     }
     if (
-      input.condition === "service_completed_successfully" &&
       result.state === "exited" &&
       result.running === false &&
       result.exitCode !== undefined &&
-      result.exitCode !== 0
+      result.exitCode !== 0 &&
+      result.exitCode !== -1 &&
+      input.restartPolicy === "no"
     ) {
       throw new DependencyWaitError({
         dependency: input.dependency,
         condition: input.condition,
-        message: `Docker dependency ${input.dependency} exited with code ${result.exitCode} before satisfying service_completed_successfully`,
+        message:
+          `Docker dependency ${input.dependency} exited with code ` +
+          `${result.exitCode} before satisfying ${input.condition}`,
       })
     }
     const sleepMs = Math.min(pollMs, Math.max(1, deadline - Date.now()))
@@ -418,7 +489,7 @@ export async function waitForDockerContainerCondition(
     condition: input.condition,
     timedOut: true,
     message:
-      `Timed out after ${timeoutMs}ms waiting for Docker dependency ` +
+      `Timed out after ${timeoutMs}ms (per dependency edge) waiting for Docker dependency ` +
       `${input.dependency} to satisfy ${input.condition}; ` +
       `last state: ${JSON.stringify(lastStatus)}`,
   })
@@ -465,12 +536,26 @@ export function plannedServiceToSpec(
 
 export async function deployPlannedComposeStack(
   agent: ComposeSwarmAgent,
-  plan: PlannedComposeStack
+  plan: PlannedComposeStack,
+  options?: {
+    onPoll?: () => void | Promise<void>
+  }
 ): Promise<string[]> {
+  let leaseCallbackFailed = false
+  const renewLease = async () => {
+    try {
+      await options?.onPoll?.()
+    } catch (error) {
+      leaseCallbackFailed = true
+      throw error
+    }
+  }
+  await renewLease()
   await agent.swarmEnsureSingleNode({})
   const created: string[] = []
   try {
     for (const service of plan.services) {
+      await renewLease()
       for (const dependency of service.dependsOn) {
         const condition =
           service.dependsOnConditions?.[dependency] ?? "service_started"
@@ -488,15 +573,22 @@ export async function deployPlannedComposeStack(
           serviceName: dependencyService.name,
           condition,
           replicas: dependencyService.replicas,
+          restartPolicy: dependencyService.restartPolicy,
+          onPoll: renewLease,
         })
       }
+      await renewLease()
       await agent.serviceCreate({ spec: plannedServiceToSpec(service) })
       created.push(service.name)
     }
     return created
   } catch (err) {
-    for (const name of [...created].reverse()) {
-      await agent.serviceRemove({ serviceName: name }).catch(() => undefined)
+    // A failed fence leaves ownership uncertain. A successor may already own
+    // these service names, so the stale worker must not remove them.
+    if (!leaseCallbackFailed) {
+      for (const name of [...created].reverse()) {
+        await agent.serviceRemove({ serviceName: name }).catch(() => undefined)
+      }
     }
     throw err
   }
