@@ -187,6 +187,18 @@ export async function saveGitHubAppConfig(
   return rows[0]!.id
 }
 
+/** Records the GitHub account that owns an App. */
+export async function setGitHubAppOwner(
+  db: Db,
+  id: string,
+  owner: { login: string; type: string }
+): Promise<void> {
+  await db
+    .update(github_app)
+    .set({ owner_login: owner.login, owner_type: owner.type })
+    .where(eq(github_app.id, id))
+}
+
 /** Deletes one App row; its installations cascade. */
 export async function deleteGitHubAppConfig(db: Db, id: string): Promise<void> {
   await db.delete(github_app).where(eq(github_app.id, id));

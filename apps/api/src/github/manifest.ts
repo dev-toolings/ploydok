@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createHash } from "node:crypto"
 
 export interface ManifestOptions {
   webBaseUrl: string // e.g. http://localhost:5173
@@ -24,6 +25,17 @@ function isLoopbackHost(url: string): boolean {
   }
 }
 
+/**
+ * `Ploydok <org> <instance tag>`: the tag is derived from the hostname, so two
+ * instances registering an App for the same organization never collide, and
+ * the name always fits GitHub's limit.
+ */
+function organizationAppName(ownerLogin: string, hostname: string): string {
+  const tag = createHash("sha256").update(hostname).digest("hex").slice(0, 6)
+  const room = GITHUB_APP_NAME_MAX - "Ploydok ".length - ` ${tag}`.length
+  return `Ploydok ${ownerLogin.slice(0, room)} ${tag}`
+}
+
 export function buildManifest(opts: ManifestOptions) {
   // GitHub rejects manifests whose hook URL is not publicly reachable.
   // Three cases:
@@ -37,13 +49,9 @@ export function buildManifest(opts: ManifestOptions) {
       : `${opts.apiBaseUrl}/github/webhook`)
 
   const hostname = new URL(opts.webBaseUrl).hostname
-  const name = (
-    opts.ownerLogin
-      ? `Ploydok ${opts.ownerLogin} (${hostname})`
-      : `Ploydok (${hostname})`
-  )
-    .slice(0, GITHUB_APP_NAME_MAX)
-    .trim()
+  const name = opts.ownerLogin
+    ? organizationAppName(opts.ownerLogin, hostname)
+    : `Ploydok (${hostname})`.slice(0, GITHUB_APP_NAME_MAX)
 
   const base = {
     name,

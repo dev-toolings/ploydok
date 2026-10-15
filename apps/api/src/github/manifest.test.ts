@@ -69,4 +69,21 @@ describe("buildManifest", () => {
     expect(m.redirect_url).toBe("https://api.ploydok.example.com/github/app/callback");
     expect(m.url).toBe("https://ploydok.example.com");
   });
+
+  it("names an organization App within GitHub's 34-character limit", () => {
+    const opts = {
+      webBaseUrl: "http://192-168-1-235.sslip.io",
+      apiBaseUrl: "http://192-168-1-235.sslip.io",
+    };
+    const m = buildManifest({ ...opts, ownerLogin: "dev-toolings" });
+    expect(m.name).toMatch(/^Ploydok dev-toolings [0-9a-f]{6}$/);
+    expect(buildManifest({ ...opts, ownerLogin: "dev-toolings" }).name).toBe(m.name);
+    expect(
+      buildManifest({ ...opts, webBaseUrl: "https://ploydok.example.com", ownerLogin: "dev-toolings" }).name,
+    ).not.toBe(m.name);
+
+    const long = buildManifest({ ...opts, ownerLogin: "a".repeat(39) });
+    expect(long.name.length).toBeLessThanOrEqual(34);
+    expect(long.name).toMatch(/^Ploydok a+ [0-9a-f]{6}$/);
+  });
 });

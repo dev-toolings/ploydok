@@ -8,6 +8,7 @@ import * as realJwt from "./jwt"
 let currentConfig: { app_id: string; pem_enc: Buffer; pem_nonce: Buffer } | null =
   null
 let configReads = 0
+const ownerWrites: Array<{ id: string; login: string; type: string }> = []
 
 mock.module("@ploydok/db", () => ({
   ...realDb,
@@ -16,6 +17,13 @@ mock.module("@ploydok/db", () => ({
 
 mock.module("@ploydok/db/queries", () => ({
   ...realQueries,
+  setGitHubAppOwner: async (
+    _db: unknown,
+    id: string,
+    owner: { login: string; type: string }
+  ) => {
+    ownerWrites.push({ id, ...owner })
+  },
   getGitHubAppConfigForInstallation: async () => {
     configReads += 1
     return currentConfig
@@ -35,6 +43,7 @@ mock.module("./jwt", () => ({
 const {
   evictAllInstallationTokens,
   evictInstallationToken,
+  fillMissingGitHubAppOwners,
   getInstallationToken,
 } = await import("./installation-tokens")
 
@@ -125,6 +134,57 @@ describe("getInstallationToken cache fencing", () => {
     )
     expect(fetchCalls).toBe(1)
     expect(configReads).toBe(2)
+  })
+})
+
+describe("fillMissingGitHubAppOwners", () => {
+  it("records the owner GitHub reports and skips Apps that already have one", async () => {
+    ownerWrites.length = 0
+    const requested: string[] = []
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      requested.push(String(input))
+      return new Response(
+        JSON.stringify({ owner: { login: "MakFly", type: "User" } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    }) as unknown as typeof fetch
+    const legacy = {
+      id: "singleton",
+      app_id: "app-1",
+      owner_login: null,
+      owner_type: null,
+    }
+    const known = {
+      id: "ghapp_org",
+      app_id: "app-2",
+      owner_login: "dev-toolings",
+      owner_type: "Organization",
+    }
+
+    const apps = await fillMissingGitHubAppOwners([legacy, known] as never)
+
+    expect(requested).toEqual(["https://api.github.com/app"])
+    expect(ownerWrites).toEqual([
+      { id: "singleton", login: "MakFly", type: "User" },
+    ])
+    expect(apps.map((app) => app.owner_login)).toEqual([
+      "MakFly",
+      "dev-toolings",
+    ])
+  })
+
+  it("keeps a null owner when GitHub cannot describe the App", async () => {
+    ownerWrites.length = 0
+    globalThis.fetch = mock(
+      async () => new Response("{}", { status: 401 })
+    ) as unknown as typeof fetch
+
+    const [app] = await fillMissingGitHubAppOwners([
+      { id: "singleton", app_id: "app-1", owner_login: null },
+    ] as never)
+
+    expect(app?.owner_login).toBeNull()
+    expect(ownerWrites).toHaveLength(0)
   })
 })
 
