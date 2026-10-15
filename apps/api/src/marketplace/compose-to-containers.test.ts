@@ -185,6 +185,22 @@ services:
     expect(result[0]!.labels["ploydok.service_id"]).toBe("uuid-123")
   })
 
+  it("protects the service volume root from Compose and input label spoofing", () => {
+    const result = run(
+      `
+services:
+  svc:
+    image: alpine
+    labels:
+      ploydok.volume_root: compose-spoof
+`,
+      { labels: { "ploydok.volume_root": "input-spoof" } }
+    )
+    expect(result[0]!.labels["ploydok.volume_root"]).toBe(
+      `/var/lib/ploydok/volumes/${PREFIX}`
+    )
+  })
+
   it("named volume → mapped under volumes root", () => {
     const result = run(`
 volumes:
@@ -467,16 +483,35 @@ describe("volume source containment", () => {
     expect(() => run('services:\n  app:\n    image: alpine\n    volumes:\n      - type: bind\n        source: ../files/config.yaml\n        target: /config\n'))
       .toThrow('Service "app": volume source "../files/config.yaml" escapes the service volume directory');
   });
-  it.each(["/var/lib/ploydok/volumes/../x", "/var/lib/ploydok/volumes/a/../../x", "/var/lib/ploydok/volumes"])(
-    "rejects an absolute source outside the normalized volumes root: %s", source => {
+  it.each([
+    "/var/lib/ploydok/volumes/../x",
+    "/var/lib/ploydok/volumes/a/../../x",
+    "/var/lib/ploydok/volumes",
+    "/var/lib/ploydok/volumes/",
+    "/var/lib/ploydok/volumes//",
+    "/var/lib/ploydok/volumes/./",
+  ])(
+    "rejects an absolute source outside the service volume directory: %s", source => {
       expect(() => run(`services:
   app:
     image: alpine
     volumes: ["${source}:/config"]
 `))
-        .toThrow(`Service "app": volume source "${source}" escapes the volumes root`);
+        .toThrow(`Service "app": volume source "${source}" escapes the service volume directory`);
     }
   );
+  it.each([
+    `/var/lib/ploydok/volumes/${PREFIX}`,
+    `/var/lib/ploydok/volumes/${PREFIX}/`,
+    `/var/lib/ploydok/volumes/${PREFIX}-other/data`,
+    `/var/lib/ploydok/volumes/${PREFIX}other/data`,
+  ])("rejects the service root and other service lookalikes: %s", source => {
+    expect(() => run(`services:
+  app:
+    image: alpine
+    volumes: ["${source}:/config"]
+`)).toThrow(`Service "app": volume source "${source}" escapes the service volume directory`);
+  });
   it("rejects a directory whose prefix merely resembles the volumes root", () => {
     expect(() => run('services:\n  app:\n    image: alpine\n    volumes: ["/var/lib/ploydok/volumes-other/data:/data"]'))
       .toThrow(UnsupportedComposeFeatureError);
@@ -485,8 +520,20 @@ describe("volume source containment", () => {
     ["./data", `/var/lib/ploydok/volumes/${PREFIX}/data`],
     ["data/sub", `/var/lib/ploydok/volumes/${PREFIX}/data/sub`],
     ["a/../data", `/var/lib/ploydok/volumes/${PREFIX}/data`],
-    ["/var/lib/ploydok/volumes/a/../data", "/var/lib/ploydok/volumes/data"],
   ])("keeps and normalizes contained paths: %s", (source, expected) => {
+    const [container] = run(`services:
+  app:
+    image: alpine
+    volumes: ["${source}:/data:ro"]
+`);
+    expect(container!.volumes[0]).toEqual({ hostPath: expected, containerPath: "/data", readOnly: true });
+  });
+  it.each([
+    [`/var/lib/ploydok/volumes/${PREFIX}/data`, `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    [`/var/lib/ploydok/volumes/${PREFIX}/data/`, `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    [`/var/lib/ploydok/volumes/${PREFIX}/./data`, `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    [`/var/lib/ploydok/volumes/${PREFIX}/nested/../data`, `/var/lib/ploydok/volumes/${PREFIX}/data`],
+  ])("keeps and normalizes an absolute descendant: %s", (source, expected) => {
     const [container] = run(`services:
   app:
     image: alpine

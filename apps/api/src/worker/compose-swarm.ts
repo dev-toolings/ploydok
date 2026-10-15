@@ -157,6 +157,7 @@ export function planComposeSwarmDeploy(input: {
         ...container.labels,
         ...input.labels,
         "ploydok.runtime": "swarm",
+        "ploydok.volume_root": container.labels["ploydok.volume_root"]!,
       },
       networks: [input.network],
       mounts: container.volumes.map((volume) => ({

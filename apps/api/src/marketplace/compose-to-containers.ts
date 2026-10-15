@@ -207,23 +207,17 @@ function resolveHostPath(
   servicePrefix: string,
   serviceName: string
 ): string {
+  const serviceRoot = posix.join(PLOYDOK_VOLUMES_ROOT, servicePrefix)
   if (src.startsWith("/")) {
-    const normalized = posix.normalize(src)
-    if (!normalized.startsWith(`${PLOYDOK_VOLUMES_ROOT}/`)) {
-      if (src === PLOYDOK_VOLUMES_ROOT || src.startsWith(`${PLOYDOK_VOLUMES_ROOT}/`)) {
-        throw new UnsupportedComposeFeatureError(
-          `Service "${serviceName}": volume source "${src}" escapes the volumes root`
-        )
-      }
+    const normalized = posix.normalize(src).replace(/\/+$/, "") || "/"
+    if (normalized === serviceRoot || !normalized.startsWith(`${serviceRoot}/`)) {
       throw new UnsupportedComposeFeatureError(
-        `Service "${serviceName}": absolute host volume path "${src}" is not allowed. ` +
-          `Only paths under ${PLOYDOK_VOLUMES_ROOT} are permitted.`
+        `Service "${serviceName}": volume source "${src}" escapes the service volume directory`
       )
     }
     return normalized
   }
   // Named volumes and relative binds share the service storage boundary.
-  const serviceRoot = posix.join(PLOYDOK_VOLUMES_ROOT, servicePrefix)
   const normalized = posix.resolve(serviceRoot, src)
   if (!normalized.startsWith(`${serviceRoot}/`)) {
     throw new UnsupportedComposeFeatureError(
@@ -646,7 +640,11 @@ export function composeToContainers(
 
     const env = parseEnv(svc.environment, svcName)
     const userLabels = parseLabels(svc.labels)
-    const mergedLabels = { ...userLabels, ...extraLabels }
+    const mergedLabels = {
+      ...userLabels,
+      ...extraLabels,
+      "ploydok.volume_root": posix.join(PLOYDOK_VOLUMES_ROOT, servicePrefix),
+    }
     const volumes = parseVolumes(
       svc.volumes,
       svcName,
