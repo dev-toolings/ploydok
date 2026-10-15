@@ -2,6 +2,7 @@
 import { Link, Outlet, createFileRoute } from "@tanstack/react-router"
 import { createPageHead } from "../../../../lib/page-metadata"
 import { useCurrentPlanQuery } from "../../../../lib/billing"
+import { useTranslation } from "react-i18next"
 import type * as React from "react"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/settings")({
@@ -10,6 +11,7 @@ export const Route = createFileRoute("/_authed/orgs/$orgSlug/settings")({
 })
 
 function SettingsLayout(): React.JSX.Element {
+  const { t } = useTranslation("workspace")
   const { orgSlug } = Route.useParams()
   const planQuery = useCurrentPlanQuery(orgSlug)
   const showSso = planQuery.data?.plan.features.sso === true
@@ -57,6 +59,14 @@ function SettingsLayout(): React.JSX.Element {
           activeProps={{ "data-status": "active" }}
         >
           Branding
+        </Link>
+        <Link
+          to="/orgs/$orgSlug/settings/github"
+          params={{ orgSlug }}
+          className={tabClass}
+          activeProps={{ "data-status": "active" }}
+        >
+          {t("settings.github")}
         </Link>
       </nav>
       <Outlet />

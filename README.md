@@ -91,6 +91,19 @@ stateful rescheduling are not supported for the first production milestone.
 - GitHub provider integration and webhook-driven auto-deploy.
 - GitLab provider integration in beta while its browser journey is completed.
 
+GitHub repository listing and cloning use short-lived installation access tokens
+minted for the selected GitHub App installation. Organization claims use a
+separate, short-lived GitHub user authorization only to prove that the user who
+started the claim is an administrator of the GitHub organization; that user
+token is not the repository or clone credential. Existing GitHub Apps must have
+the App permission `Members: read` enabled before an organization can be
+claimed. The owner of each existing organization installation must approve the
+updated permission on GitHub, then the owner can retry the claim in Ploydok.
+Personal `User` installations do not perform an organization membership check,
+so they do not need this permission approval. Updating the permission does not
+change the existing callback URLs: keep the App's `/github/app/callback` and
+`/github/app/setup` values aligned with the configured API origin.
+
 ### Scaling and Rollouts
 
 - Docker Swarm runtime mode for long-lived application services.

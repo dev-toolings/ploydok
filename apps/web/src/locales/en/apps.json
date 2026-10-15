@@ -136,6 +136,7 @@
     "loadBranchesFailedFor": "Could not load branches for {{repo}}: {{message}}",
     "githubAppRequired": "The Ploydok GitHub App must be installed before branches can be read.",
     "githubAppNotInstalled": "The Ploydok GitHub App is not installed on any account. The repository list comes from the local cache, but no branch can be read until the app is installed.",
+    "githubAppOwnerRequired": "Ask an organization owner to install or grant the GitHub App before continuing.",
     "installGitHubApp": "Install the GitHub App",
     "noBranches": "No branches found for this repository.",
     "noBranchesFor": "No branches found for {{repo}}.",
@@ -957,6 +958,7 @@
   "repo": {
     "setupGithub": "Set up the GitHub App first to browse repositories.",
     "setupGithubCta": "Set up GitHub App",
+    "organizationRequired": "An organization is required to browse GitHub repositories.",
     "searchAria": "Search repositories",
     "loadFailed": "Failed to load repositories: {{message}}",
     "noMatch": "No repositories found matching “{{query}}”.",

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { Link } from "@tanstack/react-router"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
 import { useGitHubAppConfig, useGitHubRepos } from "../../lib/github"
@@ -8,6 +9,9 @@ import type { GitRepo } from "@ploydok/shared"
 interface RepoSelectorProps {
   selected?: GitRepo | null
   onSelect: (repo: GitRepo) => void
+  organizationId?: string
+  organizationSlug?: string
+  isOrganizationOwner?: boolean
 }
 
 function useDebounce<T>(value: T, delayMs: number): T {
@@ -24,6 +28,9 @@ function useDebounce<T>(value: T, delayMs: number): T {
 export function RepoSelector({
   selected,
   onSelect,
+  organizationId,
+  organizationSlug,
+  isOrganizationOwner,
 }: RepoSelectorProps): React.JSX.Element {
   const { t } = useTranslation("apps")
   const [search, setSearch] = React.useState("")
@@ -37,28 +44,55 @@ export function RepoSelector({
     hasNextPage,
     fetchNextPage,
     error,
-  } = useGitHubRepos({ search: debouncedSearch || undefined })
+  } = useGitHubRepos({
+    search: debouncedSearch || undefined,
+    organizationId,
+  })
+
+  const repos = data?.pages.flatMap((p) => p.repos) ?? []
+  const groupedRepos = React.useMemo(() => {
+    const groups = new Map<string, GitRepo[]>()
+    for (const repo of repos) {
+      const accountLogin =
+        "accountLogin" in repo && typeof repo.accountLogin === "string"
+          ? repo.accountLogin
+          : repo.fullName.split("/")[0] ?? ""
+      const current = groups.get(accountLogin) ?? []
+      current.push(repo)
+      groups.set(accountLogin, current)
+    }
+    return [...groups.entries()]
+  }, [repos])
 
   if (!appConfig?.configured) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-muted/30 p-6 text-center">
         <p className="text-sm text-muted-foreground">
-          {t("repo.setupGithub")}
+          {isOrganizationOwner === false
+            ? t("repo.setupGithubOwnerRequired")
+            : t("repo.setupGithub")}
         </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            window.location.href = "/settings/git-providers/github"
-          }}
-        >
-          {t("repo.setupGithubCta")}
-        </Button>
+        {isOrganizationOwner === true && organizationSlug ? (
+          <Button size="sm" variant="outline" asChild>
+            <Link
+              to="/orgs/$orgSlug/settings/github"
+              params={{ orgSlug: organizationSlug }}
+            >
+              {t("repo.setupGithubCta")}
+            </Link>
+          </Button>
+        ) : null}
       </div>
     )
   }
 
-  const repos = data?.pages.flatMap((p) => p.repos) ?? []
+  if (!organizationId) {
+    return (
+      <p className="rounded-md border border-border bg-muted/30 px-3 py-4 text-center text-sm text-muted-foreground">
+        {t("repo.organizationRequired")}
+      </p>
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -84,20 +118,29 @@ export function RepoSelector({
             : t("repo.none")}
         </p>
       ) : (
-        <ul
-          className="scrollbar-thin max-h-[clamp(14rem,88dvh_-_40rem,34rem)] divide-y divide-border overflow-y-auto rounded-md border border-border"
-          role="listbox"
-          aria-label={t("repo.repositories")}
-        >
-          {repos.map((repo) => (
-            <RepoItem
-              key={repo.id}
-              repo={repo}
-              isSelected={selected?.fullName === repo.fullName}
-              onSelect={onSelect}
-            />
+        <div className="scrollbar-thin max-h-[clamp(14rem,88dvh_-_40rem,34rem)] overflow-y-auto rounded-md border border-border">
+          {groupedRepos.map(([accountLogin, accountRepos]) => (
+            <section key={accountLogin} className="border-b border-border last:border-b-0">
+              <h3 className="bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+                {accountLogin}
+              </h3>
+              <ul
+                className="divide-y divide-border"
+                role="listbox"
+                aria-label={accountLogin}
+              >
+                {accountRepos.map((repo) => (
+                  <RepoItem
+                    key={repo.id}
+                    repo={repo}
+                    isSelected={selected?.fullName === repo.fullName}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
       )}
 
       {hasNextPage && (

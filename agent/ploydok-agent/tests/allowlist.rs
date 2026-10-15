@@ -10,8 +10,8 @@ use ploydok_agent::validator::{
 use ploydok_proto::agent::{
     BuildCachePruneRequest, ContainerCreateRequest, HealthcheckConfig, ImageBuildRequest,
     ImagePruneRequest, ImagePullRequest, ImagePushRequest, ImageRemoveRequest,
-    NetworkCreateRequest, RegistryGarbageCollectRequest, ResourceLimits, SwarmServiceSpec,
-    VolumeMount,
+    NetworkCreateRequest, RegistryGarbageCollectRequest, ResourceLimits, ServiceUpdateImageRequest,
+    SwarmServiceMount, SwarmServiceSpec, VolumeMount,
 };
 use tonic::Code;
 
@@ -54,6 +54,29 @@ fn valid_swarm_service() -> SwarmServiceSpec {
         networks: vec!["ploydok-net".to_string()],
         ..Default::default()
     }
+}
+
+fn marketplace_labels(root: &str) -> std::collections::HashMap<String, String> {
+    std::collections::HashMap::from([
+        ("ploydok.kind".to_string(), "service".to_string()),
+        ("ploydok.service_id".to_string(), "service-123".to_string()),
+        ("ploydok.app_id".to_string(), "service-123".to_string()),
+        ("ploydok.owner_id".to_string(), "owner-456".to_string()),
+        ("ploydok.volume_root".to_string(), root.to_string()),
+    ])
+}
+
+fn valid_marketplace_create() -> ContainerCreateRequest {
+    let root = "/var/lib/ploydok/volumes/ploydok-svc-service-123";
+    let mut req = valid_create();
+    req.name = "ploydok-svc-service-123-web".to_string();
+    req.labels = marketplace_labels(root);
+    req.volumes = vec![VolumeMount {
+        host_path: format!("{root}/data"),
+        container_path: "/data".to_string(),
+        read_only: false,
+    }];
+    req
 }
 
 // ─── Test 1: name sans préfixe ploydok- ──────────────────────────────────────
@@ -161,6 +184,172 @@ fn test_app_volume_prefix_is_allowed() {
 
     let result = v.validate_container_create(&req);
     assert!(result.is_ok(), "app volume prefix should be allowed");
+}
+
+#[test]
+fn marketplace_mount_must_be_a_strict_descendant_of_declared_root() {
+    let v = make_validator();
+    let mut req = valid_marketplace_create();
+    req.volumes[0].host_path = "/var/lib/ploydok/volumes/ploydok-svc-service-123".to_string();
+
+    let err = v
+        .validate_container_create(&req)
+        .expect_err("the service root itself must not be mounted");
+    assert!(err.message().contains("volume_host_path"));
+}
+
+#[test]
+fn marketplace_mount_cannot_use_a_sibling_or_normalization_alias() {
+    let v = make_validator();
+    for host_path in [
+        "/var/lib/ploydok/volumes/ploydok-svc-service-123-other/data",
+        "/var/lib/ploydok/volumes/ploydok-svc-service-123/../other",
+        "/var/lib/ploydok/volumes/ploydok-svc-service-123/data/",
+        "/var/lib/ploydok/volumes/ploydok-svc-service-123//data",
+        "/var/lib/ploydok/volumes/ploydok-svc-service-123/./data",
+    ] {
+        let mut req = valid_marketplace_create();
+        req.volumes[0].host_path = host_path.to_string();
+        let err = v
+            .validate_container_create(&req)
+            .expect_err("mount must stay below the declared service root");
+        assert!(err.message().contains("volume_host_path"));
+    }
+}
+
+#[test]
+fn marketplace_declared_root_rejects_global_root_aliases_and_identity_mismatch() {
+    let v = make_validator();
+    for root in [
+        "/var/lib/ploydok/volumes",
+        "/var/lib/ploydok/volumes/",
+        "/var/lib/ploydok/volumes//",
+        "/var/lib/ploydok/volumes/./",
+        "/var/lib/ploydok/volumes/ploydok-svc-service-123/",
+        "/var/lib/ploydok/volumes/ploydok-svc-other",
+    ] {
+        let mut req = valid_marketplace_create();
+        req.labels
+            .insert("ploydok.volume_root".to_string(), root.to_string());
+        let err = v
+            .validate_container_create(&req)
+            .expect_err("declared root must be canonical, direct, and service-scoped");
+        assert!(err.message().contains("volume_host_path"));
+    }
+}
+
+#[test]
+fn marketplace_mount_requires_a_declared_root_even_without_kind_label() {
+    let v = make_validator();
+    let mut req = valid_marketplace_create();
+    req.labels.remove("ploydok.kind");
+    req.labels.remove("ploydok.volume_root");
+
+    let err = v
+        .validate_container_create(&req)
+        .expect_err("the generated marketplace name must not bypass root validation");
+    assert!(err.message().contains("volume_host_path"));
+}
+
+#[test]
+fn marketplace_mounts_cannot_escape_to_app_volume_prefix() {
+    let v = make_validator();
+    let mut req = valid_marketplace_create();
+    req.volumes[0].host_path = "/var/lib/ploydok/app-volumes/service-123/data".to_string();
+
+    let err = v
+        .validate_container_create(&req)
+        .expect_err("marketplace mounts must use their declared service root");
+    assert!(err.message().contains("volume_host_path"));
+}
+
+#[test]
+fn legacy_database_mount_remains_allowed() {
+    let v = make_validator();
+    let mut req = valid_create();
+    req.name = "ploydok-db-service-123".to_string();
+    req.labels
+        .insert("ploydok.kind".to_string(), "database".to_string());
+    req.volumes = vec![VolumeMount {
+        host_path: "/var/lib/ploydok/volumes/database-service-123".to_string(),
+        container_path: "/var/lib/database".to_string(),
+        read_only: false,
+    }];
+
+    assert!(v.validate_container_create(&req).is_ok());
+}
+
+#[test]
+fn declared_root_label_scopes_compose_app_mounts() {
+    let v = make_validator();
+    let root = "/var/lib/ploydok/volumes/compose-app-123";
+    let mut req = valid_create();
+    req.labels
+        .insert("ploydok.volume_root".to_string(), root.to_string());
+    req.volumes = vec![VolumeMount {
+        host_path: format!("{root}/data"),
+        container_path: "/data".to_string(),
+        read_only: false,
+    }];
+    assert!(v.validate_container_create(&req).is_ok());
+
+    req.volumes[0].host_path = "/var/lib/ploydok/volumes/compose-app-123-other/data".to_string();
+    let err = v
+        .validate_container_create(&req)
+        .expect_err("Compose app mounts must stay in their declared root");
+    assert!(err.message().contains("volume_host_path"));
+}
+
+#[test]
+fn compose_app_global_mount_requires_the_protected_root_label() {
+    let v = make_validator();
+    let mut req = valid_create();
+    req.name = "ploydok-app-compose-123-web".to_string();
+    req.labels
+        .insert("ploydok.kind".to_string(), "app".to_string());
+    req.volumes = vec![VolumeMount {
+        host_path: "/var/lib/ploydok/volumes/compose-app-123/data".to_string(),
+        container_path: "/data".to_string(),
+        read_only: false,
+    }];
+
+    let err = v
+        .validate_container_create(&req)
+        .expect_err("Compose app global mounts must declare their root");
+    assert!(err.message().contains("volume_host_path"));
+
+    req.volumes[0].host_path = "/var/lib/ploydok/app-volumes/app-123/vol-1".to_string();
+    assert!(
+        v.validate_container_create(&req).is_ok(),
+        "ordinary app-volume mounts keep their legacy namespace"
+    );
+}
+
+#[test]
+fn swarm_create_and_update_share_marketplace_mount_containment() {
+    let v = make_validator();
+    let root = "/var/lib/ploydok/volumes/tmp-svc-service-123-slug";
+    let mut req = valid_swarm_service();
+    req.name = "ploydok-app-svc-service-123-slug-web".to_string();
+    req.labels = marketplace_labels(root);
+    req.mounts = vec![SwarmServiceMount {
+        host_path: format!("{root}/data"),
+        container_path: "/data".to_string(),
+        read_only: false,
+    }];
+    assert!(v.validate_service_create(&req).is_ok());
+
+    req.mounts[0].host_path = format!("{root}-other/data");
+    let update = ServiceUpdateImageRequest {
+        service_name: req.name.clone(),
+        image: String::new(),
+        spec: Some(req),
+        ..Default::default()
+    };
+    let err = v
+        .validate_service_update_image(&update)
+        .expect_err("Swarm updates must validate replacement mounts too");
+    assert!(err.message().contains("volume_host_path"));
 }
 
 // ─── Test 5: labels manquants ─────────────────────────────────────────────────

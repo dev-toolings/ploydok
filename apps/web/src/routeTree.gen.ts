@@ -62,6 +62,7 @@ import { Route as AuthedOrgsOrgSlugServicesIdRouteImport } from './routes/_authe
 import { Route as AuthedOrgsOrgSlugSettingsIndexRouteImport } from './routes/_authed/orgs/$orgSlug/settings/index'
 import { Route as AuthedOrgsOrgSlugSettingsBillingRouteImport } from './routes/_authed/orgs/$orgSlug/settings/billing'
 import { Route as AuthedOrgsOrgSlugSettingsGeneralRouteImport } from './routes/_authed/orgs/$orgSlug/settings/general'
+import { Route as AuthedOrgsOrgSlugSettingsGithubRouteImport } from './routes/_authed/orgs/$orgSlug/settings/github'
 import { Route as AuthedOrgsOrgSlugSettingsSsoRouteImport } from './routes/_authed/orgs/$orgSlug/settings/sso'
 import { Route as AuthedOrgsOrgSlugAppsIdIndexRouteImport } from './routes/_authed/orgs/$orgSlug/apps/$id/index'
 import { Route as AuthedOrgsOrgSlugAppsIdAdvancedRouteImport } from './routes/_authed/orgs/$orgSlug/apps/$id/advanced'
@@ -367,6 +368,12 @@ const AuthedOrgsOrgSlugSettingsGeneralRoute =
     path: '/general',
     getParentRoute: () => AuthedOrgsOrgSlugSettingsRoute,
   } as any)
+const AuthedOrgsOrgSlugSettingsGithubRoute =
+  AuthedOrgsOrgSlugSettingsGithubRouteImport.update({
+    id: '/github',
+    path: '/github',
+    getParentRoute: () => AuthedOrgsOrgSlugSettingsRoute,
+  } as any)
 const AuthedOrgsOrgSlugSettingsSsoRoute =
   AuthedOrgsOrgSlugSettingsSsoRouteImport.update({
     id: '/sso',
@@ -488,6 +495,7 @@ export interface FileRoutesByFullPath {
   '/orgs/$orgSlug/services/$id': typeof AuthedOrgsOrgSlugServicesIdRoute
   '/orgs/$orgSlug/settings/billing': typeof AuthedOrgsOrgSlugSettingsBillingRoute
   '/orgs/$orgSlug/settings/general': typeof AuthedOrgsOrgSlugSettingsGeneralRoute
+  '/orgs/$orgSlug/settings/github': typeof AuthedOrgsOrgSlugSettingsGithubRoute
   '/orgs/$orgSlug/settings/sso': typeof AuthedOrgsOrgSlugSettingsSsoRoute
   '/orgs/$orgSlug/apps/': typeof AuthedOrgsOrgSlugAppsIndexRoute
   '/orgs/$orgSlug/databases/': typeof AuthedOrgsOrgSlugDatabasesIndexRoute
@@ -549,6 +557,7 @@ export interface FileRoutesByTo {
   '/orgs/$orgSlug/services/$id': typeof AuthedOrgsOrgSlugServicesIdRoute
   '/orgs/$orgSlug/settings/billing': typeof AuthedOrgsOrgSlugSettingsBillingRoute
   '/orgs/$orgSlug/settings/general': typeof AuthedOrgsOrgSlugSettingsGeneralRoute
+  '/orgs/$orgSlug/settings/github': typeof AuthedOrgsOrgSlugSettingsGithubRoute
   '/orgs/$orgSlug/settings/sso': typeof AuthedOrgsOrgSlugSettingsSsoRoute
   '/orgs/$orgSlug/apps': typeof AuthedOrgsOrgSlugAppsIndexRoute
   '/orgs/$orgSlug/databases': typeof AuthedOrgsOrgSlugDatabasesIndexRoute
@@ -617,6 +626,7 @@ export interface FileRoutesById {
   '/_authed/orgs/$orgSlug/services/$id': typeof AuthedOrgsOrgSlugServicesIdRoute
   '/_authed/orgs/$orgSlug/settings/billing': typeof AuthedOrgsOrgSlugSettingsBillingRoute
   '/_authed/orgs/$orgSlug/settings/general': typeof AuthedOrgsOrgSlugSettingsGeneralRoute
+  '/_authed/orgs/$orgSlug/settings/github': typeof AuthedOrgsOrgSlugSettingsGithubRoute
   '/_authed/orgs/$orgSlug/settings/sso': typeof AuthedOrgsOrgSlugSettingsSsoRoute
   '/_authed/orgs/$orgSlug/apps/': typeof AuthedOrgsOrgSlugAppsIndexRoute
   '/_authed/orgs/$orgSlug/databases/': typeof AuthedOrgsOrgSlugDatabasesIndexRoute
@@ -684,6 +694,7 @@ export interface FileRouteTypes {
     | '/orgs/$orgSlug/services/$id'
     | '/orgs/$orgSlug/settings/billing'
     | '/orgs/$orgSlug/settings/general'
+    | '/orgs/$orgSlug/settings/github'
     | '/orgs/$orgSlug/settings/sso'
     | '/orgs/$orgSlug/apps/'
     | '/orgs/$orgSlug/databases/'
@@ -745,6 +756,7 @@ export interface FileRouteTypes {
     | '/orgs/$orgSlug/services/$id'
     | '/orgs/$orgSlug/settings/billing'
     | '/orgs/$orgSlug/settings/general'
+    | '/orgs/$orgSlug/settings/github'
     | '/orgs/$orgSlug/settings/sso'
     | '/orgs/$orgSlug/apps'
     | '/orgs/$orgSlug/databases'
@@ -812,6 +824,7 @@ export interface FileRouteTypes {
     | '/_authed/orgs/$orgSlug/services/$id'
     | '/_authed/orgs/$orgSlug/settings/billing'
     | '/_authed/orgs/$orgSlug/settings/general'
+    | '/_authed/orgs/$orgSlug/settings/github'
     | '/_authed/orgs/$orgSlug/settings/sso'
     | '/_authed/orgs/$orgSlug/apps/'
     | '/_authed/orgs/$orgSlug/databases/'
@@ -1210,6 +1223,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedOrgsOrgSlugSettingsGeneralRouteImport
       parentRoute: typeof AuthedOrgsOrgSlugSettingsRoute
     }
+    '/_authed/orgs/$orgSlug/settings/github': {
+      id: '/_authed/orgs/$orgSlug/settings/github'
+      path: '/github'
+      fullPath: '/orgs/$orgSlug/settings/github'
+      preLoaderRoute: typeof AuthedOrgsOrgSlugSettingsGithubRouteImport
+      parentRoute: typeof AuthedOrgsOrgSlugSettingsRoute
+    }
     '/_authed/orgs/$orgSlug/settings/sso': {
       id: '/_authed/orgs/$orgSlug/settings/sso'
       path: '/sso'
@@ -1300,6 +1320,7 @@ declare module '@tanstack/react-router' {
 interface AuthedOrgsOrgSlugSettingsRouteChildren {
   AuthedOrgsOrgSlugSettingsBillingRoute: typeof AuthedOrgsOrgSlugSettingsBillingRoute
   AuthedOrgsOrgSlugSettingsGeneralRoute: typeof AuthedOrgsOrgSlugSettingsGeneralRoute
+  AuthedOrgsOrgSlugSettingsGithubRoute: typeof AuthedOrgsOrgSlugSettingsGithubRoute
   AuthedOrgsOrgSlugSettingsSsoRoute: typeof AuthedOrgsOrgSlugSettingsSsoRoute
   AuthedOrgsOrgSlugSettingsIndexRoute: typeof AuthedOrgsOrgSlugSettingsIndexRoute
 }
@@ -1310,6 +1331,7 @@ const AuthedOrgsOrgSlugSettingsRouteChildren: AuthedOrgsOrgSlugSettingsRouteChil
       AuthedOrgsOrgSlugSettingsBillingRoute,
     AuthedOrgsOrgSlugSettingsGeneralRoute:
       AuthedOrgsOrgSlugSettingsGeneralRoute,
+    AuthedOrgsOrgSlugSettingsGithubRoute: AuthedOrgsOrgSlugSettingsGithubRoute,
     AuthedOrgsOrgSlugSettingsSsoRoute: AuthedOrgsOrgSlugSettingsSsoRoute,
     AuthedOrgsOrgSlugSettingsIndexRoute: AuthedOrgsOrgSlugSettingsIndexRoute,
   }
@@ -1494,12 +1516,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
