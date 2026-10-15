@@ -5,9 +5,8 @@ import path from "node:path"
 import { Transform, type Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { eq } from "drizzle-orm"
-import { secrets } from "@ploydok/db"
+import { secrets, storage_destinations } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
-import type { BackupConfigRow, VolumeBackupConfigRow } from "@ploydok/db"
 import { decryptSecret } from "../secrets/crypto"
 import {
   createS3Client,
@@ -17,30 +16,27 @@ import {
 } from "../storage/s3"
 import type { S3Client } from "@aws-sdk/client-s3"
 
-export type S3BackedConfig = Pick<
-  BackupConfigRow,
-  "s3_endpoint" | "s3_region" | "s3_credentials_secret_id"
-> &
-  Pick<VolumeBackupConfigRow, "s3_endpoint" | "s3_region" | "s3_credentials_secret_id">
+export interface BackupDestinationConfig {
+  destination_id?: string | null
+  destination_updated_at?: Date | null
+  destination_kind: "s3" | "local"
+  s3_endpoint: string | null
+  s3_bucket: string | null
+  s3_prefix: string | null
+  s3_region: string | null
+  s3_credentials_secret_id: string | null
+}
 
-type BackupDestinationConfig = Pick<
-  BackupConfigRow,
-  | "destination_kind"
-  | "s3_endpoint"
-  | "s3_bucket"
-  | "s3_prefix"
-  | "s3_region"
-  | "s3_credentials_secret_id"
-> &
-  Pick<
-    VolumeBackupConfigRow,
-    | "destination_kind"
-    | "s3_endpoint"
-    | "s3_bucket"
-    | "s3_prefix"
-    | "s3_region"
-    | "s3_credentials_secret_id"
-  >
+export interface S3BackedConfig {
+  destination_id?: string | null
+  destination_updated_at?: Date | null
+  destination_kind?: "s3" | "local" | null
+  s3_endpoint?: string | null
+  s3_bucket?: string | null
+  s3_prefix?: string | null
+  s3_region?: string | null
+  s3_credentials_secret_id?: string | null
+}
 
 export interface S3Credentials {
   accessKeyId: string
@@ -78,17 +74,18 @@ export async function writeBackupStream(
   location: string,
   source: Readable
 ): Promise<{ sizeBytes: number }> {
+  const resolvedConfig = await resolveBackupDestination(db, config)
   const counter = new ByteCounter()
 
-  if (config.destination_kind === "s3") {
-    if (!config.s3_bucket) {
+  if (resolvedConfig.destination_kind === "s3") {
+    if (!resolvedConfig.s3_bucket) {
       throw new Error("S3 backup config is missing s3_bucket")
     }
 
-    const creds = await resolveS3Credentials(db, config)
+    const creds = await resolveS3Credentials(db, resolvedConfig)
     const client = createS3Client({
-      ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),
-      region: config.s3_region ?? "auto",
+      ...(resolvedConfig.s3_endpoint ? { endpoint: resolvedConfig.s3_endpoint } : {}),
+      region: resolvedConfig.s3_region ?? "auto",
       accessKeyId: creds.accessKeyId,
       secretAccessKey: creds.secretAccessKey,
     })
@@ -111,10 +108,11 @@ export async function deleteBackupArtifact(
   if (location.startsWith("s3://")) {
     if (!config) return
 
-    const creds = await resolveS3Credentials(db, config)
+    const resolvedConfig = await resolveBackupDestination(db, config)
+    const creds = await resolveS3Credentials(db, resolvedConfig)
     const client = createS3Client({
-      ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),
-      region: config.s3_region ?? "auto",
+      ...(resolvedConfig.s3_endpoint ? { endpoint: resolvedConfig.s3_endpoint } : {}),
+      region: resolvedConfig.s3_region ?? "auto",
       accessKeyId: creds.accessKeyId,
       secretAccessKey: creds.secretAccessKey,
     })
@@ -197,14 +195,15 @@ export async function resolveS3Credentials(
   db: Db,
   config: S3BackedConfig
 ): Promise<S3Credentials> {
-  if (!config.s3_credentials_secret_id) {
+  const resolvedConfig = await resolveBackupDestination(db, config)
+  if (!resolvedConfig.s3_credentials_secret_id) {
     throw new Error("S3 backup config is missing s3_credentials_secret_id")
   }
 
   const secretRows = await db
     .select()
     .from(secrets)
-    .where(eq(secrets.id, config.s3_credentials_secret_id))
+    .where(eq(secrets.id, resolvedConfig.s3_credentials_secret_id))
     .limit(1)
   const secret = secretRows[0]
   if (!secret || !secret.value_ciphertext || !secret.nonce) {
@@ -230,16 +229,78 @@ export async function createBackupS3Probe(
   db: Db,
   config: S3BackedConfig
 ): Promise<BackupS3Probe> {
-  const credentials = await resolveS3Credentials(db, config)
+  const resolvedConfig = await resolveBackupDestination(db, config)
+  const credentials = await resolveS3Credentials(db, resolvedConfig)
   return {
     credentials,
     client: createS3Client({
-      ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),
-      region: config.s3_region ?? "auto",
+      ...(resolvedConfig.s3_endpoint ? { endpoint: resolvedConfig.s3_endpoint } : {}),
+      region: resolvedConfig.s3_region ?? "auto",
       accessKeyId: credentials.accessKeyId,
       secretAccessKey: credentials.secretAccessKey,
     }),
   }
+}
+
+/** Resolve the latest workspace destination while retaining legacy fallback. */
+type ResolvedDestinationFields = Omit<BackupDestinationConfig, "destination_id"> & {
+  destination_id: string | null
+}
+type ResolvedBackupDestination<T extends BackupDestinationConfig | S3BackedConfig> =
+  Omit<T, keyof BackupDestinationConfig> & ResolvedDestinationFields
+
+export async function resolveBackupDestination<
+  T extends BackupDestinationConfig | S3BackedConfig,
+>(
+  db: Db,
+  config: T
+): Promise<ResolvedBackupDestination<T>> {
+  if (!config.destination_id) {
+    return {
+      ...config,
+      destination_id: config.destination_id ?? null,
+      destination_updated_at: null,
+      destination_kind: config.destination_kind ?? "local",
+      s3_endpoint: config.s3_endpoint ?? null,
+      s3_bucket: config.s3_bucket ?? null,
+      s3_prefix: config.s3_prefix ?? null,
+      s3_region: config.s3_region ?? null,
+      s3_credentials_secret_id: config.s3_credentials_secret_id ?? null,
+    } as unknown as ResolvedBackupDestination<T>
+  }
+
+  const rows = await db
+    .select()
+    .from(storage_destinations)
+    .where(eq(storage_destinations.id, config.destination_id))
+    .limit(1)
+  const destination = rows[0]
+  if (!destination) {
+    // A legacy row can be read during a partially completed deployment. Its
+    // inline fields remain the safest fallback until the link is repaired.
+    return {
+      ...config,
+      destination_id: config.destination_id ?? null,
+      destination_updated_at: null,
+      destination_kind: config.destination_kind ?? "local",
+      s3_endpoint: config.s3_endpoint ?? null,
+      s3_bucket: config.s3_bucket ?? null,
+      s3_prefix: config.s3_prefix ?? null,
+      s3_region: config.s3_region ?? null,
+      s3_credentials_secret_id: config.s3_credentials_secret_id ?? null,
+    } as unknown as ResolvedBackupDestination<T>
+  }
+  return {
+    ...config,
+    destination_id: destination.id,
+    destination_updated_at: destination.updated_at,
+    destination_kind: destination.kind,
+    s3_endpoint: destination.s3_endpoint,
+    s3_bucket: destination.s3_bucket,
+    s3_prefix: config.s3_prefix ?? null,
+    s3_region: destination.s3_region,
+    s3_credentials_secret_id: destination.credentials_secret_id,
+  } as unknown as ResolvedBackupDestination<T>
 }
 
 export function buildBackupFilename(

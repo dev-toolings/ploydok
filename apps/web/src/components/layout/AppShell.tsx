@@ -18,6 +18,7 @@ import {
   RiDatabase2Line,
   RiExpandUpDownLine,
   RiFileListLine,
+  RiHardDrive3Line,
   RiHardDriveLine,
   RiHistoryLine,
   RiKey2Line,
@@ -190,6 +191,7 @@ const platformNav: Array<NavItem> = [
     orgPathSuffix: "disk",
     adminOnly: true,
   },
+  { id: "storage", icon: RiHardDrive3Line, orgPathSuffix: "storage" },
   { id: "members", icon: RiTeamLine, orgPathSuffix: "members" },
   { id: "audit", icon: RiFileListLine, orgPathSuffix: "audit" },
   {

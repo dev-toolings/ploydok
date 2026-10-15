@@ -10,6 +10,7 @@ import {
 import { apps } from "./apps"
 import { app_volumes } from "./app-volumes"
 import { secrets } from "./secrets"
+import { storage_destinations } from "./storage-destinations"
 
 export const volume_backup_configs = pgTable(
   "volume_backup_configs",
@@ -21,6 +22,10 @@ export const volume_backup_configs = pgTable(
     volume_id: text("volume_id")
       .notNull()
       .references(() => app_volumes.id, { onDelete: "cascade" }),
+    // See backup_configs.destination_id for the legacy fallback rationale.
+    destination_id: text("destination_id").references(
+      () => storage_destinations.id
+    ),
     destination_kind: text("destination_kind", { enum: ["s3", "local"] })
       .notNull()
       .default("local"),

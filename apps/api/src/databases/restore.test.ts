@@ -21,7 +21,9 @@ mock.module("../debug/singletons", () => ({
   getSharedAgent: () => ({ restoreDatabase: restoreDatabaseMock }),
 }))
 
+const actualS3 = await import("../storage/s3")
 mock.module("../storage/s3", () => ({
+  ...actualS3,
   createS3Client: mock(() => ({})),
   downloadStream: mock(async () => {
     throw new Error("download must not be reached")

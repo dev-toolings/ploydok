@@ -287,6 +287,59 @@ cd installer/tests
 promtool test rules backup-freshness.rules.test.yml
 ```
 
+### Storage destination API and migration compatibility
+
+Workspace storage destinations are reusable records for database and volume
+backups. The `GET /databases/:id/backup-config`,
+`GET /apps/:appId/volumes/:volumeId/backup-config`, and successful `PUT`
+responses have a breaking shape change: `config` no longer returns
+`s3Endpoint`, `s3Bucket`, `s3Region`, or `s3CredentialsSecretId`. Clients use
+`destinationId` to select the workspace destination, read its kind from
+`destinationKind`, and keep `s3Prefix` on the backup config. The old inline
+names remain request-compatible only for legacy configs that have no selected
+destination. Once a config has a destination, sending any inline destination
+field is refused with HTTP 400 `DESTINATION_REQUIRED`; send `destinationId`
+to select another destination or `destinationId: null` to detach it.
+
+Migration 0091 creates deterministic legacy IDs in the form
+`legacy-<md5>` and initially labels each row `Migrated backup destination`.
+The runtime backfill merges rows with the same workspace, kind, endpoint,
+bucket, region and decrypted credentials, then repoints backup configs,
+re-homes credentials under workspace ownership, and gives each surviving row a
+readable name: `Migrated local backup destination` or
+`Migrated S3: <bucket> (<endpoint>)`. When `MASTER_KEY` is unavailable, the
+secret ID is used as a temporary discriminator; a later run with the key can
+merge equal encrypted credentials. Rows renamed by a user are not reconsidered
+by the backfill. Do not rename or delete a migrated destination before checking
+its usage count.
+
+The destination API refuses endpoint, bucket or region changes while a backup
+config uses the destination, returning HTTP 409 `DESTINATION_IN_USE`.
+Deletion is refused under the same condition. A destination selection switch
+is also refused with HTTP 409 `BACKUP_CONFIG_IN_USE` when the existing backup
+config already has backup rows. Plan the destination before the first backup,
+or remove the retained backup rows through the supported API before switching.
+After a successful switch, the previous destination can be edited or removed
+once its usage count reaches zero.
+
+Destination endpoints must use HTTP or HTTPS without embedded credentials.
+Link-local addresses and cloud metadata endpoints, including
+`169.254.169.254`, are denied. Loopback addresses and private network ranges
+are allowed for local or private deployments, including `127.0.0.0/8`, `::1`,
+RFC 1918 and IPv6 ULA ranges. Keep those endpoints on a trusted network and
+never use a public S3 credential with an untrusted local service.
+
+For a local restore or destination drill, use only the task-owned Garage
+service from `infra/docker-compose.test.yml` when it is absent:
+
+```bash
+docker compose -f infra/docker-compose.test.yml up -d s3-test
+```
+
+Do not run `make infra-up` for this drill, start `gitea-test`, or replace,
+reset, stop or delete any shared `infra-*` service. This review did not start
+Garage or any shared service.
+
 ### Application backup restore drill
 
 The application backup drill downloads one plain `pg_dumpall` object from an

@@ -49,11 +49,8 @@ export interface BackupConfig {
   appId?: string
   volumeId?: string
   destinationKind: "s3" | "local"
-  s3Endpoint: string | null
-  s3Bucket: string | null
+  destinationId: string | null
   s3Prefix: string | null
-  s3Region: string | null
-  s3CredentialsSecretId: string | null
   scheduleCron: string
   retentionDays: number
   ageRecipientPublicKey: string | null
@@ -64,12 +61,8 @@ export interface BackupConfig {
 }
 
 export interface UpdateBackupConfigInput {
-  destinationKind?: "s3" | "local"
-  s3Endpoint?: string
-  s3Bucket?: string
+  destinationId?: string | null
   s3Prefix?: string
-  s3Region?: string
-  s3CredentialsSecretId?: string
   scheduleCron?: string
   retentionDays?: number
   ageRecipientPublicKey?: string | null

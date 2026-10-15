@@ -69,7 +69,7 @@ describe("userMaxScopes", () => {
     } as any
 
     const scopes = await userMaxScopes(mockDb, "user-1")
-    expect(scopes).toEqual(["apps:read", "databases:read"])
+    expect(scopes).toEqual(["apps:read", "databases:read", "storage:read"])
   })
 
   it("should return guest scopes when user has only guest role", async () => {

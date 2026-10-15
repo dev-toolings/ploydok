@@ -43,6 +43,7 @@ import { Route as AuthedOrgsOrgSlugMonitoringRouteImport } from './routes/_authe
 import { Route as AuthedOrgsOrgSlugScheduledJobsRouteImport } from './routes/_authed/orgs/$orgSlug/scheduled-jobs'
 import { Route as AuthedOrgsOrgSlugSettingsRouteImport } from './routes/_authed/orgs/$orgSlug/settings'
 import { Route as AuthedOrgsOrgSlugSharedEnvRouteImport } from './routes/_authed/orgs/$orgSlug/shared-env'
+import { Route as AuthedOrgsOrgSlugStorageRouteImport } from './routes/_authed/orgs/$orgSlug/storage'
 import { Route as AuthedOrgsOrgSlugTagsRouteImport } from './routes/_authed/orgs/$orgSlug/tags'
 import { Route as AuthedSettingsGitProvidersIndexRouteImport } from './routes/_authed/settings/git-providers/index'
 import { Route as AuthedSettingsGitProvidersSlugRouteImport } from './routes/_authed/settings/git-providers/$slug'
@@ -253,6 +254,12 @@ const AuthedOrgsOrgSlugSharedEnvRoute =
   AuthedOrgsOrgSlugSharedEnvRouteImport.update({
     id: '/shared-env',
     path: '/shared-env',
+    getParentRoute: () => AuthedOrgsOrgSlugRoute,
+  } as any)
+const AuthedOrgsOrgSlugStorageRoute =
+  AuthedOrgsOrgSlugStorageRouteImport.update({
+    id: '/storage',
+    path: '/storage',
     getParentRoute: () => AuthedOrgsOrgSlugRoute,
   } as any)
 const AuthedOrgsOrgSlugTagsRoute = AuthedOrgsOrgSlugTagsRouteImport.update({
@@ -472,6 +479,7 @@ export interface FileRoutesByFullPath {
   '/orgs/$orgSlug/scheduled-jobs': typeof AuthedOrgsOrgSlugScheduledJobsRoute
   '/orgs/$orgSlug/settings': typeof AuthedOrgsOrgSlugSettingsRouteWithChildren
   '/orgs/$orgSlug/shared-env': typeof AuthedOrgsOrgSlugSharedEnvRoute
+  '/orgs/$orgSlug/storage': typeof AuthedOrgsOrgSlugStorageRoute
   '/orgs/$orgSlug/tags': typeof AuthedOrgsOrgSlugTagsRoute
   '/settings/git-providers/$slug': typeof AuthedSettingsGitProvidersSlugRoute
   '/settings/security/passkey': typeof AuthedSettingsSecurityPasskeyRoute
@@ -534,6 +542,7 @@ export interface FileRoutesByTo {
   '/orgs/$orgSlug/monitoring': typeof AuthedOrgsOrgSlugMonitoringRoute
   '/orgs/$orgSlug/scheduled-jobs': typeof AuthedOrgsOrgSlugScheduledJobsRoute
   '/orgs/$orgSlug/shared-env': typeof AuthedOrgsOrgSlugSharedEnvRoute
+  '/orgs/$orgSlug/storage': typeof AuthedOrgsOrgSlugStorageRoute
   '/orgs/$orgSlug/tags': typeof AuthedOrgsOrgSlugTagsRoute
   '/settings/git-providers/$slug': typeof AuthedSettingsGitProvidersSlugRoute
   '/settings/security/passkey': typeof AuthedSettingsSecurityPasskeyRoute
@@ -601,6 +610,7 @@ export interface FileRoutesById {
   '/_authed/orgs/$orgSlug/scheduled-jobs': typeof AuthedOrgsOrgSlugScheduledJobsRoute
   '/_authed/orgs/$orgSlug/settings': typeof AuthedOrgsOrgSlugSettingsRouteWithChildren
   '/_authed/orgs/$orgSlug/shared-env': typeof AuthedOrgsOrgSlugSharedEnvRoute
+  '/_authed/orgs/$orgSlug/storage': typeof AuthedOrgsOrgSlugStorageRoute
   '/_authed/orgs/$orgSlug/tags': typeof AuthedOrgsOrgSlugTagsRoute
   '/_authed/settings/git-providers/$slug': typeof AuthedSettingsGitProvidersSlugRoute
   '/_authed/settings/security/passkey': typeof AuthedSettingsSecurityPasskeyRoute
@@ -668,6 +678,7 @@ export interface FileRouteTypes {
     | '/orgs/$orgSlug/scheduled-jobs'
     | '/orgs/$orgSlug/settings'
     | '/orgs/$orgSlug/shared-env'
+    | '/orgs/$orgSlug/storage'
     | '/orgs/$orgSlug/tags'
     | '/settings/git-providers/$slug'
     | '/settings/security/passkey'
@@ -730,6 +741,7 @@ export interface FileRouteTypes {
     | '/orgs/$orgSlug/monitoring'
     | '/orgs/$orgSlug/scheduled-jobs'
     | '/orgs/$orgSlug/shared-env'
+    | '/orgs/$orgSlug/storage'
     | '/orgs/$orgSlug/tags'
     | '/settings/git-providers/$slug'
     | '/settings/security/passkey'
@@ -796,6 +808,7 @@ export interface FileRouteTypes {
     | '/_authed/orgs/$orgSlug/scheduled-jobs'
     | '/_authed/orgs/$orgSlug/settings'
     | '/_authed/orgs/$orgSlug/shared-env'
+    | '/_authed/orgs/$orgSlug/storage'
     | '/_authed/orgs/$orgSlug/tags'
     | '/_authed/settings/git-providers/$slug'
     | '/_authed/settings/security/passkey'
@@ -1075,6 +1088,13 @@ declare module '@tanstack/react-router' {
       path: '/shared-env'
       fullPath: '/orgs/$orgSlug/shared-env'
       preLoaderRoute: typeof AuthedOrgsOrgSlugSharedEnvRouteImport
+      parentRoute: typeof AuthedOrgsOrgSlugRoute
+    }
+    '/_authed/orgs/$orgSlug/storage': {
+      id: '/_authed/orgs/$orgSlug/storage'
+      path: '/storage'
+      fullPath: '/orgs/$orgSlug/storage'
+      preLoaderRoute: typeof AuthedOrgsOrgSlugStorageRouteImport
       parentRoute: typeof AuthedOrgsOrgSlugRoute
     }
     '/_authed/orgs/$orgSlug/tags': {
@@ -1369,6 +1389,7 @@ interface AuthedOrgsOrgSlugRouteChildren {
   AuthedOrgsOrgSlugScheduledJobsRoute: typeof AuthedOrgsOrgSlugScheduledJobsRoute
   AuthedOrgsOrgSlugSettingsRoute: typeof AuthedOrgsOrgSlugSettingsRouteWithChildren
   AuthedOrgsOrgSlugSharedEnvRoute: typeof AuthedOrgsOrgSlugSharedEnvRoute
+  AuthedOrgsOrgSlugStorageRoute: typeof AuthedOrgsOrgSlugStorageRoute
   AuthedOrgsOrgSlugTagsRoute: typeof AuthedOrgsOrgSlugTagsRoute
   AuthedOrgsOrgSlugIndexRoute: typeof AuthedOrgsOrgSlugIndexRoute
   AuthedOrgsOrgSlugAppsIdRoute: typeof AuthedOrgsOrgSlugAppsIdRouteWithChildren
@@ -1392,6 +1413,7 @@ const AuthedOrgsOrgSlugRouteChildren: AuthedOrgsOrgSlugRouteChildren = {
   AuthedOrgsOrgSlugScheduledJobsRoute: AuthedOrgsOrgSlugScheduledJobsRoute,
   AuthedOrgsOrgSlugSettingsRoute: AuthedOrgsOrgSlugSettingsRouteWithChildren,
   AuthedOrgsOrgSlugSharedEnvRoute: AuthedOrgsOrgSlugSharedEnvRoute,
+  AuthedOrgsOrgSlugStorageRoute: AuthedOrgsOrgSlugStorageRoute,
   AuthedOrgsOrgSlugTagsRoute: AuthedOrgsOrgSlugTagsRoute,
   AuthedOrgsOrgSlugIndexRoute: AuthedOrgsOrgSlugIndexRoute,
   AuthedOrgsOrgSlugAppsIdRoute: AuthedOrgsOrgSlugAppsIdRouteWithChildren,

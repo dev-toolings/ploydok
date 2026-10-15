@@ -2,12 +2,17 @@
 import { pgTable, text, integer, boolean, timestamp, index } from 'drizzle-orm/pg-core'
 import { databases } from './databases'
 import { secrets } from './secrets'
+import { storage_destinations } from './storage-destinations'
 
 export const backup_configs = pgTable('backup_configs', {
   id: text('id').primaryKey(),
   database_id: text('database_id')
     .notNull()
     .references(() => databases.id, { onDelete: 'cascade' }),
+  // New configurations point at a workspace destination. The legacy fields
+  // below remain nullable so pre-migration rows and historical restores keep
+  // working until they are migrated or edited.
+  destination_id: text('destination_id').references(() => storage_destinations.id),
   destination_kind: text('destination_kind', { enum: ['s3', 'local'] })
     .notNull()
     .default('local'),

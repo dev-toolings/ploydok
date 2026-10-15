@@ -8,6 +8,7 @@ import {
   RiDashboardLine,
   RiDatabase2Line,
   RiFileListLine,
+  RiHardDrive3Line,
   RiHardDriveLine,
   RiNotificationLine,
   RiPlugLine,
@@ -64,6 +65,7 @@ const PALETTE_NAV_KEYS = {
   "nav-settings": "settings",
   "nav-settings-security": "security",
   "nav-admin-disk": "disk",
+  "nav-storage": "storage",
 } as const
 
 interface NavEntry {
@@ -213,6 +215,13 @@ const NAV_ITEMS: Array<NavEntry> = [
     to: "/admin/disk",
     orgPathSuffix: "disk",
     adminOnly: true,
+  },
+  {
+    id: "nav-storage",
+    section: "Navigation",
+    icon: RiHardDrive3Line,
+    to: "/storage",
+    orgPathSuffix: "storage",
   },
 ]
 

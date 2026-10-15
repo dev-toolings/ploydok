@@ -14,7 +14,7 @@
 import path from "node:path"
 import { Readable } from "node:stream"
 import { nanoid } from "nanoid"
-import { and, eq, lt } from "drizzle-orm"
+import { and, eq, lt, sql } from "drizzle-orm"
 import { databases, backup_configs, backups } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { getSharedAgent } from "../debug/singletons"
@@ -23,6 +23,7 @@ import { env } from "../env"
 import {
   buildBackupFilename,
   deleteBackupArtifact,
+  resolveBackupDestination,
   writeBackupStream,
 } from "../backups/storage"
 
@@ -39,14 +40,19 @@ export interface BackupRunResult {
   location: string
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+type PreparedBackup = {
+  database: typeof databases.$inferSelect
+  config: typeof backup_configs.$inferSelect
+  backupId: string
+  startedAt: Date
+  location: string
+}
 
-export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Date): Promise<BackupRunResult> {
-  const bkLog = log.child({ databaseId })
-
-  // 1. Load database + backup_config
+async function prepareBackup(
+  db: Db,
+  databaseId: string,
+  scheduledAt?: Date
+): Promise<PreparedBackup> {
   const dbRows = await db
     .select()
     .from(databases)
@@ -56,28 +62,51 @@ export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Da
   if (!dbRow) throw new Error(`Database not found: ${databaseId}`)
   if (!dbRow.container_id) throw new Error(`Database ${databaseId} has no container_id`)
 
-  const configRows = await db
+  const selectedConfigRows = await db
     .select()
     .from(backup_configs)
     .where(and(eq(backup_configs.database_id, databaseId), eq(backup_configs.enabled, true)))
     .limit(1)
-  const config = configRows[0]
-  if (!config) throw new Error(`No enabled backup config for database ${databaseId}`)
+  const selectedConfig = selectedConfigRows[0]
+  if (!selectedConfig) throw new Error(`No enabled backup config for database ${databaseId}`)
 
-  // 2. Insert backups row with status=running
+  await db.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backup:database:${selectedConfig.id}`}, 0))`
+  )
+
+  // Re-read after taking the lock so a concurrent destination update cannot
+  // leave this row pointing at the configuration that was read before it.
+  const configRows = await db
+    .select()
+    .from(backup_configs)
+    .where(
+      and(
+        eq(backup_configs.id, selectedConfig.id),
+        eq(backup_configs.enabled, true)
+      )
+    )
+    .limit(1)
+  const rawConfig = configRows[0]
+  if (!rawConfig) throw new Error(`No enabled backup config for database ${databaseId}`)
+  const config = (await resolveBackupDestination(
+    db,
+    rawConfig
+  )) as typeof backup_configs.$inferSelect
+
   const backupId = nanoid()
   const startedAt = new Date()
   const ageEncrypted = Boolean(config.age_recipient_public_key)
-
-  // Determine location
   const filename = buildBackupFilename(scheduledAt ?? startedAt, "dump", ageEncrypted)
-  let location: string
-  if (config.destination_kind === "s3") {
-    const prefix = config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""
-    location = `s3://${config.s3_bucket}/${prefix}${databaseId}/${filename}`
-  } else {
-    location = path.join(env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds", "..", "backups", databaseId, filename)
-  }
+  const location =
+    config.destination_kind === "s3"
+      ? `s3://${config.s3_bucket}/${config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""}${databaseId}/${filename}`
+      : path.join(
+          env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
+          "..",
+          "backups",
+          databaseId,
+          filename
+        )
 
   await db.insert(backups).values({
     id: backupId,
@@ -89,6 +118,24 @@ export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Da
     status: "running",
     started_at: startedAt,
   })
+
+  return { database: dbRow, config, backupId, startedAt, location }
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Date): Promise<BackupRunResult> {
+  const bkLog = log.child({ databaseId })
+
+  const prepared = await db.transaction((tx) =>
+    prepareBackup(tx as unknown as Db, databaseId, scheduledAt)
+  )
+  const { database: dbRow, config, backupId, location } = prepared
+  if (!dbRow.container_id) {
+    throw new Error(`Database ${databaseId} has no container_id`)
+  }
 
   let sizeBytes = 0
   let error: string | undefined

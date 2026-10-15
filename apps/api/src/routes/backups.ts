@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
 import { z } from "zod"
-import { and, eq, desc, isNotNull } from "drizzle-orm"
+import { and, eq, desc, isNotNull, sql } from "drizzle-orm"
 import {
   apps,
   app_volumes,
@@ -13,11 +13,13 @@ import {
   audit_log,
   projects,
   memberships,
+  secrets,
+  storage_destinations,
 } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { nanoid } from "nanoid"
 import { getAppForUser } from "@ploydok/db/queries"
-import { tokenHasScope } from "@ploydok/shared"
+import { S3EndpointSchema, tokenHasScope } from "@ploydok/shared"
 import { requireTotpVerified } from "../auth/second-factor"
 import { runBackupOnce } from "../databases/backup"
 import { runVolumeBackupOnce } from "../backups/volume"
@@ -29,6 +31,7 @@ import {
   createBackupS3Probe,
   deleteBackupArtifact,
   inspectBackupArtifact,
+  resolveBackupDestination,
 } from "../backups/storage"
 import type {
   BackupArtifactMetadata,
@@ -75,7 +78,10 @@ function fingerprintInventoryProbe(
   return [
     location,
     config?.id ?? "",
+    config?.destination_id ?? "",
+    config?.destination_updated_at?.toISOString() ?? "",
     config?.s3_endpoint ?? "",
+    config?.s3_bucket ?? "",
     config?.s3_region ?? "",
     config?.s3_credentials_secret_id ?? "",
   ].join("\u0000")
@@ -125,6 +131,12 @@ function getUser(c: { get: (k: string) => unknown }): AuthUser {
   return c.get("user") as AuthUser
 }
 
+async function lockBackupConfig(tx: Db, kind: "database" | "volume", configId: string) {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backup:${kind}:${configId}`}, 0))`
+  )
+}
+
 function param(
   c: { req: { param: (key: string) => string | undefined } },
   key: string
@@ -139,8 +151,9 @@ function param(
 // ---------------------------------------------------------------------------
 
 const BackupConfigBody = z.object({
+  destinationId: z.string().min(1).nullable().optional(),
   destinationKind: z.enum(["s3", "local"]).optional(),
-  s3Endpoint: z.string().optional(),
+  s3Endpoint: S3EndpointSchema.optional(),
   s3Bucket: z.string().optional(),
   s3Prefix: z.string().optional(),
   s3Region: z.string().optional(),
@@ -156,6 +169,48 @@ const RestoreBody = z.object({
   ageIdentity: z.string().optional(),
   confirm: z.string().min(1),
 })
+
+type InlineDestinationConfig = {
+  destination_id: string | null
+  destination_kind: "s3" | "local"
+  s3_endpoint: string | null
+  s3_bucket: string | null
+  s3_region: string | null
+  s3_credentials_secret_id: string | null
+}
+
+function isDestinationChangeRequested(
+  existing: InlineDestinationConfig,
+  data: z.infer<typeof BackupConfigBody>
+): boolean {
+  const existingDestinationId = existing.destination_id ?? null
+  if (data.destinationId !== undefined && data.destinationId !== existingDestinationId) {
+    return true
+  }
+  if (existingDestinationId) return false
+
+  const inlineFieldsChanged =
+    (data.destinationKind !== undefined &&
+      data.destinationKind !== existing.destination_kind) ||
+    (data.s3Endpoint !== undefined && data.s3Endpoint !== (existing.s3_endpoint ?? undefined)) ||
+    (data.s3Bucket !== undefined && data.s3Bucket !== (existing.s3_bucket ?? undefined)) ||
+    (data.s3Region !== undefined && data.s3Region !== (existing.s3_region ?? undefined)) ||
+    (data.s3CredentialsSecretId !== undefined &&
+      data.s3CredentialsSecretId !==
+        (existing.s3_credentials_secret_id ?? undefined))
+
+  if (data.destinationId === null) {
+    return (
+      existing.destination_kind !== "local" ||
+      existing.s3_endpoint !== null ||
+      existing.s3_bucket !== null ||
+      existing.s3_region !== null ||
+      existing.s3_credentials_secret_id !== null ||
+      inlineFieldsChanged
+    )
+  }
+  return inlineFieldsChanged
+}
 
 // ---------------------------------------------------------------------------
 // Ownership helper
@@ -177,6 +232,37 @@ async function getDbForUser(db: Db, dbId: string, userId: string) {
     .where(eq(databases.id, dbId))
     .limit(1)
   return rows[0]?.db ?? null
+}
+
+async function getDestinationForOrg(
+  db: Db,
+  destinationId: string,
+  orgId: string
+) {
+  const rows = await db
+    .select()
+    .from(storage_destinations)
+    .where(
+      and(
+        eq(storage_destinations.id, destinationId),
+        eq(storage_destinations.org_id, orgId)
+      )
+    )
+    .limit(1)
+  return rows[0] ?? null
+}
+
+async function legacySecretBelongsToOrg(
+  db: Db,
+  secretId: string,
+  orgId: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ projectId: secrets.project_id })
+    .from(secrets)
+    .where(eq(secrets.id, secretId))
+    .limit(1)
+  return rows[0]?.projectId === orgId
 }
 
 async function getAppVolumeForUser(
@@ -553,21 +639,75 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
     }
 
     const data = parsed.data
+    const destination = data.destinationId
+      ? await getDestinationForOrg(db, data.destinationId, dbRow.project_id)
+      : null
+    if (data.destinationId && !destination) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "Storage destination not found" } },
+        404
+      )
+    }
+    if (
+      !destination &&
+      data.s3CredentialsSecretId &&
+      !(await legacySecretBelongsToOrg(db, data.s3CredentialsSecretId, dbRow.project_id))
+    ) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "Storage credentials not found" } },
+        404
+      )
+    }
     const existing = await db
       .select()
       .from(backup_configs)
       .where(eq(backup_configs.database_id, dbId))
       .limit(1)
 
+    const hasInlineDestinationFields = [
+      data.destinationKind,
+      data.s3Endpoint,
+      data.s3Bucket,
+      data.s3Region,
+      data.s3CredentialsSecretId,
+    ].some((value) => value !== undefined)
+
+    const detachDestination = data.destinationId === null
+    const linkedDestinationFields = destination
+      ? {
+          destination_id: destination.id,
+          destination_kind: destination.kind,
+          s3_endpoint: null,
+          s3_bucket: null,
+          s3_region: null,
+          s3_credentials_secret_id: null,
+        }
+      : detachDestination
+        ? {
+            destination_id: null,
+            destination_kind: "local" as const,
+            s3_endpoint: null,
+            s3_bucket: null,
+            s3_region: null,
+            s3_credentials_secret_id: null,
+          }
+      : {}
     const updateFields = {
-      ...(data.destinationKind !== undefined && {
+      ...linkedDestinationFields,
+      ...(data.destinationId === undefined && data.destinationKind !== undefined && {
         destination_kind: data.destinationKind,
       }),
-      ...(data.s3Endpoint !== undefined && { s3_endpoint: data.s3Endpoint }),
-      ...(data.s3Bucket !== undefined && { s3_bucket: data.s3Bucket }),
+      ...(data.destinationId === undefined && data.s3Endpoint !== undefined && {
+        s3_endpoint: data.s3Endpoint,
+      }),
+      ...(data.destinationId === undefined && data.s3Bucket !== undefined && {
+        s3_bucket: data.s3Bucket,
+      }),
       ...(data.s3Prefix !== undefined && { s3_prefix: data.s3Prefix }),
-      ...(data.s3Region !== undefined && { s3_region: data.s3Region }),
-      ...(data.s3CredentialsSecretId !== undefined && {
+      ...(data.destinationId === undefined && data.s3Region !== undefined && {
+        s3_region: data.s3Region,
+      }),
+      ...(data.destinationId === undefined && data.s3CredentialsSecretId !== undefined && {
         s3_credentials_secret_id: data.s3CredentialsSecretId,
       }),
       ...(data.scheduleCron !== undefined && {
@@ -580,6 +720,82 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         age_recipient_public_key: data.ageRecipientPublicKey,
       }),
       ...(data.enabled !== undefined && { enabled: data.enabled }),
+    }
+
+    if (
+      existing[0] &&
+      (data.destinationId !== undefined || hasInlineDestinationFields)
+    ) {
+      const mutation = await db.transaction(async (tx) => {
+        const transactionDb = tx as unknown as Db
+        await lockBackupConfig(transactionDb, "database", existing[0]!.id)
+
+        const lockedRows = await transactionDb
+          .select()
+          .from(backup_configs)
+          .where(eq(backup_configs.id, existing[0]!.id))
+          .for("update")
+          .limit(1)
+        const locked = lockedRows[0]
+        if (!locked) return { kind: "missing" as const }
+
+        if (locked.destination_id && hasInlineDestinationFields) {
+          return { kind: "destination_required" as const }
+        }
+
+        const stillChangingDestination = isDestinationChangeRequested(locked, data)
+        if (stillChangingDestination) {
+          const liveBackups = await transactionDb
+            .select({ id: backups.id })
+            .from(backups)
+            .where(eq(backups.config_id, locked.id))
+            .limit(1)
+          if (liveBackups[0]) return { kind: "in_use" as const }
+        }
+
+        await transactionDb
+          .update(backup_configs)
+          .set(updateFields)
+          .where(eq(backup_configs.id, locked.id))
+        const updated = await transactionDb
+          .select()
+          .from(backup_configs)
+          .where(eq(backup_configs.id, locked.id))
+          .limit(1)
+        return { kind: "updated" as const, config: updated[0] }
+      })
+
+      if (mutation.kind === "in_use") {
+        return c.json(
+          {
+            error: {
+              code: "BACKUP_CONFIG_IN_USE",
+              message:
+                "Cannot change the storage destination while backups still reference this configuration",
+            },
+          },
+          409
+        )
+      }
+      if (mutation.kind === "destination_required") {
+        return c.json(
+          {
+            error: {
+              code: "DESTINATION_REQUIRED",
+              message: "Select a storage destination instead of editing inline destination fields",
+            },
+          },
+          400
+        )
+      }
+      if (mutation.kind === "missing" || !mutation.config) {
+        return c.json(
+          { error: { code: "NOT_FOUND", message: "Backup configuration not found" } },
+          404
+        )
+      }
+      invalidateInventoryProbeCache({ configId: mutation.config.id })
+      return c.json({ config: serializeConfig(mutation.config) })
     }
 
     if (existing[0]) {
@@ -601,12 +817,13 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
     await db.insert(backup_configs).values({
       id,
       database_id: dbId,
-      destination_kind: data.destinationKind ?? "local",
-      s3_endpoint: data.s3Endpoint,
-      s3_bucket: data.s3Bucket,
+      destination_id: destination?.id ?? null,
+      destination_kind: destination?.kind ?? data.destinationKind ?? "local",
+      s3_endpoint: destination ? null : data.s3Endpoint,
+      s3_bucket: destination ? null : data.s3Bucket,
       s3_prefix: data.s3Prefix,
-      s3_region: data.s3Region,
-      s3_credentials_secret_id: data.s3CredentialsSecretId,
+      s3_region: destination ? null : data.s3Region,
+      s3_credentials_secret_id: destination ? null : data.s3CredentialsSecretId,
       schedule_cron: data.scheduleCron ?? "0 3 * * *",
       retention_days: data.retentionDays ?? 7,
       age_recipient_public_key: data.ageRecipientPublicKey ?? null,
@@ -647,6 +864,37 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
       }
 
       const data = parsed.data
+      const appProjectRows = await db
+        .select({ projectId: apps.project_id })
+        .from(apps)
+        .where(eq(apps.id, appId))
+        .limit(1)
+      const appProjectId = appProjectRows[0]?.projectId
+      if (!appProjectId) {
+        return c.json(
+          { error: { code: "NOT_FOUND", message: "App not found" } },
+          404
+        )
+      }
+      const destination = data.destinationId
+        ? await getDestinationForOrg(db, data.destinationId, appProjectId)
+        : null
+      if (data.destinationId && !destination) {
+        return c.json(
+          { error: { code: "NOT_FOUND", message: "Storage destination not found" } },
+          404
+        )
+      }
+      if (
+        !destination &&
+        data.s3CredentialsSecretId &&
+        !(await legacySecretBelongsToOrg(db, data.s3CredentialsSecretId, appProjectId))
+      ) {
+        return c.json(
+          { error: { code: "NOT_FOUND", message: "Storage credentials not found" } },
+          404
+        )
+      }
       const existing = await db
         .select()
         .from(volume_backup_configs)
@@ -658,15 +906,50 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         )
         .limit(1)
 
+      const hasInlineDestinationFields = [
+        data.destinationKind,
+        data.s3Endpoint,
+        data.s3Bucket,
+        data.s3Region,
+        data.s3CredentialsSecretId,
+      ].some((value) => value !== undefined)
+
+      const detachDestination = data.destinationId === null
+      const linkedDestinationFields = destination
+        ? {
+            destination_id: destination.id,
+            destination_kind: destination.kind,
+            s3_endpoint: null,
+            s3_bucket: null,
+            s3_region: null,
+            s3_credentials_secret_id: null,
+          }
+        : detachDestination
+          ? {
+              destination_id: null,
+              destination_kind: "local" as const,
+              s3_endpoint: null,
+              s3_bucket: null,
+              s3_region: null,
+              s3_credentials_secret_id: null,
+            }
+        : {}
       const updateFields = {
-        ...(data.destinationKind !== undefined && {
+        ...linkedDestinationFields,
+        ...(data.destinationId === undefined && data.destinationKind !== undefined && {
           destination_kind: data.destinationKind,
         }),
-        ...(data.s3Endpoint !== undefined && { s3_endpoint: data.s3Endpoint }),
-        ...(data.s3Bucket !== undefined && { s3_bucket: data.s3Bucket }),
+        ...(data.destinationId === undefined && data.s3Endpoint !== undefined && {
+          s3_endpoint: data.s3Endpoint,
+        }),
+        ...(data.destinationId === undefined && data.s3Bucket !== undefined && {
+          s3_bucket: data.s3Bucket,
+        }),
         ...(data.s3Prefix !== undefined && { s3_prefix: data.s3Prefix }),
-        ...(data.s3Region !== undefined && { s3_region: data.s3Region }),
-        ...(data.s3CredentialsSecretId !== undefined && {
+        ...(data.destinationId === undefined && data.s3Region !== undefined && {
+          s3_region: data.s3Region,
+        }),
+        ...(data.destinationId === undefined && data.s3CredentialsSecretId !== undefined && {
           s3_credentials_secret_id: data.s3CredentialsSecretId,
         }),
         ...(data.scheduleCron !== undefined && {
@@ -679,6 +962,82 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
           age_recipient_public_key: data.ageRecipientPublicKey,
         }),
         ...(data.enabled !== undefined && { enabled: data.enabled }),
+      }
+
+      if (
+        existing[0] &&
+        (data.destinationId !== undefined || hasInlineDestinationFields)
+      ) {
+        const mutation = await db.transaction(async (tx) => {
+          const transactionDb = tx as unknown as Db
+          await lockBackupConfig(transactionDb, "volume", existing[0]!.id)
+
+          const lockedRows = await transactionDb
+            .select()
+            .from(volume_backup_configs)
+            .where(eq(volume_backup_configs.id, existing[0]!.id))
+            .for("update")
+            .limit(1)
+          const locked = lockedRows[0]
+          if (!locked) return { kind: "missing" as const }
+
+          if (locked.destination_id && hasInlineDestinationFields) {
+            return { kind: "destination_required" as const }
+          }
+
+          const stillChangingDestination = isDestinationChangeRequested(locked, data)
+          if (stillChangingDestination) {
+            const liveBackups = await transactionDb
+              .select({ id: volume_backups.id })
+              .from(volume_backups)
+              .where(eq(volume_backups.config_id, locked.id))
+              .limit(1)
+            if (liveBackups[0]) return { kind: "in_use" as const }
+          }
+
+          await transactionDb
+            .update(volume_backup_configs)
+            .set(updateFields)
+            .where(eq(volume_backup_configs.id, locked.id))
+          const updated = await transactionDb
+            .select()
+            .from(volume_backup_configs)
+            .where(eq(volume_backup_configs.id, locked.id))
+            .limit(1)
+          return { kind: "updated" as const, config: updated[0] }
+        })
+
+        if (mutation.kind === "in_use") {
+          return c.json(
+            {
+              error: {
+                code: "BACKUP_CONFIG_IN_USE",
+                message:
+                  "Cannot change the storage destination while backups still reference this configuration",
+              },
+            },
+            409
+          )
+        }
+        if (mutation.kind === "destination_required") {
+          return c.json(
+            {
+              error: {
+                code: "DESTINATION_REQUIRED",
+                message: "Select a storage destination instead of editing inline destination fields",
+              },
+            },
+            400
+          )
+        }
+        if (mutation.kind === "missing" || !mutation.config) {
+          return c.json(
+            { error: { code: "NOT_FOUND", message: "Backup configuration not found" } },
+            404
+          )
+        }
+        invalidateInventoryProbeCache({ configId: mutation.config.id })
+        return c.json({ config: serializeVolumeConfig(mutation.config) })
       }
 
       if (existing[0]) {
@@ -700,12 +1059,13 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         id,
         app_id: appId,
         volume_id: volumeId,
-        destination_kind: data.destinationKind ?? "local",
-        s3_endpoint: data.s3Endpoint,
-        s3_bucket: data.s3Bucket,
+        destination_id: destination?.id ?? null,
+        destination_kind: destination?.kind ?? data.destinationKind ?? "local",
+        s3_endpoint: destination ? null : data.s3Endpoint,
+        s3_bucket: destination ? null : data.s3Bucket,
         s3_prefix: data.s3Prefix,
-        s3_region: data.s3Region,
-        s3_credentials_secret_id: data.s3CredentialsSecretId,
+        s3_region: destination ? null : data.s3Region,
+        s3_credentials_secret_id: destination ? null : data.s3CredentialsSecretId,
         schedule_cron: data.scheduleCron ?? "0 3 * * *",
         retention_days: data.retentionDays ?? 7,
         age_recipient_public_key: data.ageRecipientPublicKey ?? null,
@@ -815,7 +1175,7 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
     }
   )
 
-  // POST /databases/:id/restore — TOTP required
+  // POST /databases/:id/restore (TOTP required)
   router.post(
     "/databases/:id/restore",
     databaseBackupsWrite,
@@ -1109,12 +1469,9 @@ function serializeConfig(row: typeof backup_configs.$inferSelect) {
   return {
     id: row.id,
     databaseId: row.database_id,
+    destinationId: row.destination_id,
     destinationKind: row.destination_kind,
-    s3Endpoint: row.s3_endpoint,
-    s3Bucket: row.s3_bucket,
     s3Prefix: row.s3_prefix,
-    s3Region: row.s3_region,
-    s3CredentialsSecretId: row.s3_credentials_secret_id,
     scheduleCron: row.schedule_cron,
     retentionDays: row.retention_days,
     ageRecipientPublicKey: row.age_recipient_public_key,
@@ -1150,12 +1507,9 @@ function serializeVolumeConfig(row: typeof volume_backup_configs.$inferSelect) {
     id: row.id,
     appId: row.app_id,
     volumeId: row.volume_id,
+    destinationId: row.destination_id,
     destinationKind: row.destination_kind,
-    s3Endpoint: row.s3_endpoint,
-    s3Bucket: row.s3_bucket,
     s3Prefix: row.s3_prefix,
-    s3Region: row.s3_region,
-    s3CredentialsSecretId: row.s3_credentials_secret_id,
     scheduleCron: row.schedule_cron,
     retentionDays: row.retention_days,
     ageRecipientPublicKey: row.age_recipient_public_key,
@@ -1257,16 +1611,23 @@ async function inspectInventoryArtifact(
   s3ProbeByConfig: Map<string, Promise<BackupS3Probe>>
 ): Promise<InventoryProbeResult> {
   const configId = config?.id ?? null
-  const fingerprint = fingerprintInventoryProbe(location, config)
+  const resolvedConfig = config
+    ? await resolveBackupDestination(db, config)
+    : null
+  const resolvedWithId =
+    resolvedConfig && config?.id
+      ? { ...resolvedConfig, id: config.id }
+      : resolvedConfig
+  const fingerprint = fingerprintInventoryProbe(location, resolvedWithId)
   const cached = readCachedInventoryProbe(backupId, configId, fingerprint)
   if (cached) return cached
 
   let s3Probe: Promise<BackupS3Probe> | undefined
-  if (location.startsWith("s3://") && config) {
-    const key = config.id ?? fingerprint
+  if (location.startsWith("s3://") && resolvedWithId) {
+    const key = configId ?? fingerprint
     s3Probe = s3ProbeByConfig.get(key)
     if (!s3Probe) {
-      s3Probe = createBackupS3Probe(db, config)
+      s3Probe = createBackupS3Probe(db, resolvedWithId)
       s3ProbeByConfig.set(key, s3Probe)
     }
   }
@@ -1275,7 +1636,7 @@ async function inspectInventoryArtifact(
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
     const probeTask = (async () =>
-      inspectBackupArtifact(db, location, config, await s3Probe)
+      inspectBackupArtifact(db, location, resolvedWithId, await s3Probe)
     )()
     const artifact = await Promise.race([
       probeTask,

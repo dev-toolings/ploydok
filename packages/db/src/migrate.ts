@@ -5,6 +5,7 @@ import postgres from "postgres"
 import { drizzle } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import { assertNoCaseInsensitiveAppDomainDuplicates } from "./migration-safety"
+import { backfillStorageDestinations } from "./storage-destinations-backfill"
 
 const url =
   Bun.env["DATABASE_URL"] ?? "postgres://ploydok:ploydok@127.0.0.1:5432/ploydok"
@@ -34,6 +35,7 @@ await sql`SELECT pg_advisory_lock(hashtext('ploydok:drizzle-migrations'))`
 try {
   await assertNoCaseInsensitiveAppDomainDuplicates(sql)
   await migrate(db, { migrationsFolder })
+  await backfillStorageDestinations(db, Bun.env["MASTER_KEY"])
   console.log("[migrate] done")
 } finally {
   await sql`SELECT pg_advisory_unlock(hashtext('ploydok:drizzle-migrations'))`.catch(

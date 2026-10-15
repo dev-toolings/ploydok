@@ -18,7 +18,10 @@ import { reconcileRuntimeAppsOnBoot } from "./services/app-runtime-reconciler.js
 import { reconcileSwarmProjectNetworks } from "./services/projects.js"
 import { reconcileResourceCreations } from "./services/resource-creation-reconciler.js"
 import { migrateDockerAppsToSwarmOnBoot } from "./services/swarm-migration.js"
-import { assertNoCaseInsensitiveAppDomainDuplicates } from "@ploydok/db"
+import {
+  assertNoCaseInsensitiveAppDomainDuplicates,
+  backfillStorageDestinations,
+} from "@ploydok/db"
 import {
   backfillAppDomainMetadata,
   deriveDefaultAppDomainBase,
@@ -54,7 +57,9 @@ async function runMigrationsOnBoot(): Promise<void> {
     await sql`SELECT pg_advisory_lock(hashtext('ploydok:drizzle-migrations'))`
     log.info({ migrationsFolder }, "applying drizzle migrations on boot")
     await assertNoCaseInsensitiveAppDomainDuplicates(sql)
-    await migrate(drizzle(sql), { migrationsFolder })
+    const migratedDb = drizzle(sql)
+    await migrate(migratedDb, { migrationsFolder })
+    await backfillStorageDestinations(migratedDb, env.MASTER_KEY)
     log.info("drizzle migrations applied")
   } finally {
     await sql`SELECT pg_advisory_unlock(hashtext('ploydok:drizzle-migrations'))`.catch(
