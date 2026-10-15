@@ -29,6 +29,7 @@ import { workerLog } from "./logger.js"
 import { buildEnvForDeploy } from "../secrets/resolver.js"
 import { PLANS } from "@ploydok/shared"
 import type { PlanName } from "@ploydok/shared"
+import { healthcheckShell } from "./healthcheck-shell.js"
 import {
   currentDeployLease,
   currentDeployLeaseCondition,
@@ -68,21 +69,6 @@ function runtimeServiceName(app: { id: string; slug: string }): string {
     .replace(/[^a-z0-9-]+/g, "")
     .slice(0, 10)
   return `ploydok-app-${slug || "app"}-${token}`
-}
-
-function healthcheckShell(port: number, path: string): string {
-  return (
-    `for host in 127.0.0.1 "$(hostname 2>/dev/null)"; do ` +
-    `[ -z "$host" ] && continue; ` +
-    `if command -v curl >/dev/null 2>&1; then ` +
-    `code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://$host:${port}${path}" || true)"; ` +
-    `case "$code" in [234][0-9][0-9]) exit 0;; esac; ` +
-    `fi; ` +
-    `if command -v wget >/dev/null 2>&1; then ` +
-    `wget -q -O /dev/null --timeout=5 "http://$host:${port}${path}" && exit 0; ` +
-    `fi; ` +
-    `done; exit 1`
-  )
 }
 
 function resolveResourceLimits(row: {

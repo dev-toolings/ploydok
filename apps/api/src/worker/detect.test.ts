@@ -142,6 +142,39 @@ describe("detectBuildMethod", () => {
     )
   })
 
+  it("accepts a valid framework preset for ambiguous repository evidence", async () => {
+    await writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { start: "node server.js" } })
+    )
+    await writeFile(path.join(tmpDir, "next.config.mjs"), "export default {}\n")
+    await writeFile(path.join(tmpDir, "nuxt.config.ts"), "export default {}\n")
+
+    await expect(
+      detectBuildMethod({ workspacePath: tmpDir, frameworkPreset: "next" })
+    ).resolves.toEqual({ method: "nixpacks" })
+  })
+
+  it("grandfathers an ambiguous app after a successful build with a warning", async () => {
+    await writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { start: "node server.js" } })
+    )
+    await writeFile(path.join(tmpDir, "next.config.mjs"), "export default {}\n")
+    await writeFile(path.join(tmpDir, "nuxt.config.ts"), "export default {}\n")
+    const warnings: string[] = []
+
+    await expect(
+      detectBuildMethod({
+        workspacePath: tmpDir,
+        allowLegacyAmbiguous: true,
+        onWarning: (warning) => warnings.push(warning),
+      })
+    ).resolves.toEqual({ method: "nixpacks" })
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain("previous successful build")
+  })
+
   it("an explicit build override remains usable for an ambiguous repository", async () => {
     await writeFile(
       path.join(tmpDir, "package.json"),

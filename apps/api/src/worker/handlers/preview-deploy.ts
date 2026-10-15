@@ -8,6 +8,7 @@ import type { Db } from "@ploydok/db"
 import { ContainerHealthStatus } from "@ploydok/agent-proto"
 import {
   getPreviewDeployment,
+  getLastSucceededBuild,
   updatePreviewDeployment,
   updatePreviewDeploymentStatus,
 } from "@ploydok/db/queries"
@@ -44,6 +45,7 @@ import {
 } from "./build-static"
 import { getSharedAgent, getSharedCaddy } from "../../debug/singletons"
 import { env } from "../../env"
+import { resolveFrameworkPresetConfig } from "../../services/framework-preset"
 import { detectDockerfilePort } from "../detect-port"
 import { detectBuildMethod } from "../detect"
 import { resolveRepositoryRoot } from "../repository-targets"
@@ -54,6 +56,8 @@ import { nixpacksBuild } from "../nixpacks"
 import { ensureProjectNetwork, networksForApp } from "../../services/projects"
 import { isNotFound, toAgentError } from "../../agent"
 import { isSymfonyFlexWorkspace } from "./symfony-detect"
+import { FatalDeployError } from "../errors"
+import { healthcheckShell } from "../healthcheck-shell"
 
 const log = workerLog.child({ subsystem: "preview-deploy" })
 const STOP_TIMEOUT_S = 10
@@ -335,19 +339,7 @@ function healthcheckConfig(app: AppForPreview, runtimePort: number) {
     retries: app.healthcheck_retries ?? 6,
     startPeriodSeconds: app.healthcheck_start_period_s ?? 30,
     config: {
-      test: [
-        "CMD-SHELL",
-        `for host in 127.0.0.1 "$(hostname 2>/dev/null)"; do ` +
-          `[ -z "$host" ] && continue; ` +
-          `if command -v curl >/dev/null 2>&1; then ` +
-          `code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://$host:${hcPort}${hcPath}" || true)"; ` +
-          `case "$code" in [234][0-9][0-9]) exit 0;; esac; ` +
-          `fi; ` +
-          `if command -v wget >/dev/null 2>&1; then ` +
-          `wget -q -O /dev/null --timeout=5 "http://$host:${hcPort}${hcPath}" && exit 0; ` +
-          `fi; ` +
-          `done; exit 1`,
-      ],
+      test: ["CMD-SHELL", healthcheckShell(hcPort, hcPath)],
       intervalSeconds: app.healthcheck_interval_s ?? 5,
       timeoutSeconds: app.healthcheck_timeout_s ?? 3,
       retries: app.healthcheck_retries ?? 6,
@@ -584,6 +576,36 @@ export async function handlePreviewDeploy(
     workspacePath = cloneResult.workspacePath
 
     const resolvedHeadSha = await checkoutPreviewHead(workspacePath, headSha)
+    const selectedPreset = getFrameworkPreset(app.framework_preset)
+    if (app.framework_preset != null && !selectedPreset) {
+      throw new FatalDeployError(
+        "Stored framework preset is invalid; select a preset again"
+      )
+    }
+    const presetFields = resolveFrameworkPresetConfig({
+      framework_preset: app.framework_preset,
+      install_command: app.install_command,
+      build_command: app.build_command,
+      start_command: app.start_command,
+      build_method: app.build_method,
+      static_output_dir: app.static_output_dir,
+      runtime_port: app.runtime_port,
+      healthcheck_path: app.healthcheck_path,
+      healthcheck_port: app.healthcheck_port,
+      healthcheck_interval_s: app.healthcheck_interval_s,
+      healthcheck_timeout_s: app.healthcheck_timeout_s,
+      healthcheck_retries: app.healthcheck_retries,
+      healthcheck_start_period_s: app.healthcheck_start_period_s,
+    })
+    const installCommand = presetFields.install_command
+    const buildCommand = presetFields.build_command
+    const startCommand = presetFields.start_command
+    const previousSuccessfulBuild =
+      !selectedPreset &&
+      (app.build_method === null || app.build_method === "auto")
+        ? await getLastSucceededBuild(db, app.id)
+        : null
+    const allowLegacyAmbiguous = Boolean(previousSuccessfulBuild)
     const resolvedRoot = await resolveRepositoryRoot({
       workspacePath,
       rootDir: app.root_dir,
@@ -591,24 +613,25 @@ export async function handlePreviewDeploy(
         Boolean(
           app.dockerfile_path ||
           app.nixpacks_config_path ||
-          app.install_command ||
-          app.build_command ||
-          app.start_command
+          installCommand ||
+          buildCommand ||
+          startCommand ||
+          Boolean(selectedPreset)
         ) || ![null, "auto", "nixpacks"].includes(app.build_method),
+      allowLegacyAmbiguous,
+      onWarning: (warning) => {
+        log.warn(
+          { previewId, warning },
+          "preview detection compatibility warning"
+        )
+        onLog(`[preview] warning: ${warning}`)
+      },
     })
     if (resolvedRoot !== app.root_dir) {
       app.root_dir = resolvedRoot
     }
 
-    const selectedPreset = getFrameworkPreset(app.framework_preset)
-    if (app.framework_preset && !selectedPreset) {
-      throw new Error(
-      "Stored framework preset is invalid; select a preset again"
-    )
-    }
-    const buildMethod = app.build_method && app.build_method !== "auto"
-      ? app.build_method
-      : selectedPreset?.defaults.buildMethod ?? "auto"
+    const buildMethod = presetFields.build_method
     const normalizedMethod =
       buildMethod === "docker" || buildMethod === "dockerfile"
         ? "docker"
@@ -616,36 +639,38 @@ export async function handlePreviewDeploy(
           ? "nixpacks"
           : buildMethod === "static"
             ? "static"
-            : "auto"
+            : buildMethod === "compose"
+              ? "compose"
+              : "auto"
 
     const detected = await detectBuildMethod({
       workspacePath,
       override: normalizedMethod,
+      frameworkPreset: app.framework_preset,
+      allowLegacyAmbiguous,
+      onWarning: (warning) => {
+        log.warn(
+          { previewId, warning },
+          "preview detection compatibility warning"
+        )
+        onLog(`[preview] warning: ${warning}`)
+      },
       ...(app.root_dir ? { rootDir: app.root_dir } : {}),
       ...(app.dockerfile_path ? { dockerfilePath: app.dockerfile_path } : {}),
     })
 
     if (detected.method === "compose") {
-      throw new Error("Preview deployments do not support compose apps yet")
+      throw new FatalDeployError("Preview deployments do not support compose apps yet")
     }
 
     const detectedClassification = await classifyWorkspaceStack({
       workspacePath,
       rootDir: app.root_dir,
     })
-    if (
-      detected.method === "nixpacks" &&
-      detectedClassification.ambiguous &&
-      !selectedPreset
-    ) {
-      throw new Error(
-        "Several framework candidates were detected; select a framework preset before deploying"
-      )
-    }
     const classification = selectedPreset
       ? classificationForPreset(selectedPreset.id, detectedClassification)
       : detectedClassification
-    const inferredStartCommand = app.start_command ??
+    const inferredStartCommand = startCommand ??
       (selectedPreset ? null : classification.suggestedStartCommand ?? null)
     await ensureFrameworkEnvVars({
       db,
@@ -689,12 +714,12 @@ export async function handlePreviewDeploy(
       await dispatchStaticDeploy(
         resourceId,
         resolvedHeadSha,
-        app.static_output_dir ?? "dist",
+        app.static_output_dir ?? presetFields.static_output_dir ?? "dist",
         {
           workspacePath,
           rootDir: app.root_dir,
-          installCommand: app.install_command,
-          buildCommand: app.build_command,
+          installCommand,
+          buildCommand,
           env: buildEnv,
           onLog,
         }
@@ -771,8 +796,8 @@ export async function handlePreviewDeploy(
           ? { configFile: app.nixpacks_config_path }
           : {}),
         ...(app.node_version ? { nodeVersion: app.node_version } : {}),
-        ...(app.install_command ? { installCmd: app.install_command } : {}),
-        ...(app.build_command ? { buildCmd: app.build_command } : {}),
+        ...(installCommand ? { installCmd: installCommand } : {}),
+        ...(buildCommand ? { buildCmd: buildCommand } : {}),
         ...(inferredStartCommand ? { startCmd: inferredStartCommand } : {}),
         ...(Object.keys(buildEnv).length > 0 ? { buildEnv } : {}),
         ...(Object.keys(runtimeEnv).length > 0 ? { runtimeEnv } : {}),
@@ -800,7 +825,16 @@ export async function handlePreviewDeploy(
     await ensureCaddyOnProjectNetwork(getSharedAgent(), projectNetwork)
     const networks = networksForApp(projectNetwork)
     const hc = healthcheckConfig(
-      { ...app, runtime_port: resolvedRuntimePort },
+      {
+        ...app,
+        runtime_port: resolvedRuntimePort,
+        healthcheck_path: presetFields.healthcheck_path,
+        healthcheck_port: presetFields.healthcheck_port,
+        healthcheck_interval_s: presetFields.healthcheck_interval_s,
+        healthcheck_timeout_s: presetFields.healthcheck_timeout_s,
+        healthcheck_retries: presetFields.healthcheck_retries,
+        healthcheck_start_period_s: presetFields.healthcheck_start_period_s,
+      },
       resolvedRuntimePort
     )
     const resourceLimits = resolveResourceLimits(app)

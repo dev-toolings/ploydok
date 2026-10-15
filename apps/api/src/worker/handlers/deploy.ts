@@ -18,6 +18,7 @@ import type { ManifestContents, StackClassification } from "@ploydok/shared"
 import {
   updateBuildStatus,
   getAppForUser,
+  getLastSucceededBuild,
   insertAuditLog,
 } from "@ploydok/db/queries"
 import { claimQueuedRow } from "../queue-claim"
@@ -27,6 +28,7 @@ import { cleanupQueue, gcQueue, logArchiveQueue } from "../queues"
 import type { Db } from "@ploydok/db"
 import { getRegistryCredential } from "@ploydok/db/queries"
 import { env } from "../../env"
+import { resolveFrameworkPresetConfig } from "../../services/framework-preset"
 import { decryptField } from "../../github/app-credentials"
 import { GitHubProvider } from "../../github/client"
 import { GitHubCache } from "../../github/cache"
@@ -596,14 +598,36 @@ export async function handleDeploy(
   }
 
   const selectedPreset = getFrameworkPreset(app.framework_preset)
-  if (app.framework_preset && !selectedPreset) {
+  if (app.framework_preset != null && !selectedPreset) {
     throw new FatalDeployError(
       "Stored framework preset is invalid; select a preset again"
     )
   }
-  const rawMethod = app.build_method && app.build_method !== "auto"
-    ? app.build_method
-    : selectedPreset?.defaults.buildMethod ?? "auto"
+  const presetFields = resolveFrameworkPresetConfig({
+    framework_preset: app.framework_preset,
+    install_command: app.install_command,
+    build_command: app.build_command,
+    start_command: app.start_command,
+    build_method: app.build_method,
+    static_output_dir: app.static_output_dir,
+    runtime_port: app.runtime_port,
+    healthcheck_path: undefined,
+    healthcheck_port: undefined,
+    healthcheck_interval_s: undefined,
+    healthcheck_timeout_s: undefined,
+    healthcheck_retries: undefined,
+    healthcheck_start_period_s: undefined,
+  })
+  const installCommand = presetFields.install_command
+  const buildCommand = presetFields.build_command
+  let startCommand = presetFields.start_command
+  const previousSuccessfulBuild =
+    !selectedPreset &&
+    (app.build_method === null || app.build_method === "auto")
+      ? await getLastSucceededBuild(db, app.id)
+      : null
+  const allowLegacyAmbiguous = Boolean(previousSuccessfulBuild)
+  const rawMethod = presetFields.build_method
   if (rawMethod === "railpack") {
     recordDeploymentOutcome("application_failed")
     throw new FatalDeployError(
@@ -1015,10 +1039,13 @@ export async function handleDeploy(
         Boolean(
           app.dockerfile_path ||
           app.nixpacks_config_path ||
-          app.install_command ||
-          app.build_command ||
-          app.start_command
+          installCommand ||
+          buildCommand ||
+          startCommand ||
+          Boolean(selectedPreset)
         ) || ![null, "auto", "nixpacks"].includes(app.build_method),
+      allowLegacyAmbiguous,
+      onWarning: (warning) => onLog(`[deploy] warning: ${warning}`),
     })
     if (resolvedRoot !== app.root_dir) {
       app.root_dir = resolvedRoot
@@ -1040,6 +1067,9 @@ export async function handleDeploy(
     const detected = await detectBuildMethod({
       workspacePath,
       override: detectedOverride,
+      frameworkPreset: app.framework_preset,
+      allowLegacyAmbiguous,
+      onWarning: (warning) => onLog(`[deploy] warning: ${warning}`),
       ...(app.root_dir !== null && { rootDir: app.root_dir }),
       ...(app.dockerfile_path !== null
         ? { dockerfilePath: app.dockerfile_path }
@@ -1090,15 +1120,6 @@ export async function handleDeploy(
       workspacePath,
       rootDir: app.root_dir,
     })
-    if (
-      detected.method === "nixpacks" &&
-      detectedClassification.ambiguous &&
-      !selectedPreset
-    ) {
-      throw new FatalDeployError(
-        "Several framework candidates were detected; select a framework preset before deploying"
-      )
-    }
     const workspaceClassification = selectedPreset
       ? classificationForPreset(selectedPreset.id, detectedClassification)
       : detectedClassification
@@ -1108,17 +1129,18 @@ export async function handleDeploy(
     if (
       detected.method === "nixpacks" &&
       !selectedPreset &&
-      app.start_command === null &&
+      startCommand === null &&
       workspaceClassification.suggestedStartCommand
     ) {
-      app.start_command = workspaceClassification.suggestedStartCommand
+      startCommand = workspaceClassification.suggestedStartCommand
+      app.start_command = startCommand
       await db
         .update(apps)
         .set({ start_command: app.start_command, updated_at: new Date() })
         .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
       runtimePublished = true
       onLog(
-        `[deploy] inferred start command for ${workspaceClassification.framework ?? workspaceClassification.stack}: ${app.start_command}`
+        `[deploy] inferred start command for ${workspaceClassification.framework ?? workspaceClassification.stack}: ${startCommand}`
       )
     }
     try {
@@ -1324,12 +1346,12 @@ export async function handleDeploy(
       const staticResult = await dispatchStaticDeploy(
         app.id,
         commitSha,
-        app.static_output_dir ?? "dist",
+        app.static_output_dir ?? presetFields.static_output_dir ?? "dist",
         {
           workspacePath,
           rootDir: app.root_dir,
-          installCommand: app.install_command,
-          buildCommand: app.build_command,
+          installCommand,
+          buildCommand,
           env: buildEnv,
           onLog,
           ...(currentDeployAbortSignal()
@@ -1492,11 +1514,11 @@ export async function handleDeploy(
             configFile: app.nixpacks_config_path,
           }),
           ...(app.node_version !== null && { nodeVersion: app.node_version }),
-          ...(app.install_command !== null && {
-            installCmd: app.install_command,
+          ...(installCommand !== null && {
+            installCmd: installCommand,
           }),
-          ...(app.build_command !== null && { buildCmd: app.build_command }),
-          ...(app.start_command !== null && { startCmd: app.start_command }),
+          ...(buildCommand !== null && { buildCmd: buildCommand }),
+          ...(startCommand !== null && { startCmd: startCommand }),
           ...(Object.keys(buildEnv).length > 0 && { buildEnv }),
         })
         if (plan) {
@@ -1554,11 +1576,11 @@ export async function handleDeploy(
             configFile: app.nixpacks_config_path,
           }),
           ...(app.node_version !== null && { nodeVersion: app.node_version }),
-          ...(app.install_command !== null && {
-            installCmd: app.install_command,
+          ...(installCommand !== null && {
+            installCmd: installCommand,
           }),
-          ...(app.build_command !== null && { buildCmd: app.build_command }),
-          ...(app.start_command !== null && { startCmd: app.start_command }),
+          ...(buildCommand !== null && { buildCmd: buildCommand }),
+          ...(startCommand !== null && { startCmd: startCommand }),
           ...(Object.keys(buildEnv).length > 0 && { buildEnv }),
           ...(Object.keys(runtimeSecretEnv).length > 0 && {
             runtimeEnv: runtimeSecretEnv,

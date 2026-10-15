@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test"
+import { afterAll, beforeAll, describe, it, expect, beforeEach, mock, spyOn } from "bun:test"
 import { Hono } from "hono"
 import { nanoid } from "nanoid"
 import { eq } from "drizzle-orm"
@@ -45,12 +45,19 @@ import { buildPublicOrigin } from "../domains/app-domain"
 const skip = !TEST_PG_URL
 if (skip) console.log("[apps.test] PLOYDOK_TEST_PG_URL not set — skipping")
 
-async function makeTestDb() {
-  const { db } = await makePgTestDb()
-  return db
-}
-
 type TestDb = Db
+
+let sharedTestDbPromise:
+  | Promise<{ db: TestDb; cleanup: () => Promise<void> }>
+  | undefined
+async function makeTestDb(): Promise<TestDb> {
+  sharedTestDbPromise ??= makePgTestDb()
+  return (await sharedTestDbPromise).db
+}
+afterAll(async () => {
+  const shared = await sharedTestDbPromise
+  await shared?.db.$client.end()
+})
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
 
@@ -261,6 +268,7 @@ interface CreateAppOpts {
   projectId: string
   name?: string
   branch?: string
+  runtimeMode?: "docker" | "swarm"
 }
 
 async function createTestApp(db: TestDb, opts: CreateAppOpts) {
@@ -291,8 +299,9 @@ async function createTestApp(db: TestDb, opts: CreateAppOpts) {
     start_command: null,
     watch_paths: null,
     container_id: null,
+    runtime_mode: opts.runtimeMode ?? "swarm",
     restart_policy: "unless-stopped",
-    domain: `${slug}.demo.ploydok.local`,
+    domain: `${slug}.demo.localhost`,
     build_method: "auto",
     healthcheck_path: "/",
     healthcheck_port: null,
@@ -640,7 +649,7 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(body.app.slug).toBe("my-app")
     expect(body.app.status).toBe("pending")
     expect(body.app.domain).toMatch(
-      /^my-app-[a-z0-9-]{8}\.demo\.ploydok\.local$/
+      /^my-app-[a-z0-9-]{8}\.demo\.localhost$/
     )
     expect(body.app.restartPolicy).toBe("unless-stopped")
     expect(body.app.id).toBeString()
@@ -680,10 +689,7 @@ describe.skipIf(skip)("POST /apps", () => {
         imageRef: "nginx:stable",
       }),
     })
-    expect(imageRes.status).toBe(412)
-    expect(await imageRes.json()).toMatchObject({
-      error: { code: "GIT_PROVIDER_NOT_CONNECTED" },
-    })
+    expect(imageRes.status).toBe(201)
   })
 
   it("refuses a GitHub installation owned by another user", async () => {
@@ -1461,6 +1467,68 @@ describe.skipIf(skip)("PATCH /apps/:id", () => {
   })
 })
 
+describe.skipIf(skip)("app command and port validation boundaries", () => {
+  let db: TestDb
+  let userId: string
+  let projectId: string
+  let appId: string
+
+  beforeAll(async () => {
+    db = await makeTestDb()
+    const user = await createTestUser(db)
+    userId = user.id
+    const project = await createTestProject(db, userId)
+    projectId = project.id
+    appId = (await createTestApp(db, { userId, projectId })).id
+  })
+
+  it("rejects unsafe and oversized commands at the POST route boundary", async () => {
+    const app = buildTestApp(db, fakeUser(userId, "u@t.com"))
+    for (const [field, value] of [
+      ["installCommand", "bun\r\nrun build"],
+      ["buildCommand", "bun\u0000run build"],
+      ["startCommand", "x".repeat(2_001)],
+    ] as const) {
+      const response = await app.request("/apps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: `Invalid ${field}`,
+          projectId,
+          gitProvider: "image",
+          imageRef: "nginx:stable",
+          [field]: value,
+        }),
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: "VALIDATION_ERROR" },
+      })
+    }
+  })
+
+  it("rejects out-of-range ports and control characters at the PATCH route boundary", async () => {
+    const app = buildTestApp(db, fakeUser(userId, "u@t.com"))
+    for (const body of [
+      { runtimePort: 0 },
+      { runtimePort: 65_536 },
+      { healthcheck: { port: 0 } },
+      { healthcheck: { port: 65_536 } },
+      { healthcheck: { path: "/ready\u0001" } },
+    ]) {
+      const response = await app.request(`/apps/${appId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: "VALIDATION_ERROR" },
+      })
+    }
+  })
+})
+
 // ---------------------------------------------------------------------------
 // DELETE /apps/:id
 // ---------------------------------------------------------------------------
@@ -1800,7 +1868,11 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   })
 
   it("rollback with explicit succeeded buildId → 200", async () => {
-    const { id: appId } = await createTestApp(db, { userId, projectId })
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
     const { id: buildId } = await createTestBuild(db, appId, "succeeded")
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
@@ -1832,7 +1904,11 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   })
 
   it("rollback without buildId (legacy) — calls runner and returns 200", async () => {
-    const { id: appId } = await createTestApp(db, { userId, projectId })
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     // No body — legacy behaviour

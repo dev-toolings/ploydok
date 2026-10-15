@@ -215,6 +215,7 @@
     "repositoryDetectionFailed": "La détection du dépôt est indisponible. Saisissez le répertoire de l’application manuellement (. pour la racine du dépôt) et choisissez une méthode de build.",
     "frameworkChoiceRequired": "Sélectionnez un preset de framework avant de continuer.",
     "productionStartRequired": "Saisissez la commande de démarrage de production pour cet adaptateur serveur.",
+    "invalidBuildConfig": "Vérifiez les commandes, le chemin du healthcheck et les ports avant de continuer.",
     "presetNames": {
       "dockerfile": "Dockerfile",
       "node": "Node.js",
@@ -624,6 +625,7 @@
     "toggleFullscreenF": "Plein écran (F)",
     "phpSupport": "Support PHP Nixpacks",
     "phpSupportBody": "Les versions PHP prises en charge sont {{versions}}. Pour PHP 7.4 ou antérieur, passez à un Dockerfile ou déployez une image personnalisée.",
+    "frameworkDetectionAtCreation": "Framework détecté à la création",
     "autoDetect": "Détection auto",
     "buildMethodHint": "auto · dockerfile · nixpacks · static",
     "dockerfilePath": "Chemin du Dockerfile",
@@ -642,7 +644,8 @@
     "couldNotSave": "Enregistrement impossible",
     "swarm": "Swarm",
     "dockerLegacy": "Docker historique",
-    "saveFailed": "Enregistrement échoué"
+    "saveFailed": "Enregistrement échoué",
+    "invalidSettings": "Vérifiez les commandes, le chemin du healthcheck et les ports avant l'enregistrement."
   },
   "monitoring": {
     "title": "Supervision des ressources",

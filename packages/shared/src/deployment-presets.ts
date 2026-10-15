@@ -7,6 +7,46 @@ import type {
   StackClassification,
 } from "./stack-classifier"
 
+const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u
+
+/**
+ * Commands are eventually passed to a shell in a build workspace. Newlines
+ * and NUL bytes cannot be represented safely in that contract. Empty input is
+ * the explicit "inherit the preset" value and is persisted as null.
+ */
+export const CommandSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.length === 0 ? null : value),
+  z
+    .string()
+    .max(2000)
+    .refine((value) => !/[\u0000\r\n]/.test(value), {
+      message: "must not contain NUL, carriage return, or newline characters",
+    })
+    .nullable()
+)
+
+export const PortSchema = z.number().int().min(1).max(65_535)
+export const RuntimePortSchema = PortSchema
+export const HealthcheckPortSchema = PortSchema
+
+export const HealthcheckPathSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .startsWith("/")
+  .refine((value) => !CONTROL_CHARACTER_PATTERN.test(value), {
+    message: "must not contain control characters",
+  })
+
+export const HealthcheckIntervalSchema = z.number().int().min(1).max(86_400)
+export const HealthcheckTimeoutSchema = z.number().int().min(1).max(86_400)
+export const HealthcheckRetriesSchema = z.number().int().min(1).max(100)
+export const HealthcheckStartPeriodSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(86_400)
+
 export const FRAMEWORK_PRESET_IDS = [
   "dockerfile",
   "compose",

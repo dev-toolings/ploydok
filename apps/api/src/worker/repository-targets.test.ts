@@ -62,6 +62,26 @@ it("stops before building when several applications require a choice", async () 
   ).rejects.toThrow("services/a, services/b")
 })
 
+it("continues legacy root selection with a warning for a previously successful app", async () => {
+  const workspacePath = await repository({
+    "services/a/go.mod": "module a",
+    "services/b/Cargo.toml": "[package]",
+  })
+  const warnings: string[] = []
+
+  await expect(
+    resolveRepositoryRoot({
+      workspacePath,
+      rootDir: null,
+      hasExplicitConfig: false,
+      allowLegacyAmbiguous: true,
+      onWarning: (warning) => warnings.push(warning),
+    })
+  ).resolves.toBeNull()
+  expect(warnings).toHaveLength(1)
+  expect(warnings[0]).toContain("previous successful build")
+})
+
 it("preserves explicit roots and commands without guessing", async () => {
   expect(
     await resolveRepositoryRoot({

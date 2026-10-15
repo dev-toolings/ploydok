@@ -34,6 +34,7 @@ import * as runnerMod from "../runner"
 import * as eventBusMod from "../event-bus"
 import * as queueClaimMod from "../queue-claim"
 import * as queueAuditMod from "../queue-audit"
+import { withAppDeployLease } from "../app-deploy-lock"
 import { imageRepoForApp } from "../../services/runtime-containers"
 import * as gitlabConnectionMod from "../../gitlab/connection"
 import { FatalDeployError } from "../errors"
@@ -437,8 +438,11 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
       project_id: projectId,
       name: "log-app",
       slug: appId,
+      git_provider: "github",
+      github_installation_id: "42",
       repo_full_name: "owner/repo",
       branch: "main",
+      runtime_mode: "docker",
     })
     await db.insert(builds).values({
       id: buildId,
@@ -498,7 +502,7 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
       commitMessage: "chore: log archiving test",
     })
 
-    await handleDeploy(db, job)
+    await withAppDeployLease(db, appId, buildId, () => handleDeploy(db, job))
 
     // Assert the log file was created at the expected path.
     const expectedLogDir = path.join(env.PLOYDOK_BUILD_DIR, appId)
@@ -553,8 +557,11 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
       project_id: projectId,
       name: "fail-app",
       slug: appId,
+      git_provider: "github",
+      github_installation_id: "42",
       repo_full_name: "owner/repo",
       branch: "main",
+      runtime_mode: "docker",
     })
     await db.insert(builds).values({
       id: buildId,
@@ -576,9 +583,9 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
     const { handleDeploy } = await import("./deploy")
     const job = makeJob({ buildId })
 
-    await expect(handleDeploy(db, job)).rejects.toThrow(
-      "git clone failed: timeout"
-    )
+    await expect(
+      withAppDeployLease(db, appId, buildId, () => handleDeploy(db, job))
+    ).rejects.toThrow("git clone failed: timeout")
 
     // Log file must have been created (even on failure).
     const expectedLogDir = path.join(env.PLOYDOK_BUILD_DIR, appId)
@@ -647,8 +654,11 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
       project_id: projectId,
       name: "bg-app",
       slug: bgAppId,
+      git_provider: "github",
+      github_installation_id: "42",
       repo_full_name: "owner/repo",
       branch: "main",
+      runtime_mode: "docker",
     })
     await db.insert(builds).values({
       id: bgBuildId,
@@ -691,7 +701,7 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     )
   })
 
-  it("calls runBlueGreen after push, updates build containerId, publishes Container live event", async () => {
+  it("calls runBlueGreen after push, updates build containerId, publishes Runtime live event", async () => {
     // Mock runBlueGreen to return a fake container.
     const runBlueGreenSpy = spyOn(runnerMod, "runBlueGreen").mockResolvedValue({
       containerId: "cont-123",
@@ -712,7 +722,9 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
       commitMessage: "feat: test deploy",
     })
 
-    await handleDeploy(db, job)
+    await withAppDeployLease(db, bgAppId, bgBuildId, () =>
+      handleDeploy(db, job)
+    )
 
     // runBlueGreen must have been called.
     expect(runBlueGreenSpy).toHaveBeenCalledTimes(1)
@@ -733,12 +745,12 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     // commitMessage must be persisted from the job payload.
     expect(build?.commit_message).toBe("feat: test deploy")
 
-    // event deploy.status_change with "Container live" must have been published.
+    // event deploy.status_change with "Runtime live" must have been published.
     const liveEvent = publishedEvents.find(
       (e) =>
         (e.event as { type?: string; message?: string }).type ===
           "deploy.status_change" &&
-        (e.event as { message?: string }).message === "Container live"
+        (e.event as { message?: string }).message === "Runtime live"
     )
     expect(liveEvent).toBeDefined()
     expect(
@@ -764,9 +776,11 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     const { handleDeploy } = await import("./deploy")
     const job = makeJob({ buildId: bgBuildId })
 
-    await expect(handleDeploy(db, job)).rejects.toThrow(
-      "healthcheck failed after 6 retries"
-    )
+    await expect(
+      withAppDeployLease(db, bgAppId, bgBuildId, () =>
+        handleDeploy(db, job)
+      )
+    ).rejects.toThrow("healthcheck failed after 6 retries")
 
     // Build record must have status failed.
     const buildRows = await listBuildsByApp(db, bgAppId)
@@ -789,12 +803,12 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     )
     expect(failedEvent).toBeDefined()
 
-    // deploy.status_change "Container live" must NOT have been published.
+    // deploy.status_change "Runtime live" must NOT have been published.
     const liveEvent = publishedEvents.find(
       (e) =>
         (e.event as { type?: string; message?: string }).type ===
           "deploy.status_change" &&
-        (e.event as { message?: string }).message === "Container live"
+        (e.event as { message?: string }).message === "Runtime live"
     )
     expect(liveEvent).toBeUndefined()
   })

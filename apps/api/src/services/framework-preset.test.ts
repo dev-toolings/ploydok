@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "bun:test"
-import { frameworkPresetCreateFields } from "./framework-preset"
+import {
+  frameworkPresetCreateFields,
+  frameworkPresetPatchFields,
+  resolveFrameworkPresetConfig,
+} from "./framework-preset"
 
 describe("frameworkPresetCreateFields", () => {
   it("materializes registry defaults for a selected preset", () => {
@@ -24,7 +28,7 @@ describe("frameworkPresetCreateFields", () => {
     })
   })
 
-  it("preserves explicit commands, empty strings, ports, and healthcheck values", () => {
+  it("preserves explicit commands, normalizes blank commands, and keeps ports and healthcheck values", () => {
     expect(
       frameworkPresetCreateFields({
         frameworkPreset: "next",
@@ -45,7 +49,7 @@ describe("frameworkPresetCreateFields", () => {
       })
     ).toEqual({
       framework_preset: "next",
-      install_command: "",
+      install_command: null,
       build_command: "bun run build",
       start_command: "./server --port $PORT",
       build_method: "nixpacks",
@@ -57,6 +61,16 @@ describe("frameworkPresetCreateFields", () => {
       healthcheck_timeout_s: 7,
       healthcheck_retries: 2,
       healthcheck_start_period_s: 45,
+    })
+
+    expect(
+      frameworkPresetCreateFields({
+        frameworkPreset: "next",
+        runtimePort: 8088,
+      })
+    ).toMatchObject({
+      runtime_port: 8088,
+      healthcheck_port: 8088,
     })
   })
 
@@ -75,5 +89,97 @@ describe("frameworkPresetCreateFields", () => {
       healthcheck_path: "/health",
       healthcheck_port: 8080,
     })
+  })
+
+  it("switches presets by resnapshotting inherited fields while preserving custom values", () => {
+    const current = frameworkPresetCreateFields({ frameworkPreset: "next" })
+    const patch = frameworkPresetPatchFields(
+      {
+        ...current,
+        build_command: "custom build",
+        runtime_port: 8088,
+      },
+      {
+        frameworkPreset: "rails",
+        // A blank command is persisted as null. Runtime resolution handles
+        // inheritance from the selected preset later.
+        startCommand: "",
+        healthcheck: { port: null },
+      }
+    )
+
+    expect(patch).toMatchObject({
+      framework_preset: "rails",
+      build_command: "custom build",
+      runtime_port: 8088,
+      start_command: null,
+      healthcheck_port: null,
+      static_output_dir: "public",
+      build_method: "nixpacks",
+    })
+  })
+
+  it("resolves blank and null legacy values from the selected preset", () => {
+    expect(
+      resolveFrameworkPresetConfig({
+        framework_preset: "next",
+        install_command: "",
+        build_command: null,
+        start_command: " ",
+        build_method: null,
+        static_output_dir: null,
+        runtime_port: null,
+        healthcheck_path: null,
+        healthcheck_port: null,
+        healthcheck_interval_s: null,
+        healthcheck_timeout_s: null,
+        healthcheck_retries: null,
+        healthcheck_start_period_s: null,
+      })
+    ).toMatchObject({
+      install_command: null,
+      build_command: "./node_modules/.bin/next build",
+      start_command: "./node_modules/.bin/next start -H 0.0.0.0 -p $PORT",
+      build_method: "nixpacks",
+      static_output_dir: ".next",
+      runtime_port: 3000,
+      healthcheck_port: 3000,
+      healthcheck_start_period_s: 30,
+    })
+  })
+
+  it("persists an explicit preset clear and null command clears", () => {
+    const current = frameworkPresetCreateFields({ frameworkPreset: "next" })
+    expect(
+      frameworkPresetPatchFields(current, {
+        frameworkPreset: null,
+        installCommand: null,
+        buildCommand: null,
+        startCommand: null,
+      })
+    ).toMatchObject({
+      framework_preset: null,
+      install_command: null,
+      build_command: null,
+      start_command: null,
+      build_method: "auto",
+      static_output_dir: "dist",
+      runtime_port: null,
+    })
+  })
+
+  it("resolves an auto build method from the selected preset", () => {
+    const current = frameworkPresetCreateFields({ frameworkPreset: "next" })
+    expect(
+      resolveFrameworkPresetConfig({ ...current, build_method: "auto" })
+        .build_method
+    ).toBe("nixpacks")
+    expect(
+      resolveFrameworkPresetConfig({
+        ...current,
+        runtime_port: 8088,
+        healthcheck_port: null,
+      }).healthcheck_port
+    ).toBe(8088)
   })
 })

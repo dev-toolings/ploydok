@@ -515,10 +515,21 @@ export function startWorker(
       "preview.deploy",
       async (job) => {
         logger.info({ jobId: job.id }, "preview.deploy job started")
-        const payload = await loadPreviewIntentPayload(db, job.data, "deploy")
-        if (payload) await handlePreviewDeploy(db, payload)
-        await completePreviewIntent(db, job.data)
-        logger.info({ jobId: job.id }, "preview.deploy done")
+        try {
+          const payload = await loadPreviewIntentPayload(db, job.data, "deploy")
+          if (payload) await handlePreviewDeploy(db, payload)
+          await completePreviewIntent(db, job.data)
+          logger.info({ jobId: job.id }, "preview.deploy done")
+        } catch (err) {
+          if (err instanceof FatalDeployError) {
+            logger.error(
+              { jobId: job.id, err, kind: "fatal" },
+              "preview.deploy failed kind=fatal: skipping retries"
+            )
+            throw new UnrecoverableError(err.message)
+          }
+          throw err
+        }
       },
       { connection, concurrency: 1 }
     ),

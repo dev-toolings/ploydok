@@ -215,6 +215,7 @@
     "repositoryDetectionFailed": "Repository detection is unavailable. Enter the application directory manually (. for the repository root) and select a build method.",
     "frameworkChoiceRequired": "Select a framework preset before continuing.",
     "productionStartRequired": "Enter the production start command for this server adapter.",
+    "invalidBuildConfig": "Check the commands, healthcheck path, and ports before continuing.",
     "presetNames": {
       "dockerfile": "Dockerfile",
       "node": "Node.js",
@@ -624,6 +625,7 @@
     "toggleFullscreenF": "Toggle fullscreen (F)",
     "phpSupport": "Nixpacks PHP support",
     "phpSupportBody": "Supported PHP versions are {{versions}}. For PHP 7.4 or older, switch to Dockerfile or deploy a custom image.",
+    "frameworkDetectionAtCreation": "Framework detected at creation",
     "autoDetect": "Auto-detect",
     "buildMethodHint": "auto · dockerfile · nixpacks · static",
     "dockerfilePath": "Dockerfile path",
@@ -642,7 +644,8 @@
     "couldNotSave": "Could not save",
     "swarm": "Swarm",
     "dockerLegacy": "Docker legacy",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "invalidSettings": "Check the commands, healthcheck path, and ports before saving."
   },
   "monitoring": {
     "title": "Resource monitoring",

@@ -586,7 +586,7 @@ export function useUpdateAppSettings(appId: string) {
         const healthcheck: Record<string, unknown> = {}
         if (healthcheckPath !== undefined) healthcheck.path = healthcheckPath
         if (healthcheckPort !== undefined)
-          healthcheck.port = healthcheckPort ?? undefined
+          healthcheck.port = healthcheckPort
         payload.healthcheck = healthcheck
       }
       const { app, restartTriggered } = await apiFetch<{

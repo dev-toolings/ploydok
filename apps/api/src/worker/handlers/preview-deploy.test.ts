@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, mock } from "bun:test"
+import { mkdir, rm, writeFile } from "node:fs/promises"
+import { FatalDeployError } from "../errors"
 
 const queryMocks = {
   getPreviewDeployment: mock(async () => ({
@@ -11,6 +13,7 @@ const queryMocks = {
     container_id: "old-preview-container",
     status: "running",
   })),
+  getLastSucceededBuild: mock(async () => null),
   getGitHubAppConfig: mock(async () => null),
   updatePreviewDeployment: mock(async () => {}),
   updatePreviewDeploymentStatus: mock(async () => {}),
@@ -29,6 +32,10 @@ const detectMocks = {
     method: "docker",
     dockerfilePath: "Dockerfile",
   })),
+}
+
+const repositoryTargetMocks = {
+  resolveRepositoryRoot: mock(async () => null),
 }
 
 const buildkitMocks = {
@@ -74,6 +81,7 @@ const secretsMocks = {
 mock.module("@ploydok/db/queries", () => queryMocks)
 mock.module("../git", () => gitMocks)
 mock.module("../detect", () => detectMocks)
+mock.module("../repository-targets", () => repositoryTargetMocks)
 mock.module("../buildkit", () => buildkitMocks)
 mock.module("../../debug/singletons", () => singletonMocks)
 mock.module("../../secrets/resolver", () => secretsMocks)
@@ -167,6 +175,7 @@ function makeDb(appOverrides: Record<string, unknown> = {}) {
 describe("handlePreviewDeploy", () => {
   beforeEach(() => {
     queryMocks.getPreviewDeployment.mockClear()
+    queryMocks.getLastSucceededBuild.mockClear()
     queryMocks.updatePreviewDeployment.mockClear()
     queryMocks.updatePreviewDeployment.mockImplementation(async () => {})
     queryMocks.updatePreviewDeploymentStatus.mockClear()
@@ -242,6 +251,53 @@ describe("handlePreviewDeploy", () => {
     }
   })
 
+  it("passes the previous successful build history into legacy ambiguous detection", async () => {
+    queryMocks.getLastSucceededBuild.mockImplementationOnce(async () => ({
+      id: "previous-build",
+    }) as never)
+
+    const checkoutSpawn = mock(() => ({
+      stdout: new ReadableStream(),
+      stderr: new ReadableStream(),
+      exited: Promise.resolve(0),
+    }))
+    const revParseSpawn = mock(() => ({
+      stdout: new Blob(["abcdef1234567890abcdef1234567890abcdef12"]).stream(),
+      stderr: new ReadableStream(),
+      exited: Promise.resolve(0),
+    }))
+    const originalSpawn = Bun.spawn
+    Bun.spawn = ((args: string[]) => {
+      if (args.includes("rev-parse")) return revParseSpawn()
+      return checkoutSpawn()
+    }) as typeof Bun.spawn
+
+    try {
+      const { handlePreviewDeploy } = await import("./preview-deploy")
+      await handlePreviewDeploy(
+        makeDb({ build_method: "auto", framework_preset: null }) as never,
+        {
+          appId: "app-1",
+          prNumber: 42,
+          headSha: "abcdef1234567890abcdef1234567890abcdef12",
+        }
+      )
+
+      expect(queryMocks.getLastSucceededBuild).toHaveBeenCalledWith(
+        expect.anything(),
+        "app-1"
+      )
+      expect(detectMocks.detectBuildMethod).toHaveBeenCalledWith(
+        expect.objectContaining({
+          frameworkPreset: null,
+          allowLegacyAmbiguous: true,
+        })
+      )
+    } finally {
+      Bun.spawn = originalSpawn
+    }
+  })
+
   it("rolls back the caddy route and removes the new container if DB persistence fails after switch", async () => {
     queryMocks.updatePreviewDeployment.mockImplementationOnce(async () => {})
     queryMocks.updatePreviewDeployment.mockImplementationOnce(async () => {
@@ -286,6 +342,80 @@ describe("handlePreviewDeploy", () => {
       )
     } finally {
       Bun.spawn = originalSpawn
+    }
+  })
+
+  it("rejects an invalid stored framework preset as fatal before building", async () => {
+    const originalSpawn = Bun.spawn
+    Bun.spawn = ((args: string[]) => ({
+      stdout: args.includes("rev-parse")
+        ? new Blob(["abcdef1234567890abcdef1234567890abcdef12"]).stream()
+        : new ReadableStream(),
+      stderr: new ReadableStream(),
+      exited: Promise.resolve(0),
+    })) as typeof Bun.spawn
+
+    try {
+      const { handlePreviewDeploy } = await import("./preview-deploy")
+      await expect(
+        handlePreviewDeploy(
+          makeDb({ framework_preset: "not-a-preset" }) as never,
+          {
+            appId: "app-1",
+            prNumber: 42,
+            headSha: "abcdef1234567890abcdef1234567890abcdef12",
+          }
+        )
+      ).rejects.toBeInstanceOf(FatalDeployError)
+      expect(buildkitMocks.buildImage).not.toHaveBeenCalled()
+      expect(agentInstance.containerCreate).not.toHaveBeenCalled()
+    } finally {
+      Bun.spawn = originalSpawn
+    }
+  })
+
+  it("rejects ambiguous framework evidence as fatal before a preview build", async () => {
+    const workspacePath = "/tmp/ploydok-preview-ambiguous"
+    await rm(workspacePath, { recursive: true, force: true })
+    await mkdir(workspacePath, { recursive: true })
+    await writeFile(workspacePath + "/package.json", '{"scripts":{"start":"node server.js"}}')
+    await writeFile(workspacePath + "/next.config.mjs", "export default {}\n")
+    await writeFile(workspacePath + "/nuxt.config.ts", "export default {}\n")
+    gitMocks.cloneRepo.mockImplementationOnce(async () => ({
+      workspacePath,
+      headSha: "oldsha000000000000000000000000000000000000",
+    }))
+    detectMocks.detectBuildMethod.mockImplementationOnce(async () => {
+      throw new FatalDeployError(
+        "Several framework candidates were detected; select a framework preset before deploying"
+      )
+    })
+    const originalSpawn = Bun.spawn
+    Bun.spawn = ((args: string[]) => ({
+      stdout: args.includes("rev-parse")
+        ? new Blob(["abcdef1234567890abcdef1234567890abcdef12"]).stream()
+        : new ReadableStream(),
+      stderr: new ReadableStream(),
+      exited: Promise.resolve(0),
+    })) as typeof Bun.spawn
+
+    try {
+      const { handlePreviewDeploy } = await import("./preview-deploy")
+      await expect(
+        handlePreviewDeploy(
+          makeDb({ build_method: "nixpacks", framework_preset: null }) as never,
+          {
+            appId: "app-1",
+            prNumber: 42,
+            headSha: "abcdef1234567890abcdef1234567890abcdef12",
+          }
+        )
+      ).rejects.toBeInstanceOf(FatalDeployError)
+      expect(buildkitMocks.buildImage).not.toHaveBeenCalled()
+      expect(agentInstance.containerCreate).not.toHaveBeenCalled()
+    } finally {
+      Bun.spawn = originalSpawn
+      await rm(workspacePath, { recursive: true, force: true })
     }
   })
 })

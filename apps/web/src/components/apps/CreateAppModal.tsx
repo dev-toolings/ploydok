@@ -32,7 +32,14 @@ import {
 } from "@workspace/ui/components/select"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
-import { PLANS, defaultRepositoryTarget } from "@ploydok/shared"
+import {
+  CommandSchema,
+  HealthcheckPathSchema,
+  HealthcheckPortSchema,
+  PLANS,
+  RuntimePortSchema,
+  defaultRepositoryTarget,
+} from "@ploydok/shared"
 import i18n from "../../lib/i18n"
 import {
   Dialog,
@@ -75,6 +82,7 @@ import {
 } from "../../lib/build-presets"
 import { useRegistryCredentials } from "../../lib/registry-credentials"
 import { usePendingAction } from "../../lib/hooks/use-pending-action"
+import { blankToNull } from "../../lib/apps/transforms"
 import { RepoSelector } from "./RepoSelector"
 import { GitLabRepoSelector } from "./GitLabRepoSelector"
 import { PlanSelector } from "./PlanSelector"
@@ -249,25 +257,46 @@ function applyBuildPreset(
   form: FormState,
   preset: BuildPreset,
   touched: boolean,
-  explicit = touched
+  explicit = touched,
+  resetBuildMethod = false
 ): FormState {
+  const buildMethodTouched = resetBuildMethod
+    ? false
+    : touched || form.buildMethodTouched
   return {
     ...form,
-    buildMethod: touched ? preset.defaults.buildMethod : form.buildMethod,
-    buildMethodTouched: touched || form.buildMethodTouched,
+    buildMethod:
+      resetBuildMethod || !form.buildMethodTouched
+        ? preset.defaults.buildMethod
+        : form.buildMethod,
+    buildMethodTouched,
     presetId: preset.id,
     presetTouched: touched,
     presetExplicit: explicit,
-    buildFieldTouched: {},
-    installCommand: preset.defaults.installCommand ?? "",
-    buildCommand: preset.defaults.buildCommand ?? "",
-    startCommand: preset.defaults.startCommand ?? "",
-    staticOutputDir: preset.defaults.outputDirectory ?? "dist",
-    runtimePort:
-      preset.defaults.port === null ? "" : String(preset.defaults.port),
-    healthcheckPath: preset.defaults.healthcheck.path,
-    healthcheckPort:
-      preset.defaults.healthcheck.port === null && preset.defaults.port === null
+    installCommand: form.buildFieldTouched.installCommand
+      ? form.installCommand
+      : (preset.defaults.installCommand ?? ""),
+    buildCommand: form.buildFieldTouched.buildCommand
+      ? form.buildCommand
+      : (preset.defaults.buildCommand ?? ""),
+    startCommand: form.buildFieldTouched.startCommand
+      ? form.startCommand
+      : (preset.defaults.startCommand ?? ""),
+    staticOutputDir: form.buildFieldTouched.staticOutputDir
+      ? form.staticOutputDir
+      : (preset.defaults.outputDirectory ?? "dist"),
+    runtimePort: form.buildFieldTouched.runtimePort
+      ? form.runtimePort
+      : preset.defaults.port === null
+        ? ""
+        : String(preset.defaults.port),
+    healthcheckPath: form.buildFieldTouched.healthcheckPath
+      ? form.healthcheckPath
+      : preset.defaults.healthcheck.path,
+    healthcheckPort: form.buildFieldTouched.healthcheckPort
+      ? form.healthcheckPort
+      : preset.defaults.healthcheck.port === null &&
+          preset.defaults.port === null
         ? ""
         : String(preset.defaults.healthcheck.port ?? preset.defaults.port),
   }
@@ -630,9 +659,15 @@ export function CreateAppModal({
       const next = applyBuildPreset(prev, recommendedPreset, false, false)
       return {
         ...next,
-        installCommand: "",
-        buildCommand: "",
-        startCommand: classification?.suggestedStartCommand ?? "",
+        installCommand: prev.buildFieldTouched.installCommand
+          ? prev.installCommand
+          : next.installCommand,
+        buildCommand: prev.buildFieldTouched.buildCommand
+          ? prev.buildCommand
+          : next.buildCommand,
+        startCommand: prev.buildFieldTouched.startCommand
+          ? prev.startCommand
+          : (classification?.suggestedStartCommand ?? next.startCommand),
       }
     })
   }, [recommendedPreset, classification?.suggestedStartCommand])
@@ -713,7 +748,9 @@ export function CreateAppModal({
 
   const resetPreset = (): void => {
     if (!recommendedPreset) return
-    setForm((prev) => applyBuildPreset(prev, recommendedPreset, false, false))
+    setForm((prev) =>
+      applyBuildPreset(prev, recommendedPreset, false, false, true)
+    )
   }
 
   const handleSourceChange = (source: SourceKind): void => {
@@ -769,6 +806,7 @@ export function CreateAppModal({
     if (currentStep === "env")
       return validateInitialEnvVars(form.initialEnvVars)
     if (currentStep === "build") {
+      if (!isBuildConfigValid(form)) return false
       if (
         classification?.requiresStartCommand &&
         !form.presetExplicit &&
@@ -850,7 +888,13 @@ export function CreateAppModal({
       }
       onClose()
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : t("create.failed"))
+      setSubmitError(
+        err instanceof Error && err.message === INVALID_BUILD_CONFIG_ERROR
+          ? t("create.invalidBuildConfig")
+          : err instanceof Error
+            ? err.message
+            : t("create.failed")
+      )
       throw err
     } finally {
       submitInFlightRef.current = false
@@ -2268,6 +2312,11 @@ function BuildStep({
           {t("create.repositoryDetectionFailed")}
         </p>
       )}
+      {!isBuildConfigValid(form) && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("create.invalidBuildConfig")}
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <ConfigField
@@ -2329,6 +2378,7 @@ function BuildStep({
               label={t("create.installCommand")}
               placeholder="npm install"
               value={form.installCommand}
+              maxLength={2000}
               onChange={(v) => setField("installCommand", v)}
             />
             <ConfigField
@@ -2336,6 +2386,7 @@ function BuildStep({
               label={t("create.buildCommand")}
               placeholder="npm run build"
               value={form.buildCommand}
+              maxLength={2000}
               onChange={(v) => setField("buildCommand", v)}
             />
             {!isStaticBuild && (
@@ -2344,6 +2395,7 @@ function BuildStep({
                 label={t("create.startCommand")}
                 placeholder="node dist/index.js"
                 value={form.startCommand}
+                maxLength={2000}
                 onChange={(v) => setField("startCommand", v)}
               />
             )}
@@ -3665,6 +3717,7 @@ interface ConfigFieldProps {
   label: string
   placeholder: string
   value: string
+  maxLength?: number
   onChange: (v: string) => void
 }
 
@@ -3673,6 +3726,7 @@ function ConfigField({
   label,
   placeholder,
   value,
+  maxLength,
   onChange,
 }: ConfigFieldProps): React.JSX.Element {
   return (
@@ -3684,6 +3738,7 @@ function ConfigField({
         id={id}
         type="text"
         placeholder={placeholder}
+        maxLength={maxLength}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="min-h-11 font-mono text-base"
@@ -3709,6 +3764,74 @@ function DockerIcon({ className }: { className?: string }): React.JSX.Element {
 // ---------------------------------------------------------------------------
 // Build POST /apps body from form state
 // ---------------------------------------------------------------------------
+
+const COMMAND_FIELD_KEYS: ReadonlyArray<BuildConfigField> = [
+  "installCommand",
+  "buildCommand",
+  "startCommand",
+]
+const INVALID_BUILD_CONFIG_ERROR = "INVALID_BUILD_CONFIG"
+
+function parseCommandOverride(value: string): string | null {
+  const parsed = CommandSchema.safeParse(blankToNull(value))
+  if (!parsed.success) {
+    throw new Error(INVALID_BUILD_CONFIG_ERROR)
+  }
+  return parsed.data
+}
+
+function parsePortOverride(
+  value: string,
+  schema: typeof RuntimePortSchema | typeof HealthcheckPortSchema
+): number | null {
+  const normalized = blankToNull(value)
+  if (normalized === null || normalized === undefined) return null
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(INVALID_BUILD_CONFIG_ERROR)
+  }
+  const parsed = Number(normalized)
+  const result = schema.safeParse(parsed)
+  if (!result.success) {
+    throw new Error(INVALID_BUILD_CONFIG_ERROR)
+  }
+  return result.data
+}
+
+function isBuildConfigValid(form: FormState): boolean {
+  const commandValues = COMMAND_FIELD_KEYS.map((key) => form[key])
+  if (
+    commandValues.some(
+      (value) => !CommandSchema.safeParse(blankToNull(value)).success
+    )
+  ) {
+    return false
+  }
+
+  const normalizedHealthcheckPath = blankToNull(form.healthcheckPath)
+  if (
+    normalizedHealthcheckPath !== null &&
+    normalizedHealthcheckPath !== undefined &&
+    !HealthcheckPathSchema.safeParse(normalizedHealthcheckPath).success
+  ) {
+    return false
+  }
+
+  for (const [value, schema] of [
+    [form.runtimePort, RuntimePortSchema],
+    [form.healthcheckPort, HealthcheckPortSchema],
+  ] as const) {
+    const normalized = blankToNull(value)
+    if (normalized === null || normalized === undefined) continue
+    if (
+      !/^\d+$/.test(normalized) ||
+      !schema.safeParse(Number(normalized)).success
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
 
 export function buildCreateAppBody(
   form: FormState,
@@ -3750,14 +3873,26 @@ export function buildCreateAppBody(
     body.frameworkPreset = form.presetId || null
     if (form.rootDir) body.rootDir = form.rootDir
     if (form.dockerfilePath) body.dockerfilePath = form.dockerfilePath
-    if (form.presetId || form.buildFieldTouched.installCommand || form.installCommand) {
-      body.installCommand = form.installCommand
+    if (
+      form.presetId ||
+      form.buildFieldTouched.installCommand ||
+      form.installCommand
+    ) {
+      body.installCommand = parseCommandOverride(form.installCommand)
     }
-    if (form.presetId || form.buildFieldTouched.buildCommand || form.buildCommand) {
-      body.buildCommand = form.buildCommand
+    if (
+      form.presetId ||
+      form.buildFieldTouched.buildCommand ||
+      form.buildCommand
+    ) {
+      body.buildCommand = parseCommandOverride(form.buildCommand)
     }
-    if (form.presetId || form.buildFieldTouched.startCommand || form.startCommand) {
-      body.startCommand = form.startCommand
+    if (
+      form.presetId ||
+      form.buildFieldTouched.startCommand ||
+      form.startCommand
+    ) {
+      body.startCommand = parseCommandOverride(form.startCommand)
     }
     if (
       form.buildMethod === "static" ||
@@ -3777,30 +3912,14 @@ export function buildCreateAppBody(
       : undefined
     if (watchPaths && watchPaths.length > 0) body.watchPaths = watchPaths
 
-    const parsedPort =
-      form.healthcheckPort.trim() !== ""
-        ? Number.parseInt(form.healthcheckPort.trim(), 10)
-        : undefined
-    const validPort =
-      parsedPort !== undefined &&
-      Number.isFinite(parsedPort) &&
-      parsedPort >= 1 &&
-      parsedPort <= 65535
-        ? parsedPort
-        : undefined
-
-    const parsedRuntimePort =
-      form.runtimePort.trim() !== ""
-        ? Number.parseInt(form.runtimePort.trim(), 10)
-        : undefined
-    const validRuntimePort =
-      parsedRuntimePort !== undefined &&
-      Number.isFinite(parsedRuntimePort) &&
-      parsedRuntimePort >= 1 &&
-      parsedRuntimePort <= 65535
-        ? parsedRuntimePort
-        : undefined
-
+    const shouldSendRuntimePort = Boolean(
+      form.presetId ||
+      form.buildFieldTouched.runtimePort ||
+      form.runtimePort.trim()
+    )
+    const validRuntimePort = shouldSendRuntimePort
+      ? parsePortOverride(form.runtimePort, RuntimePortSchema)
+      : undefined
     if (validRuntimePort !== undefined) body.runtimePort = validRuntimePort
 
     const selectedPreset = getBuildPresets().find(
@@ -3808,13 +3927,32 @@ export function buildCreateAppBody(
     )
     const healthcheckDefaults = selectedPreset?.defaults.healthcheck
     if (form.buildMethod !== "static") {
+      const normalizedHealthcheckPath = blankToNull(form.healthcheckPath)
+      let healthcheckPath: string | undefined
+      if (normalizedHealthcheckPath !== null) {
+        const parsedHealthcheckPath = HealthcheckPathSchema.safeParse(
+          normalizedHealthcheckPath
+        )
+        if (!parsedHealthcheckPath.success) {
+          throw new Error(INVALID_BUILD_CONFIG_ERROR)
+        }
+        healthcheckPath = parsedHealthcheckPath.data
+      }
+      const shouldSendHealthcheckPort = Boolean(
+        form.presetId ||
+        form.buildFieldTouched.healthcheckPort ||
+        form.healthcheckPort.trim()
+      )
+      const validPort = shouldSendHealthcheckPort
+        ? parsePortOverride(form.healthcheckPort, HealthcheckPortSchema)
+        : undefined
       body.healthcheck = {
-        path: form.healthcheckPath || healthcheckDefaults?.path || "/",
-        port:
-          validPort ??
-          validRuntimePort ??
-          healthcheckDefaults?.port ??
-          undefined,
+        ...(healthcheckPath ? { path: healthcheckPath } : {}),
+        port: shouldSendHealthcheckPort
+          ? validPort
+          : validRuntimePort !== undefined
+            ? validRuntimePort
+            : (healthcheckDefaults?.port ?? undefined),
         intervalS: healthcheckDefaults?.intervalS,
         timeoutS: healthcheckDefaults?.timeoutS,
         retries: healthcheckDefaults?.retries,

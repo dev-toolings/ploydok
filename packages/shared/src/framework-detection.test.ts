@@ -225,4 +225,28 @@ describe("framework preset registry", () => {
       CACHE_STORE: "file",
     })
   })
+
+  it("uses an explicit valid preset to resolve ambiguous evidence centrally", () => {
+    const detected = classifyStack({
+      "package.json": true,
+      "next.config.mjs": true,
+      "nuxt.config.ts": true,
+    })
+    expect(detected.ambiguous).toBe(true)
+
+    const selected = classificationForPreset("next", detected)
+
+    expect(selected).toMatchObject({
+      stack: "next",
+      framework: "Next.js",
+      presetId: "next",
+      recommendedBuild: "nixpacks",
+    })
+    expect(selected.ambiguous).toBeUndefined()
+    expect(selected.evidence).toEqual([
+      "package.json",
+      "next.config.mjs",
+      "nuxt.config.ts",
+    ])
+  })
 })

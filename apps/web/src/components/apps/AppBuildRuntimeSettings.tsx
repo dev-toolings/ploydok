@@ -28,10 +28,16 @@ import {
 } from "@workspace/ui/components/alert"
 import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
-import { NIXPACKS_SUPPORTED_PHP_VERSIONS_LABEL } from "@ploydok/shared"
+import {
+  CommandSchema,
+  HealthcheckPathSchema,
+  HealthcheckPortSchema,
+  NIXPACKS_SUPPORTED_PHP_VERSIONS_LABEL,
+  RuntimePortSchema,
+} from "@ploydok/shared"
 import { useUpdateAppSettings } from "../../lib/apps-mutations"
 import { getBuildPresets } from "../../lib/build-presets"
-import { useStackClassification } from "../../lib/stack-classifier-hook"
+import { blankToNull } from "../../lib/apps/transforms"
 import type { Stack } from "@ploydok/shared"
 import type { AppDetail, AppSettingsPatch } from "../../lib/apps"
 
@@ -80,13 +86,6 @@ interface BuildRuntimePlaceholders {
   healthcheckPort: string
 }
 
-const BUILD_METHOD_OPTIONS: Array<FieldOption> = [
-  { value: "auto", label: "Auto-detect" },
-  { value: "dockerfile", label: "Dockerfile" },
-  { value: "nixpacks", label: "Nixpacks" },
-  { value: "static", label: "Static site" },
-]
-
 const PHP_STACKS = new Set<Stack>(["laravel", "symfony", "php"])
 
 function getBuildRuntimePlaceholders(
@@ -130,23 +129,34 @@ function getBuildRuntimePlaceholders(
 
 function buildFields(
   placeholders: BuildRuntimePlaceholders,
-  isStatic: boolean
+  isStatic: boolean,
+  t: (key: string) => string
 ): Array<FieldDef> {
+  const buildMethodOptions: Array<FieldOption> = [
+    { value: "auto", label: t("create.auto") },
+    { value: "dockerfile", label: t("create.dockerfile") },
+    { value: "nixpacks", label: t("create.nixpacks") },
+    { value: "static", label: t("create.staticSite") },
+  ]
   const base: Array<FieldDef> = [
-    { key: "branch", label: "Branch", placeholder: placeholders.branch },
+    {
+      key: "branch",
+      label: t("create.branch"),
+      placeholder: placeholders.branch,
+    },
     {
       key: "rootDir",
-      label: "Root directory",
+      label: t("create.rootDir"),
       placeholder: placeholders.rootDir,
       mono: true,
     },
     {
       key: "buildMethod",
-      label: "Build method",
+      label: t("create.buildMethod"),
       placeholder: placeholders.buildMethod,
-      hint: "auto · dockerfile · nixpacks · static",
+      hint: t("build.buildMethodHint"),
       mono: true,
-      options: BUILD_METHOD_OPTIONS,
+      options: buildMethodOptions,
     },
   ]
 
@@ -161,19 +171,19 @@ function buildFields(
       },
       {
         key: "installCommand",
-        label: "Install command",
+        label: t("create.installCommand"),
         placeholder: placeholders.installCommand,
         mono: true,
       },
       {
         key: "buildCommand",
-        label: "Build command",
+        label: t("create.buildCommand"),
         placeholder: placeholders.buildCommand,
         mono: true,
       },
       {
         key: "staticOutputDir",
-        label: "Output directory",
+        label: t("create.outputDir"),
         placeholder: placeholders.staticOutputDir,
         mono: true,
       },
@@ -202,25 +212,25 @@ function buildFields(
     },
     {
       key: "installCommand",
-      label: "Install command",
+      label: t("create.installCommand"),
       placeholder: placeholders.installCommand,
       mono: true,
     },
     {
       key: "buildCommand",
-      label: "Build command",
+      label: t("create.buildCommand"),
       placeholder: placeholders.buildCommand,
       mono: true,
     },
     {
       key: "startCommand",
-      label: "Start command",
+      label: t("create.startCommand"),
       placeholder: placeholders.startCommand,
       mono: true,
     },
     {
       key: "healthcheckPath",
-      label: "Healthcheck path",
+      label: t("build.healthcheckPath"),
       placeholder: placeholders.healthcheckPath,
       mono: true,
     },
@@ -234,23 +244,16 @@ export function AppBuildRuntimeSettings({
 }): React.JSX.Element {
   const { t } = useTranslation(["apps", "common"])
   const update = useUpdateAppSettings(app.id)
-  const repoSource = getRepoSource(app.gitProvider)
-  const stackClassification = useStackClassification(
-    repoSource,
-    app.repoFullName,
-    app.branch || undefined,
-    app.rootDir || undefined
-  )
+  const detectedStack = app.frameworkDetection?.stack as Stack | undefined
   const placeholders = React.useMemo(
     () =>
       getBuildRuntimePlaceholders(
-        stackClassification.data?.stack,
+        detectedStack,
         app.buildMethod,
         app.frameworkPreset
       ),
-    [app.buildMethod, app.frameworkPreset, stackClassification.data?.stack]
+    [app.buildMethod, app.frameworkPreset, detectedStack]
   )
-  const detectedStack = stackClassification.data?.stack
   const [editing, setEditing] = React.useState(false)
   const [formError, setFormError] = React.useState<string | null>(null)
   const [formData, setFormData] = React.useState<AppSettingsPatch>(() =>
@@ -259,8 +262,8 @@ export function AppBuildRuntimeSettings({
   const selectedBuildMethod = formData.buildMethod ?? app.buildMethod
   const isStatic = selectedBuildMethod === "static"
   const fields = React.useMemo(
-    () => buildFields(placeholders, isStatic),
-    [isStatic, placeholders]
+    () => buildFields(placeholders, isStatic, t),
+    [isStatic, placeholders, t]
   )
   const showPhpNixpacksSupport =
     Boolean(detectedStack && PHP_STACKS.has(detectedStack)) &&
@@ -284,6 +287,10 @@ export function AppBuildRuntimeSettings({
 
   const handleSave = async (): Promise<void> => {
     setFormError(null)
+    if (!isValidSettingsPatch(formData)) {
+      setFormError(t("build.invalidSettings"))
+      return
+    }
     try {
       await update.mutateAsync(formData)
       setEditing(false)
@@ -322,6 +329,13 @@ export function AppBuildRuntimeSettings({
           </Alert>
         ) : null}
 
+        {app.frameworkDetection ? (
+          <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-3">
+            {t("build.frameworkDetectionAtCreation")}:{" "}
+            {app.frameworkDetection.framework ?? app.frameworkDetection.stack}
+          </p>
+        ) : null}
+
         {fields.map((field) => (
           <SettingsField
             key={field.key}
@@ -331,7 +345,12 @@ export function AppBuildRuntimeSettings({
             onChange={(value) =>
               setFormData((previous) => ({
                 ...previous,
-                [field.key]: value || undefined,
+                [field.key]:
+                  field.key === "installCommand" ||
+                  field.key === "buildCommand" ||
+                  field.key === "startCommand"
+                    ? blankToNull(value)
+                    : value || undefined,
               }))
             }
           />
@@ -495,13 +514,38 @@ function formDataFromApp(app: AppDetail): AppSettingsPatch {
   }
 }
 
-function getRepoSource(
-  gitProvider: string | undefined
-): "github" | "gitlab" | undefined {
-  if (gitProvider === "github" || gitProvider === "gitlab") {
-    return gitProvider
+function isValidSettingsPatch(formData: AppSettingsPatch): boolean {
+  for (const value of [
+    formData.installCommand,
+    formData.buildCommand,
+    formData.startCommand,
+  ]) {
+    if (
+      value !== undefined &&
+      !CommandSchema.safeParse(blankToNull(value)).success
+    ) {
+      return false
+    }
   }
-  return undefined
+
+  const healthcheckPath = blankToNull(formData.healthcheckPath)
+  if (
+    healthcheckPath !== null &&
+    healthcheckPath !== undefined &&
+    !HealthcheckPathSchema.safeParse(healthcheckPath).success
+  ) {
+    return false
+  }
+
+  for (const [value, schema] of [
+    [formData.runtimePort, RuntimePortSchema],
+    [formData.healthcheckPort, HealthcheckPortSchema],
+  ] as const) {
+    if (value === null || value === undefined) continue
+    if (!schema.safeParse(value).success) return false
+  }
+
+  return true
 }
 
 function SettingsField({
@@ -551,6 +595,13 @@ function SettingsField({
           type="text"
           value={value}
           placeholder={field.placeholder}
+          maxLength={
+            field.key === "installCommand" ||
+            field.key === "buildCommand" ||
+            field.key === "startCommand"
+              ? 2000
+              : undefined
+          }
           className={cn(field.mono && "font-mono")}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -608,8 +659,9 @@ function PortField({
       onChange(null)
       return
     }
-    const parsed = Number.parseInt(raw, 10)
-    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 65535) {
+    if (!/^\d+$/.test(raw.trim())) return
+    const parsed = Number(raw)
+    if (RuntimePortSchema.safeParse(parsed).success) {
       onChange(parsed)
     }
   }

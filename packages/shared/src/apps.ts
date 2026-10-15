@@ -3,8 +3,16 @@ import { z } from "zod"
 
 import { GitProviderKindSchema } from "./git-providers"
 import {
+  CommandSchema,
   FrameworkDetectionSchema,
   FrameworkPresetIdSchema,
+  HealthcheckIntervalSchema,
+  HealthcheckPathSchema,
+  HealthcheckPortSchema,
+  HealthcheckRetriesSchema,
+  HealthcheckStartPeriodSchema,
+  HealthcheckTimeoutSchema,
+  RuntimePortSchema,
 } from "./deployment-presets"
 
 // ---------------------------------------------------------------------------
@@ -103,12 +111,12 @@ export type JobType = z.infer<typeof JobTypeSchema>
 // ---------------------------------------------------------------------------
 
 export const HealthcheckConfigSchema = z.object({
-  path: z.string().default("/"),
-  port: z.number().int().optional(),
-  intervalS: z.number().int().default(5),
-  timeoutS: z.number().int().default(3),
-  retries: z.number().int().default(6),
-  startPeriodS: z.number().int().default(0),
+  path: HealthcheckPathSchema.default("/"),
+  port: HealthcheckPortSchema.nullable().optional(),
+  intervalS: HealthcheckIntervalSchema.default(5),
+  timeoutS: HealthcheckTimeoutSchema.default(3),
+  retries: HealthcheckRetriesSchema.default(6),
+  startPeriodS: HealthcheckStartPeriodSchema.default(0),
 })
 export type HealthcheckConfig = z.infer<typeof HealthcheckConfigSchema>
 
@@ -189,16 +197,16 @@ export const AppConfigSchema = z
     dockerfilePath: z.string().optional(),
     nixpacksConfigPath: z.string().optional(),
     nodeVersion: z.string().optional(),
-    installCommand: z.string().optional(),
-    buildCommand: z.string().optional(),
-    startCommand: z.string().optional(),
+    installCommand: CommandSchema.optional(),
+    buildCommand: CommandSchema.optional(),
+    startCommand: CommandSchema.optional(),
     frameworkPreset: FrameworkPresetIdSchema.optional(),
     frameworkDetection: FrameworkDetectionSchema.optional(),
     watchPaths: z.array(z.string()).optional(),
     buildMethod: BuildMethodSchema.optional(),
     staticOutputDir: z.string().optional(),
     staticSpaFallback: z.boolean().optional(),
-    runtimePort: z.number().int().positive().optional(),
+    runtimePort: RuntimePortSchema.nullable().optional(),
     runtime: AppRuntimeSettingsSchema.partial().optional(),
     restartPolicy: RestartPolicySchema.optional(),
     healthcheck: HealthcheckConfigSchema.optional(),

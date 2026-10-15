@@ -23,10 +23,12 @@ import {
 import {
   BuildMethodSchema,
   AppRuntimeSettingsSchema,
+  CommandSchema,
   GitProviderKindSchema,
   HealthcheckConfigSchema,
   ImagePullPolicySchema,
   RestartPolicySchema,
+  RuntimePortSchema,
   ALL_PROBE_KEYS,
   MANIFEST_FILE_PROBE_KEYS,
   classifyStackWithManifests,
@@ -103,7 +105,10 @@ import {
 import { dispatch as notifyDispatch } from "../notify/index"
 import { createRedis } from "@ploydok/db"
 import { ensureDefaultOrganizationForUser } from "../services/organizations"
-import { frameworkPresetCreateFields } from "../services/framework-preset"
+import {
+  frameworkPresetCreateFields,
+  frameworkPresetPatchFields,
+} from "../services/framework-preset"
 import { ensureFrameworkEnvVars } from "../services/framework-env"
 import { encryptSecret } from "../secrets/crypto"
 import { getConnectionString } from "../databases/spawner"
@@ -239,7 +244,7 @@ const RelativeWorkspacePathSchema = z
     }
   )
 
-const StaticOutputDirSchema = RelativeWorkspacePathSchema.default("dist")
+const StaticOutputDirSchema = RelativeWorkspacePathSchema.optional()
 const IdempotencyKeySchema = z
   .string()
   .trim()
@@ -282,15 +287,15 @@ const CreateAppBodyBase = z.object({
   dockerfilePath: RelativeWorkspacePathSchema.optional(),
   nixpacksConfigPath: NixpacksConfigPathSchema.optional(),
   nodeVersion: NodeVersionSchema.optional(),
-  installCommand: z.string().optional(),
-  buildCommand: z.string().optional(),
-  startCommand: z.string().optional(),
+  installCommand: CommandSchema.optional(),
+  buildCommand: CommandSchema.optional(),
+  startCommand: CommandSchema.optional(),
   frameworkPreset: FrameworkPresetIdSchema.nullable().optional(),
   watchPaths: z.array(z.string()).optional(),
   buildMethod: DeployableBuildMethodSchema.optional(),
   staticOutputDir: StaticOutputDirSchema.optional(),
   staticSpaFallback: z.boolean().optional(),
-  runtimePort: z.number().int().positive().optional(),
+  runtimePort: RuntimePortSchema.nullable().optional(),
   runtime: AppRuntimeSettingsSchema.partial().optional(),
   restartPolicy: RestartPolicySchema.optional(),
   healthcheck: HealthcheckConfigSchema.partial().optional(),
@@ -1601,20 +1606,8 @@ export function createAppsRouter(db: Db): Hono {
     if (body.nixpacksConfigPath !== undefined)
       patch.nixpacks_config_path = body.nixpacksConfigPath
     if (body.nodeVersion !== undefined) patch.node_version = body.nodeVersion
-    if (body.installCommand !== undefined)
-      patch.install_command = body.installCommand
-    if (body.buildCommand !== undefined) patch.build_command = body.buildCommand
-    if (body.startCommand !== undefined) patch.start_command = body.startCommand
-    if (body.frameworkPreset !== undefined)
-      patch.framework_preset = body.frameworkPreset
     if (body.watchPaths !== undefined)
       patch.watch_paths = JSON.stringify(body.watchPaths)
-    if (body.buildMethod !== undefined) {
-      patch.build_method =
-        body.buildMethod === "docker" ? "dockerfile" : body.buildMethod
-    }
-    if (body.staticOutputDir !== undefined)
-      patch.static_output_dir = body.staticOutputDir
     if (body.staticSpaFallback !== undefined)
       patch.static_spa_fallback = body.staticSpaFallback
     if (body.runtime?.runtimeMode !== undefined)
@@ -1633,7 +1626,6 @@ export function createAppsRouter(db: Db): Hono {
       patch.failure_action = body.runtime.failureAction
     if (body.runtime?.stopGracePeriodS !== undefined)
       patch.stop_grace_period_s = body.runtime.stopGracePeriodS
-    if (body.runtimePort !== undefined) patch.runtime_port = body.runtimePort
     if (body.restartPolicy !== undefined)
       patch.restart_policy = body.restartPolicy
     if (body.domain !== undefined) patch.domain = body.domain
@@ -1656,17 +1648,7 @@ export function createAppsRouter(db: Db): Hono {
     if ("hooksTimeoutS" in body && body.hooksTimeoutS !== undefined)
       patch.hooks_timeout_s = body.hooksTimeoutS
 
-    if (body.healthcheck !== undefined) {
-      const hc = body.healthcheck
-      if (hc.path !== undefined) patch.healthcheck_path = hc.path
-      if (hc.port !== undefined) patch.healthcheck_port = hc.port
-      if (hc.intervalS !== undefined)
-        patch.healthcheck_interval_s = hc.intervalS
-      if (hc.timeoutS !== undefined) patch.healthcheck_timeout_s = hc.timeoutS
-      if (hc.retries !== undefined) patch.healthcheck_retries = hc.retries
-      if (hc.startPeriodS !== undefined)
-        patch.healthcheck_start_period_s = hc.startPeriodS
-    }
+    Object.assign(patch, frameworkPresetPatchFields(existing, body))
 
     const updated = await updateApp(db, appId, patch)
 
