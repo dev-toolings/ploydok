@@ -10,7 +10,8 @@ use ploydok_agent::validator::{
 use ploydok_proto::agent::{
     BuildCachePruneRequest, ContainerCreateRequest, HealthcheckConfig, ImageBuildRequest,
     ImagePruneRequest, ImagePullRequest, ImagePushRequest, ImageRemoveRequest,
-    NetworkCreateRequest, RegistryGarbageCollectRequest, ResourceLimits, VolumeMount,
+    NetworkCreateRequest, RegistryGarbageCollectRequest, ResourceLimits, SwarmServiceSpec,
+    VolumeMount,
 };
 use tonic::Code;
 
@@ -40,6 +41,19 @@ fn valid_create() -> ContainerCreateRequest {
 
 fn make_validator() -> StrictValidator {
     StrictValidator::new(ValidatorConfig::default())
+}
+
+fn valid_swarm_service() -> SwarmServiceSpec {
+    SwarmServiceSpec {
+        name: "ploydok-app-test".to_string(),
+        image: "alpine:3.20".to_string(),
+        labels: std::collections::HashMap::from([
+            ("ploydok.app_id".to_string(), "app-123".to_string()),
+            ("ploydok.owner_id".to_string(), "owner-456".to_string()),
+        ]),
+        networks: vec!["ploydok-net".to_string()],
+        ..Default::default()
+    }
 }
 
 // ─── Test 1: name sans préfixe ploydok- ──────────────────────────────────────
@@ -72,6 +86,23 @@ fn test_evil_registry_is_denied() {
     assert!(
         err.message().contains("image_registry_allowlist"),
         "message doit mentionner image_registry_allowlist: {}",
+        err.message()
+    );
+}
+
+#[test]
+fn test_invalid_swarm_restart_condition_is_denied() {
+    let v = make_validator();
+    let mut req = valid_swarm_service();
+    req.restart_condition = "always".to_string();
+
+    let err = v
+        .validate_service_create(&req)
+        .expect_err("unknown Swarm restart condition must be rejected");
+    assert_eq!(err.code(), Code::InvalidArgument);
+    assert!(
+        err.message().contains("restart_condition"),
+        "message must mention restart_condition: {}",
         err.message()
     );
 }

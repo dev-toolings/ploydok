@@ -2,22 +2,37 @@
 import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import * as grpc from "@grpc/grpc-js"
-import type { AgentClient } from "@ploydok/agent-proto"
+import {
+  ContainerHealthStatus,
+  type AgentClient,
+} from "@ploydok/agent-proto"
 import {
   composeToContainers,
   type ComposeContainer,
+  type ComposeDependencyCondition,
 } from "../marketplace/compose-to-containers.js"
+
+export const DEFAULT_DEPENDENCY_WAIT_TIMEOUT_MS = 300_000
+const DEFAULT_DEPENDENCY_POLL_MS = 500
+const DEFAULT_AGENT_RPC_TIMEOUT_MS = 30_000
+const DEFAULT_AGENT_PROBE_TIMEOUT_MS = 5_000
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function grpcUnary<Res>(
   fn: (...args: any[]) => grpc.ClientUnaryCall,
-  req: unknown
+  req: unknown,
+  timeoutMs = DEFAULT_AGENT_RPC_TIMEOUT_MS
 ): Promise<Res> {
   return new Promise<Res>((resolve, reject) => {
-    fn(req, (err: grpc.ServiceError | null, res: Res) => {
-      if (err) reject(err)
-      else resolve(res)
-    })
+    fn(
+      req,
+      new grpc.Metadata(),
+      { deadline: new Date(Date.now() + Math.max(1, timeoutMs)) },
+      (err: grpc.ServiceError | null, res: Res) => {
+        if (err) reject(err)
+        else resolve(res)
+      }
+    )
   })
 }
 
@@ -27,8 +42,8 @@ export function swarmAgentFromGrpc(client: AgentClient): ComposeSwarmAgent {
       grpcUnary(client.swarmEnsureSingleNode.bind(client), req),
     serviceCreate: (req) => grpcUnary(client.serviceCreate.bind(client), req),
     serviceRemove: (req) => grpcUnary(client.serviceRemove.bind(client), req),
-    listServiceTasks: (req) =>
-      grpcUnary(client.listServiceTasks.bind(client), req),
+    listServiceTasks: (req, timeoutMs) =>
+      grpcUnary(client.listServiceTasks.bind(client), req, timeoutMs),
   }
 }
 
@@ -51,6 +66,9 @@ export type PlannedSwarmService = {
   mounts: Array<{ hostPath: string; containerPath: string; readOnly: boolean }>
   user?: string
   command: string[]
+  restartPolicy: ComposeContainer["restartPolicy"]
+  dependsOn: string[]
+  dependsOnConditions?: Record<string, ComposeDependencyCondition>
   healthcheck?: ComposeContainer["healthcheck"]
   replicas: number
   runtimePort: number
@@ -147,6 +165,11 @@ export function planComposeSwarmDeploy(input: {
       })),
       ...(container.user !== undefined ? { user: container.user } : {}),
       command: container.command,
+      restartPolicy: container.restartPolicy,
+      dependsOn: container.dependsOn,
+      ...(container.dependsOnConditions
+        ? { dependsOnConditions: container.dependsOnConditions }
+        : {}),
       replicas,
       runtimePort,
     }
@@ -186,9 +209,219 @@ export type ComposeSwarmAgent = {
     spec: Record<string, unknown>
   }) => Promise<{ serviceId?: string }>
   serviceRemove: (req: { serviceName: string }) => Promise<unknown>
-  listServiceTasks?: (req: { serviceName: string }) => Promise<{
-    tasks: Array<{ status: string }>
+  listServiceTasks?: (req: { serviceName: string }, timeoutMs?: number) => Promise<{
+    tasks: Array<{
+      status: string
+      running?: boolean
+      exitCode?: number | undefined
+      healthStatus?: string | undefined
+      state?: string | undefined
+    }>
   }>
+}
+
+export type DockerDependencyAgent = {
+  inspectContainerHealth?: (
+    req: { containerId: string },
+    timeoutMs?: number
+  ) => Promise<{
+    status: number | string
+    containerMissing: boolean
+    running?: boolean | undefined
+    exitCode?: number | undefined
+    state?: string | undefined
+  }>
+}
+
+export class DependencyWaitError extends Error {
+  readonly condition: ComposeDependencyCondition
+  readonly dependency: string
+  readonly timedOut: boolean
+
+  constructor(input: {
+    dependency: string
+    condition: ComposeDependencyCondition
+    message: string
+    timedOut?: boolean
+  }) {
+    super(input.message)
+    this.name = "DependencyWaitError"
+    this.dependency = input.dependency
+    this.condition = input.condition
+    this.timedOut = input.timedOut ?? false
+  }
+}
+
+function conditionSatisfied(
+  condition: ComposeDependencyCondition,
+  status: string
+): boolean {
+  const normalized = status.toLowerCase()
+  const running =
+    normalized.includes("running") ||
+    normalized.includes("up ") ||
+    normalized === "up"
+  if (condition === "service_started") return running && !normalized.includes("exited")
+  if (condition === "service_healthy") {
+    return running && normalized.includes("healthy") && !normalized.includes("unhealthy")
+  }
+  return false
+}
+
+function dockerHealthStatusIs(
+  status: number | string,
+  expected: ContainerHealthStatus
+): boolean {
+  if (status === expected) return true
+  const normalized = String(status).toLowerCase()
+  const name = ContainerHealthStatus[expected].toLowerCase()
+  return normalized === name || normalized === name.replace("container_health_status_", "")
+}
+
+export async function waitForSwarmServiceCondition(
+  agent: Pick<ComposeSwarmAgent, "listServiceTasks">,
+  input: {
+    serviceName: string
+    condition: ComposeDependencyCondition
+    replicas?: number
+    timeoutMs?: number
+    pollMs?: number
+    onPoll?: () => void | Promise<void>
+  }
+): Promise<void> {
+  if (!agent.listServiceTasks) {
+    throw new DependencyWaitError({
+      dependency: input.serviceName,
+      condition: input.condition,
+      message: `Cannot wait for Swarm dependency ${input.serviceName}: the agent does not support task inspection`,
+    })
+  }
+  const timeoutMs = input.timeoutMs ?? DEFAULT_DEPENDENCY_WAIT_TIMEOUT_MS
+  const pollMs = input.pollMs ?? DEFAULT_DEPENDENCY_POLL_MS
+  const deadline = Date.now() + timeoutMs
+  let lastTasks: Array<{ status: string }> = []
+  const requiredReplicas = Math.max(1, input.replicas ?? 1)
+  while (Date.now() < deadline) {
+    await input.onPoll?.()
+    const remaining = Math.max(1, deadline - Date.now())
+    const result = await agent.listServiceTasks(
+      { serviceName: input.serviceName },
+      Math.min(DEFAULT_AGENT_PROBE_TIMEOUT_MS, remaining)
+    )
+    lastTasks = result.tasks
+    await input.onPoll?.()
+    const satisfied = result.tasks.filter((task) => {
+      if (input.condition === "service_completed_successfully") {
+        return task.state === "exited" && task.running === false && task.exitCode === 0
+      }
+      if (input.condition === "service_healthy" && task.healthStatus !== undefined) {
+        return task.running === true && task.healthStatus === "healthy"
+      }
+      if (input.condition === "service_started" && task.running !== undefined) {
+        return task.running === true
+      }
+      return conditionSatisfied(input.condition, task.status)
+    }).length
+    if (
+      satisfied >= requiredReplicas &&
+      (input.condition !== "service_completed_successfully" ||
+        satisfied === result.tasks.length)
+    ) {
+      return
+    }
+    const sleepMs = Math.min(pollMs, Math.max(1, deadline - Date.now()))
+    await new Promise((resolve) => setTimeout(resolve, sleepMs))
+  }
+  throw new DependencyWaitError({
+    dependency: input.serviceName,
+    condition: input.condition,
+    timedOut: true,
+    message:
+      `Timed out after ${timeoutMs}ms waiting for Swarm dependency ` +
+      `${input.serviceName} to satisfy ${input.condition}; ` +
+      `last tasks: ${JSON.stringify(lastTasks)}`,
+  })
+}
+
+export async function waitForDockerContainerCondition(
+  agent: DockerDependencyAgent,
+  input: {
+    containerId: string
+    dependency: string
+    condition: ComposeDependencyCondition
+    timeoutMs?: number
+    pollMs?: number
+    onPoll?: () => void | Promise<void>
+  }
+): Promise<void> {
+  if (!agent.inspectContainerHealth) {
+    throw new DependencyWaitError({
+      dependency: input.dependency,
+      condition: input.condition,
+      message: `Cannot wait for Docker dependency ${input.dependency}: the agent does not support container inspection`,
+    })
+  }
+  const timeoutMs = input.timeoutMs ?? DEFAULT_DEPENDENCY_WAIT_TIMEOUT_MS
+  const pollMs = input.pollMs ?? DEFAULT_DEPENDENCY_POLL_MS
+  const deadline = Date.now() + timeoutMs
+  let lastStatus: unknown = null
+  while (Date.now() < deadline) {
+    await input.onPoll?.()
+    const remaining = Math.max(1, deadline - Date.now())
+    const result = await agent.inspectContainerHealth(
+      { containerId: input.containerId },
+      Math.min(DEFAULT_AGENT_PROBE_TIMEOUT_MS, remaining)
+    )
+    lastStatus = result
+    await input.onPoll?.()
+    if (result.containerMissing) {
+      throw new DependencyWaitError({
+        dependency: input.dependency,
+        condition: input.condition,
+        message: `Docker dependency ${input.dependency} disappeared while waiting for ${input.condition}`,
+      })
+    }
+    if (input.condition === "service_started" && result.running === true) return
+    if (
+      input.condition === "service_healthy" &&
+      result.running === true &&
+      dockerHealthStatusIs(result.status, ContainerHealthStatus.CONTAINER_HEALTH_STATUS_HEALTHY)
+    ) {
+      return
+    }
+    if (
+      input.condition === "service_completed_successfully" &&
+      result.state === "exited" &&
+      result.running === false &&
+      result.exitCode === 0
+    ) {
+      return
+    }
+    if (
+      input.condition === "service_completed_successfully" &&
+      result.state === "exited" &&
+      result.running === false &&
+      result.exitCode !== undefined &&
+      result.exitCode !== 0
+    ) {
+      throw new DependencyWaitError({
+        dependency: input.dependency,
+        condition: input.condition,
+        message: `Docker dependency ${input.dependency} exited with code ${result.exitCode} before satisfying service_completed_successfully`,
+      })
+    }
+    const sleepMs = Math.min(pollMs, Math.max(1, deadline - Date.now()))
+    await new Promise((resolve) => setTimeout(resolve, sleepMs))
+  }
+  throw new DependencyWaitError({
+    dependency: input.dependency,
+    condition: input.condition,
+    timedOut: true,
+    message:
+      `Timed out after ${timeoutMs}ms waiting for Docker dependency ` +
+      `${input.dependency} to satisfy ${input.condition}; ` +
+      `last state: ${JSON.stringify(lastStatus)}`,
+  })
 }
 
 export function plannedServiceToSpec(
@@ -221,6 +454,12 @@ export function plannedServiceToSpec(
     updateOrder: "start-first",
     failureAction: "rollback",
     stopGracePeriodSeconds: 10,
+    restartCondition:
+      service.restartPolicy === "no"
+        ? "none"
+        : service.restartPolicy === "on-failure"
+          ? "on-failure"
+          : "any",
   }
 }
 
@@ -232,6 +471,25 @@ export async function deployPlannedComposeStack(
   const created: string[] = []
   try {
     for (const service of plan.services) {
+      for (const dependency of service.dependsOn) {
+        const condition =
+          service.dependsOnConditions?.[dependency] ?? "service_started"
+        const dependencyService = plan.services.find(
+          (candidate) => candidate.composeName === dependency
+        )
+        if (!dependencyService) {
+          throw new DependencyWaitError({
+            dependency,
+            condition,
+            message: `Swarm dependency ${dependency} is not present in the deployment plan`,
+          })
+        }
+        await waitForSwarmServiceCondition(agent, {
+          serviceName: dependencyService.name,
+          condition,
+          replicas: dependencyService.replicas,
+        })
+      }
       await agent.serviceCreate({ spec: plannedServiceToSpec(service) })
       created.push(service.name)
     }

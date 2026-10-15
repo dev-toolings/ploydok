@@ -351,6 +351,9 @@ message InspectContainerHealthResponse {
   uint32 failing_streak = 2;            // Docker's failing_streak counter.
   string last_probe_output = 3;         // last health log entry, truncated server-side
   bool   container_missing = 4;         // true when inspect returns 404.
+  optional bool   running = 5;          // Docker State.Status == "running".
+  optional int32  exit_code = 6;        // Docker State.ExitCode; -1 when unavailable.
+  optional string state = 7;            // Docker State.Status (created/running/exited/...).
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -700,6 +703,7 @@ message SwarmServiceSpec {
   string update_order = 16;
   string failure_action = 17;
   uint32 stop_grace_period_seconds = 18;
+  string restart_condition = 19;         // "none", "on-failure", or "any".
 }
 
 message ServiceCreateRequest {
@@ -757,6 +761,10 @@ message SwarmTaskSnapshot {
   string status = 7;
   string node_id = 8;
   string error = 9;
+  optional bool running = 10;           // Docker State.Status == "running".
+  optional int32 exit_code = 11;        // Docker State.ExitCode; -1 when unavailable.
+  optional string health_status = 12;   // "healthy", "unhealthy", "starting", or "none".
+  optional string state = 13;           // Docker State.Status.
 }
 
 message ListServiceTasksRequest {

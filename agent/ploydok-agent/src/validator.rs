@@ -985,6 +985,16 @@ impl Validator for StrictValidator {
 
     fn validate_service_create(&self, req: &SwarmServiceSpec) -> ValidatorResult {
         validate_service_name(&req.name)?;
+        if !["", "none", "on-failure", "any"].contains(&req.restart_condition.as_str()) {
+            return Err(deny(
+                tonic::Code::InvalidArgument,
+                "restart_condition",
+                serde_json::json!({
+                    "restart_condition": &req.restart_condition,
+                    "allowed": ["", "none", "on-failure", "any"]
+                }),
+            ));
+        }
         let registry = extract_registry(&req.image);
         if !self.cfg.allowed_registries.iter().any(|r| r == registry) {
             return Err(deny(

@@ -221,12 +221,17 @@ function makeHealthMockAgent(replies: Array<HealthReply>): {
       calls.push(_req)
       const reply = replies[Math.min(i, replies.length - 1)]
       i++
+      const status =
+        reply?.status ?? ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE
+      const containerMissing = reply?.containerMissing ?? false
       cb(null, {
-        status:
-          reply?.status ?? ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE,
+        status,
         failingStreak: reply?.failingStreak ?? 0,
         lastProbeOutput: reply?.lastProbeOutput ?? "",
-        containerMissing: reply?.containerMissing ?? false,
+        containerMissing,
+        running: reply?.running ?? (!containerMissing && status !== ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE),
+        exitCode: reply?.exitCode ?? -1,
+        state: reply?.state ?? (containerMissing ? "" : "running"),
       })
       return {} as ReturnType<
         import("@grpc/grpc-js").Client["makeUnaryRequest"]

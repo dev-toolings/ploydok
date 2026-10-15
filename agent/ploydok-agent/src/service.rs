@@ -337,6 +337,14 @@ fn build_swarm_service_spec(req: &SwarmServiceSpec) -> ServiceSpec {
                 ..Default::default()
             }),
             resources: limits,
+            restart_policy: Some(bollard::models::TaskSpecRestartPolicy {
+                condition: Some(match req.restart_condition.as_str() {
+                    "none" => bollard::models::TaskSpecRestartPolicyConditionEnum::NONE,
+                    "on-failure" => bollard::models::TaskSpecRestartPolicyConditionEnum::ON_FAILURE,
+                    _ => bollard::models::TaskSpecRestartPolicyConditionEnum::ANY,
+                }),
+                ..Default::default()
+            }),
             networks: if networks.is_empty() {
                 None
             } else {
@@ -2535,33 +2543,91 @@ impl Agent for AgentService {
             }))
             .await
             .map_err(|e| bollard_err("list_containers", e))?;
-        let tasks = containers
-            .into_iter()
-            .map(|c| {
-                let labels = c.labels.unwrap_or_default();
-                SwarmTaskSnapshot {
-                    id: labels
-                        .get("com.docker.swarm.task.id")
-                        .cloned()
-                        .unwrap_or_default(),
-                    service_name: req.service_name.clone(),
-                    container_id: c.id.unwrap_or_default(),
-                    slot: labels
-                        .get("com.docker.swarm.task.name")
-                        .and_then(|name| name.split('.').nth(1))
-                        .and_then(|slot| slot.parse::<u32>().ok())
-                        .unwrap_or(0),
-                    image: c.image.unwrap_or_default(),
-                    desired_state: String::new(),
-                    status: c.status.unwrap_or_default(),
-                    node_id: labels
-                        .get("com.docker.swarm.node.id")
-                        .cloned()
-                        .unwrap_or_default(),
-                    error: String::new(),
-                }
-            })
-            .collect();
+        // During a start-first update Docker can briefly retain both the old
+        // and new task containers for one slot. Keep only the newest task so
+        // readiness cannot be satisfied by an obsolete healthy container.
+        let mut latest_by_slot = HashMap::new();
+        for container in containers {
+            let labels = container.labels.clone().unwrap_or_default();
+            let key = labels
+                .get("com.docker.swarm.task.name")
+                .and_then(|name| {
+                    name.rsplit_once('.')
+                        .map(|(slot_name, _)| slot_name.to_string())
+                })
+                .or_else(|| container.id.clone())
+                .unwrap_or_default();
+            let replace = latest_by_slot
+                .get(&key)
+                .map(|current: &bollard::models::ContainerSummary| {
+                    container.created.unwrap_or(i64::MIN)
+                        > current.created.unwrap_or(i64::MIN)
+                })
+                .unwrap_or(true);
+            if replace {
+                latest_by_slot.insert(key, container);
+            }
+        }
+        let tasks = futures::future::join_all(latest_by_slot.into_values().map(|c| async {
+            let container_id = c.id.clone().unwrap_or_default();
+            let state = self
+                .docker
+                .inspect_container(&container_id, None)
+                .await
+                .ok()
+                .and_then(|info| info.state);
+            let running = state.as_ref().and_then(|state| state.status.as_ref())
+                == Some(&bollard::models::ContainerStateStatusEnum::RUNNING);
+            let state_name = state
+                .as_ref()
+                .and_then(|state| state.status.as_ref())
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let exit_code = state
+                .as_ref()
+                .and_then(|state| state.exit_code)
+                .map(|code| code as i32)
+                .unwrap_or(-1);
+            let health_status = state
+                .as_ref()
+                .and_then(|state| state.health.as_ref())
+                .and_then(|health| health.status.as_ref())
+                .map(|status| match status {
+                    bollard::models::HealthStatusEnum::STARTING => "starting",
+                    bollard::models::HealthStatusEnum::HEALTHY => "healthy",
+                    bollard::models::HealthStatusEnum::UNHEALTHY => "unhealthy",
+                    _ => "none",
+                })
+                .unwrap_or("none")
+                .to_string();
+            let labels = c.labels.unwrap_or_default();
+            SwarmTaskSnapshot {
+                id: labels
+                    .get("com.docker.swarm.task.id")
+                    .cloned()
+                    .unwrap_or_default(),
+                service_name: req.service_name.clone(),
+                container_id: c.id.unwrap_or_default(),
+                slot: labels
+                    .get("com.docker.swarm.task.name")
+                    .and_then(|name| name.split('.').nth(1))
+                    .and_then(|slot| slot.parse::<u32>().ok())
+                    .unwrap_or(0),
+                image: c.image.unwrap_or_default(),
+                desired_state: String::new(),
+                status: c.status.unwrap_or_default(),
+                node_id: labels
+                    .get("com.docker.swarm.node.id")
+                    .cloned()
+                    .unwrap_or_default(),
+                error: String::new(),
+                running: Some(running),
+                exit_code: Some(exit_code),
+                health_status: Some(health_status),
+                state: Some(state_name),
+            }
+        }))
+        .await;
         Ok(Response::new(ListServiceTasksResponse { tasks }))
     }
 
@@ -3141,5 +3207,42 @@ mod swarm_topology_tests {
         let error = reject_unsupported_swarm_topology(&swarm_info("active", true, 0))
             .expect_err("unverifiable topology must fail closed");
         assert!(error.message().contains("unverifiable topology"));
+    }
+}
+
+#[cfg(test)]
+mod swarm_restart_policy_tests {
+    use bollard::models::TaskSpecRestartPolicyConditionEnum;
+    use ploydok_proto::agent::SwarmServiceSpec;
+
+    use super::build_swarm_service_spec;
+
+    fn restart_condition(value: &str) -> TaskSpecRestartPolicyConditionEnum {
+        build_swarm_service_spec(&SwarmServiceSpec {
+            name: "ploydok-app-test".to_string(),
+            image: "alpine:3.20".to_string(),
+            restart_condition: value.to_string(),
+            ..Default::default()
+        })
+        .task_template
+        .and_then(|task| task.restart_policy)
+        .and_then(|policy| policy.condition)
+        .expect("Swarm task must carry the requested restart condition")
+    }
+
+    #[test]
+    fn maps_none_for_one_shot_compose_dependencies() {
+        assert_eq!(
+            restart_condition("none"),
+            TaskSpecRestartPolicyConditionEnum::NONE
+        );
+    }
+
+    #[test]
+    fn maps_on_failure_for_retryable_compose_dependencies() {
+        assert_eq!(
+            restart_condition("on-failure"),
+            TaskSpecRestartPolicyConditionEnum::ON_FAILURE
+        );
     }
 }
