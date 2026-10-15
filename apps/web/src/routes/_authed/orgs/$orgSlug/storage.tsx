@@ -2,7 +2,6 @@
 import * as React from "react"
 import { createFileRoute } from "@tanstack/react-router"
 import {
-  RiCloudLine,
   RiDeleteBinLine,
   RiEditLine,
   RiHardDrive3Line,
@@ -21,64 +20,30 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@workspace/ui/components/alert-dialog"
-import { Input } from "@workspace/ui/components/input"
-import { Label } from "@workspace/ui/components/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@workspace/ui/components/select"
 import { Skeleton } from "@workspace/ui/components/skeleton"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../../../components/i18n/dialog"
+import { DestinationFormDialog } from "../../../../components/storage/DestinationFormDialog"
+import { ProviderMark } from "../../../../components/storage/ProviderMark"
 import { ShellPage } from "../../../../components/layout/AppShell"
 import { createPageHead } from "../../../../lib/page-metadata"
 import { useMembers } from "../../../../lib/memberships"
 import {
+  testFailureKey,
   useCreateStorageDestination,
   useDeleteStorageDestination,
   useStorageDestinations,
   useTestStorageDestination,
   useUpdateStorageDestination,
 } from "../../../../lib/storage-destinations"
+import type { DestinationSubmitOptions } from "../../../../components/storage/DestinationFormDialog"
 import type {
   StorageDestination,
   StorageDestinationInput,
-  StorageDestinationKind,
 } from "../../../../lib/storage-destinations"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/storage")({
   head: createPageHead("storageDestinations"),
   component: StorageDestinationsPage,
 })
-
-interface DestinationFormState {
-  name: string
-  kind: StorageDestinationKind
-  endpoint: string
-  bucket: string
-  region: string
-  accessKeyId: string
-  secretAccessKey: string
-}
-
-const EMPTY_FORM: DestinationFormState = {
-  name: "",
-  kind: "s3",
-  endpoint: "",
-  bucket: "",
-  region: "auto",
-  accessKeyId: "",
-  secretAccessKey: "",
-}
 
 function destinationUsage(destination: StorageDestination): number {
   return destination.usageCount
@@ -97,238 +62,8 @@ function destinationDate(
     : unavailable
 }
 
-function DestinationFormDialog({
-  open,
-  destination,
-  isPending,
-  onOpenChange,
-  onSubmit,
-}: {
-  open: boolean
-  destination: StorageDestination | null
-  isPending: boolean
-  onOpenChange: (open: boolean) => void
-  onSubmit: (input: StorageDestinationInput) => Promise<void>
-}): React.JSX.Element {
-  const { t } = useTranslation("storage")
-  const [form, setForm] = React.useState<DestinationFormState>(EMPTY_FORM)
-  const [credentialsError, setCredentialsError] = React.useState(false)
-
-  React.useEffect(() => {
-    if (!open) return
-    setForm(
-      destination
-        ? {
-            name: destination.name,
-            kind: destination.kind,
-            endpoint: destination.endpoint ?? "",
-            bucket: destination.bucket ?? "",
-            region: destination.region ?? "auto",
-            accessKeyId: "",
-            secretAccessKey: "",
-          }
-        : EMPTY_FORM
-    )
-    setCredentialsError(false)
-  }, [destination, open])
-
-  const update = <TKey extends keyof DestinationFormState>(
-    key: TKey,
-    value: DestinationFormState[TKey]
-  ): void => {
-    setForm((current) => ({ ...current, [key]: value }))
-  }
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const hasAccessKey = form.accessKeyId.trim().length > 0
-    const hasSecretKey = form.secretAccessKey.trim().length > 0
-    if (form.kind === "s3" && hasAccessKey !== hasSecretKey) {
-      setCredentialsError(true)
-      return
-    }
-    setCredentialsError(false)
-
-    const input: StorageDestinationInput = {
-      name: form.name.trim(),
-      kind: form.kind,
-    }
-    if (form.kind === "s3") {
-      input.endpoint = form.endpoint.trim() || undefined
-      input.bucket = form.bucket.trim()
-      input.region = form.region.trim() || "auto"
-      if (hasAccessKey && hasSecretKey) {
-        input.credentials = {
-          accessKeyId: form.accessKeyId.trim(),
-          secretAccessKey: form.secretAccessKey,
-        }
-      }
-    }
-    await onSubmit(input)
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            {destination ? t("editTitle") : t("createTitle")}
-          </DialogTitle>
-          <DialogDescription>
-            {destination ? t("editDescription") : t("createDescription")}
-          </DialogDescription>
-        </DialogHeader>
-
-        <form
-          onSubmit={(event) => void handleSubmit(event)}
-          className="space-y-4"
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="storage-destination-name">{t("name")}</Label>
-            <Input
-              id="storage-destination-name"
-              value={form.name}
-              placeholder={t("namePlaceholder")}
-              onChange={(event) => update("name", event.target.value)}
-              required
-              autoFocus
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="storage-destination-kind">{t("kind")}</Label>
-            <Select
-              value={form.kind}
-              disabled={Boolean(destination)}
-              onValueChange={(value) =>
-                update("kind", value as StorageDestinationKind)
-              }
-            >
-              <SelectTrigger id="storage-destination-kind">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="s3">{t("s3")}</SelectItem>
-                <SelectItem value="local">{t("local")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {form.kind === "s3" ? (
-            <div className="space-y-4 rounded-lg border border-panel-border/70 bg-panel-inset p-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="storage-destination-endpoint">
-                  {t("endpoint")}
-                </Label>
-                <Input
-                  id="storage-destination-endpoint"
-                  type="url"
-                  value={form.endpoint}
-                  placeholder={t("endpointPlaceholder")}
-                  onChange={(event) => update("endpoint", event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t("endpointHint")}
-                </p>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="storage-destination-bucket">
-                    {t("bucket")}
-                  </Label>
-                  <Input
-                    id="storage-destination-bucket"
-                    value={form.bucket}
-                    placeholder={t("bucketPlaceholder")}
-                    onChange={(event) => update("bucket", event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="storage-destination-region">
-                    {t("region")}
-                  </Label>
-                  <Input
-                    id="storage-destination-region"
-                    value={form.region}
-                    placeholder={t("regionPlaceholder")}
-                    onChange={(event) => update("region", event.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="storage-destination-access-key">
-                    {t("accessKeyId")}
-                  </Label>
-                  <Input
-                    id="storage-destination-access-key"
-                    value={form.accessKeyId}
-                    placeholder={t("accessKeyPlaceholder")}
-                    autoComplete="username"
-                    onChange={(event) =>
-                      update("accessKeyId", event.target.value)
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="storage-destination-secret-key">
-                    {t("secretAccessKey")}
-                  </Label>
-                  <Input
-                    id="storage-destination-secret-key"
-                    type="password"
-                    value={form.secretAccessKey}
-                    placeholder={t("secretPlaceholder")}
-                    autoComplete="new-password"
-                    aria-invalid={credentialsError}
-                    onChange={(event) =>
-                      update("secretAccessKey", event.target.value)
-                    }
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {destination ? t("credentialsKeepHint") : t("credentialsHint")}
-              </p>
-              {credentialsError ? (
-                <p className="text-xs text-destructive" role="alert">
-                  {t("credentialsRequired")}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={isPending}
-            >
-              {t("cancel")}
-            </Button>
-            <Button type="submit" loading={isPending}>
-              {isPending
-                ? destination
-                  ? t("saving")
-                  : t("creating")
-                : destination
-                  ? t("save")
-                  : t("create")}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 const DESTINATION_COLUMNS =
-  "xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.7fr)_minmax(0,0.8fr)_minmax(0,1.2fr)_9rem]"
+  "xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.7fr)_minmax(0,0.8fr)_minmax(0,1.3fr)_9rem]"
 
 function DestinationRow({
   destination,
@@ -363,23 +98,16 @@ function DestinationRow({
     <li
       className={`grid min-w-0 grid-cols-2 gap-4 border-b border-border p-4 last:border-b-0 xl:items-center ${DESTINATION_COLUMNS}`}
     >
-      <div className="min-w-0">
-        <p className="text-sm font-medium break-words text-foreground">
-          {destination.name}
-        </p>
-      </div>
-      <div className="min-w-0">
-        <Badge
-          variant="secondary"
-          className="max-w-full gap-1.5 whitespace-normal"
-        >
-          {destination.kind === "s3" ? (
-            <RiCloudLine className="size-3.5" aria-hidden="true" />
-          ) : (
-            <RiHardDrive3Line className="size-3.5" aria-hidden="true" />
-          )}
-          {destination.kind === "s3" ? t("s3") : t("local")}
-        </Badge>
+      <div className="col-span-2 flex min-w-0 items-center gap-3 xl:col-span-1">
+        <ProviderMark provider={destination.provider} />
+        <div className="min-w-0">
+          <p className="text-sm font-medium break-words text-foreground">
+            {destination.name}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {t(`providers.${destination.provider}.name`)}
+          </p>
+        </div>
       </div>
       <div className="min-w-0">
         <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:sr-only">
@@ -435,6 +163,11 @@ function DestinationRow({
         >
           {testing ? t("testRunning") : lastTest}
         </Badge>
+        {destination.lastTestStatus === "failure" ? (
+          <p className="mt-1 text-xs text-destructive">
+            {t(testFailureKey(destination.lastTestError))}
+          </p>
+        ) : null}
         {destination.lastTestAt ? (
           <time
             dateTime={destination.lastTestAt}
@@ -524,16 +257,26 @@ function StorageDestinationsPage(): React.JSX.Element {
     setFormOpen(true)
   }
 
-  const handleSave = async (input: StorageDestinationInput): Promise<void> => {
+  const handleSave = async (
+    input: StorageDestinationInput,
+    options: DestinationSubmitOptions
+  ): Promise<void> => {
     if (editing) {
       await updateDestination.mutateAsync({
         destinationId: editing.id,
         input,
       })
-    } else {
-      await createDestination.mutateAsync(input)
+      setFormOpen(false)
+      return
     }
+    const { destination } = await createDestination.mutateAsync(input)
     setFormOpen(false)
+    // Prove the destination right away: the row shows the result (and why it
+    // failed) without a second click.
+    testDestination.mutate({
+      destinationId: destination.id,
+      createBucket: options.createBucket,
+    })
   }
 
   const handleDelete = (): void => {
@@ -603,7 +346,6 @@ function StorageDestinationsPage(): React.JSX.Element {
               aria-hidden="true"
             >
               <span>{t("nameColumn")}</span>
-              <span>{t("kindColumn")}</span>
               <span>{t("endpointColumn")}</span>
               <span>{t("bucketColumn")}</span>
               <span>{t("regionColumn")}</span>
@@ -619,10 +361,12 @@ function StorageDestinationsPage(): React.JSX.Element {
                   locale={i18n.resolvedLanguage ?? i18n.language}
                   onEdit={() => openEdit(destination)}
                   onDelete={() => setDeleting(destination)}
-                  onTest={() => testDestination.mutate(destination.id)}
+                  onTest={() =>
+                    testDestination.mutate({ destinationId: destination.id })
+                  }
                   testing={
                     testDestination.isPending &&
-                    testDestination.variables === destination.id
+                    testDestination.variables.destinationId === destination.id
                   }
                   deleting={
                     deleteDestination.isPending &&

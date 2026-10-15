@@ -99,9 +99,7 @@ export function BackupConfigPanel({
             {destinations.map((destination) => (
               <SelectItem key={destination.id} value={destination.id}>
                 {destination.name} ·{" "}
-                {destination.kind === "s3"
-                  ? t("backup.s3Option")
-                  : t("backup.local")}
+                {t(`storage:providers.${destination.provider}.name`)}
               </SelectItem>
             ))}
           </SelectContent>

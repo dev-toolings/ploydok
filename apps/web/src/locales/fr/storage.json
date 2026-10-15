@@ -3,26 +3,16 @@
   "description": "Créez des destinations réutilisables pour les sauvegardes de bases et de volumes.",
   "add": "Ajouter une destination",
   "edit": "Modifier la destination",
-  "createTitle": "Créer une destination de stockage",
+  "createTitle": "Ajouter une destination de stockage",
   "editTitle": "Modifier la destination de stockage",
-  "createDescription": "Conservez une destination testée pour chaque sauvegarde qui l'utilise.",
   "editDescription": "Les identifiants restent protégés. Laissez le champ vide pour conserver le secret actuel.",
   "name": "Nom",
-  "namePlaceholder": "Sauvegardes R2 (production)",
-  "kind": "Type",
-  "local": "Système de fichiers local",
-  "s3": "Compatible S3",
   "endpoint": "Point de terminaison",
-  "endpointPlaceholder": "https://<compte>.r2.cloudflarestorage.com",
-  "endpointHint": "Laissez vide pour le point de terminaison AWS par défaut.",
   "bucket": "Bucket",
   "bucketPlaceholder": "ploydok-sauvegardes",
   "region": "Région",
-  "regionPlaceholder": "auto",
   "accessKeyId": "ID de clé d'accès",
-  "accessKeyPlaceholder": "AKIA...",
   "secretAccessKey": "Clé d'accès secrète",
-  "secretPlaceholder": "Saisissez une nouvelle clé secrète",
   "credentialsHint": "Les identifiants sont chiffrés et ne sont jamais affichés ici.",
   "credentialsKeepHint": "Laissez vide pour conserver les identifiants actuels.",
   "credentialsRequired": "Saisissez les deux champs d'identifiants ou laissez-les tous les deux vides.",
@@ -33,9 +23,8 @@
   "creating": "Création…",
   "loading": "Chargement des destinations de stockage",
   "emptyTitle": "Aucune destination de stockage",
-  "emptyBody": "Créez une destination locale ou compatible S3 avant d'activer les sauvegardes.",
-  "nameColumn": "Nom",
-  "kindColumn": "Type",
+  "emptyBody": "Connectez Amazon S3, Azure, Cloudflare R2 et d'autres, ou démarrez avec le disque de ce serveur.",
+  "nameColumn": "Destination",
   "endpointColumn": "Point de terminaison",
   "bucketColumn": "Bucket",
   "regionColumn": "Région",
@@ -72,9 +61,140 @@
     "createFailed": "Impossible de créer la destination : {{message}}",
     "updated": "Destination de stockage mise à jour",
     "updateFailed": "Impossible de mettre à jour la destination : {{message}}",
-    "tested": "Test de la destination réussi",
-    "testFailed": "Échec du test de la destination : {{message}}",
+    "tested": "Destination opérationnelle : fichier de test écrit, relu et supprimé",
     "deleted": "Destination de stockage supprimée",
-    "deleteFailed": "Impossible de supprimer la destination : {{message}}"
+    "deleteFailed": "Impossible de supprimer la destination : {{message}}",
+    "testedBucketCreated": "Bucket créé et destination testée",
+    "testFailedTitle": "Le test de la destination a échoué"
+  },
+  "createTitleFor": "Connecter {{provider}}",
+  "chooseProviderDescription": "Choisissez où partent les sauvegardes. Ploydok renseigne le point de terminaison et vérifie la destination pour vous.",
+  "groupCloud": "Fournisseurs cloud",
+  "groupSelfHosted": "Auto-hébergé",
+  "groupServer": "Ce serveur",
+  "changeProvider": "Changer",
+  "awsEndpointHint": "Point de terminaison choisi par AWS selon la région.",
+  "container": "Conteneur",
+  "bucketHint": "Lettres minuscules, chiffres et tirets.",
+  "regionChoose": "Choisir une région",
+  "regionRequired": "Choisissez une région.",
+  "accountInvalid": "Saisissez un identifiant valide : lettres minuscules, chiffres et tirets.",
+  "endpointRequired": "Saisissez l'URL du point de terminaison.",
+  "credentials": "Clés d'accès",
+  "credentialsHelp": "Créer des clés sur {{provider}}",
+  "credentialsMissing": "Saisissez les clés d'accès.",
+  "hmacAccessId": "ID d'accès HMAC",
+  "hmacSecret": "Secret HMAC",
+  "b2KeyId": "keyID",
+  "b2ApplicationKey": "applicationKey",
+  "accountKey": "Clé du compte",
+  "secretKeepPlaceholder": "Laisser vide pour garder le secret actuel",
+  "connectionString": "Chaîne de connexion",
+  "connectionStringHint": "Facultatif. Collez-la depuis Clés d'accès dans le portail Azure pour remplir les champs ci-dessous.",
+  "connectionStringInvalid": "Cette chaîne de connexion ne contient ni AccountName ni AccountKey.",
+  "createBucket": "Créer le bucket s'il n'existe pas",
+  "createContainer": "Créer le conteneur s'il n'existe pas",
+  "createBucketHint": "Ploydok écrit, relit puis supprime ensuite un fichier de test pour prouver que la destination fonctionne.",
+  "advancedShow": "Afficher les réglages avancés",
+  "advancedHide": "Masquer les réglages avancés",
+  "endpointOverride": "Point de terminaison personnalisé",
+  "endpointOverrideHint": "Seulement pour une juridiction, un point de terminaison privé ou un émulateur. Laissez vide pour la valeur par défaut.",
+  "localHint": "Les sauvegardes restent sur ce serveur. S'il est perdu, elles le sont aussi : utilisez-le pour démarrer, puis ajoutez une destination hors site.",
+  "createAndTest": "Créer et tester",
+  "reasons": {
+    "auth_failed": "Le fournisseur a refusé les clés. Vérifiez-les ainsi que leurs droits sur ce bucket.",
+    "bucket_not_found": "Le bucket n'existe pas. Créez-le, ou relancez le test avec la création automatique.",
+    "endpoint_unreachable": "Le point de terminaison est injoignable depuis ce serveur. Vérifiez l'URL, le DNS et le pare-feu.",
+    "endpoint_blocked": "Ce point de terminaison utilise une adresse réseau bloquée.",
+    "timeout": "Le fournisseur n'a pas répondu à temps.",
+    "unknown": "Le fournisseur a renvoyé une erreur inattendue."
+  },
+  "providers": {
+    "aws": {
+      "name": "Amazon S3",
+      "short": "Stockage objet AWS, toutes régions.",
+      "defaultName": "Sauvegardes S3",
+      "tagline": "Le stockage objet de référence. Choisissez la région du bucket ; le point de terminaison est déduit."
+    },
+    "cloudflare-r2": {
+      "name": "Cloudflare R2",
+      "short": "Sans frais de sortie.",
+      "defaultName": "Sauvegardes R2",
+      "tagline": "Collez votre Account ID et un jeton d'API R2. Aucun frais de sortie lors des restaurations.",
+      "accountLabel": "Account ID",
+      "accountHint": "Affiché sur la page R2 du tableau de bord Cloudflare."
+    },
+    "azure-blob": {
+      "name": "Azure Blob Storage",
+      "short": "Azure natif, pas S3.",
+      "defaultName": "Sauvegardes Azure",
+      "tagline": "Connexion native à Azure Blob Storage. Collez la chaîne de connexion du portail, ou le nom du compte et sa clé.",
+      "accountLabel": "Nom du compte de stockage",
+      "accountHint": "Le nom du compte de stockage, sans .blob.core.windows.net."
+    },
+    "gcs": {
+      "name": "Google Cloud Storage",
+      "short": "Via les clés HMAC d'interopérabilité.",
+      "defaultName": "Sauvegardes GCS",
+      "tagline": "Utilise l'interopérabilité de Cloud Storage : créez une clé HMAC pour un compte de service."
+    },
+    "backblaze-b2": {
+      "name": "Backblaze B2",
+      "short": "Stockage cloud économique.",
+      "defaultName": "Sauvegardes B2",
+      "tagline": "Utilisez une application key limitée au bucket."
+    },
+    "wasabi": {
+      "name": "Wasabi",
+      "short": "Stockage chaud, sans frais de sortie.",
+      "defaultName": "Sauvegardes Wasabi",
+      "tagline": "Choisissez la région du bucket ; le point de terminaison est déduit."
+    },
+    "digitalocean-spaces": {
+      "name": "DigitalOcean Spaces",
+      "short": "Stockage objet Spaces.",
+      "defaultName": "Sauvegardes Spaces",
+      "tagline": "Choisissez la région Spaces et utilisez une clé d'accès Spaces."
+    },
+    "hetzner": {
+      "name": "Hetzner Object Storage",
+      "short": "Falkenstein, Nuremberg, Helsinki.",
+      "defaultName": "Sauvegardes Hetzner",
+      "tagline": "Choisissez l'emplacement et utilisez les identifiants S3 de la console Hetzner Cloud."
+    },
+    "scaleway": {
+      "name": "Scaleway Object Storage",
+      "short": "Paris, Amsterdam, Varsovie.",
+      "defaultName": "Sauvegardes Scaleway",
+      "tagline": "Choisissez la région et utilisez une clé d'API Scaleway IAM."
+    },
+    "ovhcloud": {
+      "name": "OVHcloud Object Storage",
+      "short": "Stockage objet S3 européen.",
+      "defaultName": "Sauvegardes OVHcloud",
+      "tagline": "Choisissez la région et utilisez les identifiants S3 de votre projet Public Cloud."
+    },
+    "minio": {
+      "name": "MinIO / Garage",
+      "short": "Serveur S3 auto-hébergé.",
+      "defaultName": "Sauvegardes MinIO",
+      "tagline": "Pointez vers votre propre serveur S3. Hébergez-le sur une autre machine que celle-ci.",
+      "endpointHint": "URL de l'API S3, port compris.",
+      "endpointPlaceholder": "https://minio.example.com:9000"
+    },
+    "s3-compatible": {
+      "name": "Autre compatible S3",
+      "short": "Tout fournisseur qui parle S3.",
+      "defaultName": "Sauvegardes S3",
+      "tagline": "Tout service compatible S3 : IDrive e2, Linode, Storj, Exoscale, Ceph...",
+      "endpointHint": "URL de l'API S3 fournie par votre hébergeur.",
+      "endpointPlaceholder": "https://s3.example.com"
+    },
+    "local": {
+      "name": "Disque de ce serveur",
+      "short": "Démarrage rapide, pas hors site.",
+      "defaultName": "Sauvegardes locales",
+      "tagline": "Les sauvegardes sont écrites sur le disque de ce serveur."
+    }
   }
 }
