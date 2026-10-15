@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
   backfillLegacyGitHubInstallationGrants,
+  bindGitHubInstallationApp,
   replaceInstallationSnapshot,
   getGitHubAppConfigForInstallation,
   listGitHubAppConfigs,
@@ -446,6 +447,12 @@ async function syncGitHubInstallation(
       `GitHub installation ${externalInstallationId} is no longer available`
     )
   }
+  // An installation completed without a webhook (unreachable instance, admin
+  // install) has no owning App yet; tokens cannot be issued without it.
+  await bindGitHubInstallationApp(db, {
+    ...buildLiveGitHubInstallationRow(liveInstallation),
+    github_app_id: liveInstallation.githubAppId,
+  })
 
   const allRepos: ProviderRepoRow[] = []
   const MAX_PAGES = 50

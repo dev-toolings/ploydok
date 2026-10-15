@@ -112,6 +112,27 @@ export async function upsertInstallation(
     })
 }
 
+/**
+ * Records which GitHub App owns an installation without publishing sync
+ * freshness: a new row starts never-synced, an existing row keeps its
+ * snapshot. Token issuance needs this link before the first repo page.
+ */
+export async function bindGitHubInstallationApp(
+  db: Db,
+  row: ProviderInstallationInput & { github_app_id: string }
+): Promise<void> {
+  await db
+    .insert(provider_installations)
+    .values({ ...row, last_synced_at: new Date(0) })
+    .onConflictDoUpdate({
+      target: [
+        provider_installations.provider,
+        provider_installations.external_id,
+      ],
+      set: { github_app_id: row.github_app_id },
+    })
+}
+
 export async function deleteInstallation(db: Db, id: string): Promise<void> {
   await db
     .delete(provider_installations)
