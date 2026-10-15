@@ -77,7 +77,7 @@ export function classifyAppDomain(
 }
 
 const ACTIVE_APP_STATUSES = ["running", "restarting", "serving"] as const
-const ROUTING_MIGRATION_ERROR =
+export const ROUTING_MIGRATION_ERROR =
   "Routing state must be rechecked after migration"
 
 /**

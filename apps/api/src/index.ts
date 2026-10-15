@@ -23,6 +23,7 @@ import {
   backfillAppDomainMetadata,
   deriveDefaultAppDomainBase,
 } from "./domains/app-domain.js"
+import { recheckMigrationRoutingDrift } from "./domains/routing.js"
 
 const log = childLogger("boot")
 
@@ -67,6 +68,22 @@ async function runMigrationsOnBoot(): Promise<void> {
 async function bootInfra(db: Db): Promise<void> {
   const caddy = getSharedCaddy()
   const agent = getSharedAgent()
+
+  // 0086 marked every active domain action_required and nothing revisited it.
+  // This pass only rewrites stored evidence. It does not edit Caddy routes.
+  try {
+    const routing = await recheckMigrationRoutingDrift(db)
+    const considered =
+      routing.managedReady +
+      routing.customReady +
+      routing.customActionRequired +
+      routing.deferred
+    if (considered > 0) {
+      log.info(routing, "routing migration recheck complete")
+    }
+  } catch (err) {
+    log.warn({ err }, "routing migration recheck failed (non-fatal)")
+  }
 
   await reconcileIngressWithRetry(db, caddy, agent)
 
