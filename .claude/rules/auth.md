@@ -25,9 +25,12 @@ token first-boot dans un cookie `HttpOnly`, que `/auth/setup/password` et
 
 Invariants — les trois se tiennent, n'en retirer aucun :
 
-- **Hors prod uniquement** (`setupSessionGrantAllowed()`, `NODE_ENV !== "prod"`).
-  En prod le token reste à présenter explicitement : une instance fraîche
-  joignable depuis le réseau serait sinon revendiquable par le premier visiteur.
+- **Par défaut, pas de jeton.** `/setup` affiche le formulaire tant qu'aucun
+  admin n'existe. Le premier visiteur qui l'envoie devient administrateur
+  (même parcours que Coolify, Dokploy et OpenShip). `PLOYDOK_SETUP_TOKEN_REQUIRED=1`
+  rétablit le verrou : le cookie `ploydok_setup` n'est alors déposé que hors
+  prod (`setupSessionGrantAllowed()`, `NODE_ENV !== "prod"`), et en prod le
+  jeton reste à présenter dans l'URL.
 - **`/auth/setup/session` n'est PAS exempté de CSRF**, contrairement aux autres
   `/auth/setup/*`. C'est ce qui empêche une page tierce de faire émettre le
   cookie. Une régression ici est couverte par `apps/api/src/csrf.test.ts`.

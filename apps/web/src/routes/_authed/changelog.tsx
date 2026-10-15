@@ -7,12 +7,14 @@ import {
   RiFileList3Line,
   RiGitCommitLine,
 } from "@remixicon/react"
+import { createPageHead } from "../../lib/page-metadata"
 import { ShellPage } from "../../components/layout/AppShell"
 import { changelogEntries } from "../../content/changelog"
 import { APP_VERSION } from "../../lib/hooks/use-unseen-release"
 import type { ChangelogEntry } from "../../content/changelog"
 
 export const Route = createFileRoute("/_authed/changelog")({
+  head: createPageHead("changelog"),
   component: ChangelogPage,
 })
 

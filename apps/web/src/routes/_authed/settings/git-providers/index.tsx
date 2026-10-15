@@ -10,10 +10,12 @@ import {
 } from "@remixicon/react"
 import { cn } from "@workspace/ui/lib/utils"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { ShellPage } from "../../../../components/layout/AppShell"
 import { useGitProviderStatus } from "../../../../lib/git-providers"
 
 export const Route = createFileRoute("/_authed/settings/git-providers/")({
+  head: createPageHead("gitProviders"),
   component: GitProvidersHub,
 })
 

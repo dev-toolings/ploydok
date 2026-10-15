@@ -37,6 +37,7 @@ import {
   TabsTrigger,
 } from "@workspace/ui/components/tabs"
 import { Textarea } from "@workspace/ui/components/textarea"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import { SecretsTable } from "../../../../../../components/secrets/SecretsTable"
 import { AddSecretDialog } from "../../../../../../components/secrets/AddSecretDialog"
 import { EditSecretDialog } from "../../../../../../components/secrets/EditSecretDialog"
@@ -623,5 +624,6 @@ function SecretsSkeleton(): React.JSX.Element {
 }
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/apps/$id/env")({
+  head: createPageHead("env"),
   component: AppEnvTab,
 })

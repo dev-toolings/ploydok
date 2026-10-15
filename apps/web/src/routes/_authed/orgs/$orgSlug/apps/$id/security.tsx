@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
 import { Badge } from "@workspace/ui/components/badge"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import { AdvisoryTable } from "../../../../admin/security/advisories"
 import { useAppAdvisories } from "../../../../../../lib/advisories"
 import { getLatestScan } from "../../../../../../lib/app-scans"
@@ -13,6 +14,7 @@ import type { BuildScanSummary } from "@ploydok/shared"
 export const Route = createFileRoute(
   "/_authed/orgs/$orgSlug/apps/$id/security"
 )({
+  head: createPageHead("applicationSecurity"),
   component: AppSecurityPage,
 })
 

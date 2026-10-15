@@ -15,6 +15,7 @@ import {
 } from "@remixicon/react"
 import { healthClass } from "@ploydok/shared"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { CreateAppModal } from "../../../../components/apps/CreateAppModal"
 import { GettingStartedPanel } from "../../../../components/apps/GettingStartedPanel"
 import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
@@ -39,6 +40,7 @@ interface DashboardSearch {
 }
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/dashboard")({
+  head: createPageHead("dashboard"),
   validateSearch: (search: Record<string, unknown>): DashboardSearch =>
     search.create === "image" ||
     search.create === "github" ||

@@ -11,6 +11,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { cn } from "@workspace/ui/lib/utils"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../lib/page-metadata"
 import { ShellPage } from "../../../components/layout/AppShell"
 import {
 
@@ -21,6 +22,7 @@ import {
 import type { RegistryCredential } from "../../../lib/registry-credentials"
 
 export const Route = createFileRoute("/_authed/settings/registry")({
+  head: createPageHead("registry"),
   component: RegistryPage,
 })
 

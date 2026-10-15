@@ -8,6 +8,7 @@ import {
   RiGitlabFill,
 } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { ShellPage } from "../../../../components/layout/AppShell"
 import { GitHubPanel } from "../../../../components/settings/providers/GitHubPanel"
 import { GitLabPanel } from "../../../../components/settings/providers/GitLabPanel"
@@ -20,6 +21,7 @@ function isSlug(v: string): v is ProviderSlug {
 }
 
 export const Route = createFileRoute("/_authed/settings/git-providers/$slug")({
+  head: createPageHead("gitProvider"),
   beforeLoad: ({ params }) => {
     if (!isSlug(params.slug)) {
       throw notFound()

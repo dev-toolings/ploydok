@@ -22,6 +22,7 @@ import {
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import { BackupConfigPanel } from "../../../../../../components/databases/BackupConfigPanel"
 import { BackupsList } from "../../../../../../components/databases/BackupsList"
 import {
@@ -37,6 +38,7 @@ import type { AppVolume } from "../../../../../../lib/app-volumes"
 export const Route = createFileRoute(
   "/_authed/orgs/$orgSlug/apps/$id/storage"
 )({
+  head: createPageHead("storage"),
   component: AppStoragePage,
 })
 

@@ -5,7 +5,6 @@ import { detectClientLocale } from "./detect"
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE,
-  parseAcceptLanguage,
   resolveSupportedLocale,
 } from "./locales"
 import type { Locale } from "./locales"
@@ -13,17 +12,14 @@ import type { Locale } from "./locales"
 /**
  * Request locale that SSR HTML and client hydration both boot with.
  * Cookie first on both sides, so an explicit choice never mismatches.
+ * With no cookie the instance stays English, including on a French browser.
  */
 export const resolveRequestLocale = createIsomorphicFn()
   .server(async (): Promise<Locale> => {
     try {
-      const { getCookies, getRequestHeader } = await import(
-        "@tanstack/react-start/server"
-      )
+      const { getCookies } = await import("@tanstack/react-start/server")
       const cookies = getCookies()
-      const fromCookie = resolveSupportedLocale(cookies[LOCALE_COOKIE])
-      if (fromCookie) return fromCookie
-      return parseAcceptLanguage(getRequestHeader("accept-language"))
+      return resolveSupportedLocale(cookies[LOCALE_COOKIE]) ?? DEFAULT_LOCALE
     } catch {
       return DEFAULT_LOCALE
     }

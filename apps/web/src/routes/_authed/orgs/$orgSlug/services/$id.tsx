@@ -12,6 +12,7 @@ import {
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import {
   Dialog,
   DialogContent,
@@ -35,6 +36,7 @@ import { LogViewer } from "../../../../../components/apps/BuildLogViewer"
 import { useCurrentOrganization } from "../../../../../lib/organizations"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/services/$id")({
+  head: createPageHead("service"),
   component: ServiceDetailPage,
 })
 

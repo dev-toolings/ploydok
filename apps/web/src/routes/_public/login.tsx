@@ -6,6 +6,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Alert, AlertDescription } from "@workspace/ui/components/alert"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../lib/page-metadata"
 import { apiFetch } from "../../lib/api"
 import { PasskeyButton } from "../../components/auth/PasskeyButton"
 import { getGitProviderStatus } from "../../lib/git-providers"
@@ -23,6 +24,7 @@ const DEV_SEED_EMAIL = "dev@ploydok.local"
 const DEV_SEED_PASSWORD = "DEVD-EVDE-VDEV"
 
 export const Route = createFileRoute("/_public/login")({
+  head: createPageHead("login"),
   validateSearch: (search: Record<string, unknown>): { redirect?: string } =>
     typeof search.redirect === "string" ? { redirect: search.redirect } : {},
   component: LoginPage,

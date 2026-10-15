@@ -14,6 +14,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { cn } from "@workspace/ui/lib/utils"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../lib/page-metadata"
 import {
   ChoiceCard,
   OnboardingStepShell,
@@ -57,6 +58,7 @@ const RETURN_TO = "/onboarding"
 type ProviderKey = "github" | "gitlab"
 
 export const Route = createFileRoute("/onboarding")({
+  head: createPageHead("onboarding"),
   beforeLoad: async (): Promise<{ me: Me; providers: GitProviderStatus }> => {
     const me = await requireMe()
     const providers = await getGitProviderStatus()

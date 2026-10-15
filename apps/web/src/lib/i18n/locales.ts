@@ -17,29 +17,3 @@ export function resolveSupportedLocale(
   const base = value.trim().toLowerCase().split(/[-_]/)[0]
   return isLocale(base) ? base : null
 }
-
-/** First supported tag in an Accept-Language header, else the default. */
-export function parseAcceptLanguage(
-  header: string | null | undefined
-): Locale {
-  if (!header) return DEFAULT_LOCALE
-  const tags = header
-    .split(",")
-    .map((part) => {
-      const [rawTag, rawQ] = part.trim().split(";")
-      const tag = rawTag?.trim().toLowerCase() ?? ""
-      const quality = rawQ?.trim().toLowerCase().startsWith("q=")
-        ? Number(rawQ.trim().slice(2))
-        : 1
-      return {
-        tag,
-        quality: Number.isFinite(quality) ? quality : 0,
-      }
-    })
-    .sort((a, b) => b.quality - a.quality)
-  for (const { tag } of tags) {
-    const resolved = resolveSupportedLocale(tag)
-    if (resolved) return resolved
-  }
-  return DEFAULT_LOCALE
-}

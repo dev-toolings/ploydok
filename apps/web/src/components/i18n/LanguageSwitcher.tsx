@@ -4,7 +4,7 @@ import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
 import { changeLocale } from "../../lib/i18n/locale-store"
-import { LOCALES } from "../../lib/i18n/locales"
+import { DEFAULT_LOCALE, LOCALES } from "../../lib/i18n/locales"
 
 export function LanguageSwitcher({
   className,
@@ -14,11 +14,19 @@ export function LanguageSwitcher({
   compact?: boolean
 }): React.JSX.Element {
   const { t, i18n } = useTranslation("common")
+  const language = i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE
   const active =
-    LOCALES.find((locale) => i18n.language.startsWith(locale)) ?? "en"
+    LOCALES.find(
+      (locale) => language === locale || language.startsWith(`${locale}-`)
+    ) ?? DEFAULT_LOCALE
 
   return (
-    <fieldset className={cn("flex items-center gap-1", className)}>
+    <fieldset
+      className={cn(
+        "inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5",
+        className
+      )}
+    >
       <legend className="sr-only">{t("language.label")}</legend>
       {LOCALES.map((locale) => {
         const selected = active === locale
@@ -29,9 +37,9 @@ export function LanguageSwitcher({
             onClick={() => changeLocale(locale)}
             aria-pressed={selected}
             className={cn(
-              "rounded-md px-2 py-1 font-sans text-[11px] font-medium uppercase transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "rounded-[5px] px-2 py-1 font-sans text-[11px] font-medium uppercase transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
-                ? "text-foreground"
+                ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >

@@ -15,6 +15,7 @@ import {
   useSearch,
 } from "@tanstack/react-router"
 import { Separator } from "@workspace/ui/components/separator"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import { DeploymentsTable } from "../../../../../../components/apps/DeploymentsTable"
 import { BuildLogDrawer } from "../../../../../../components/apps/BuildLogDrawer"
 import { DeploymentTriggers } from "../../../../../../components/apps/DeploymentTriggers"
@@ -319,6 +320,7 @@ function AppDeploymentsTab(): React.JSX.Element {
 export const Route = createFileRoute(
   "/_authed/orgs/$orgSlug/apps/$id/deployments"
 )({
+  head: createPageHead("deployments"),
   validateSearch: validateDeploymentsSearch,
   component: AppDeploymentsTab,
 })

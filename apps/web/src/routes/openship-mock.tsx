@@ -24,13 +24,11 @@ import {
   RiSidebarFoldLine,
 } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
-import i18n from "../lib/i18n"
+import { createPageHead } from "../lib/page-metadata"
 
 export const Route = createFileRoute("/openship-mock")({
+  head: createPageHead("mock"),
   component: OpenShipMockPage,
-  head: () => ({
-    meta: [{ title: i18n.t("openshipMock:pageTitle") }],
-  }),
 })
 
 type StackCategory = "frontend" | "backend" | "fullstack" | "static"

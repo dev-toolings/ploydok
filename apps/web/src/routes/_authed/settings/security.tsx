@@ -14,10 +14,12 @@ import {
 } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
+import { createPageHead } from "../../../lib/page-metadata"
 import { ShellPage } from "../../../components/layout/AppShell"
 import { SettingsTabs } from "../../../components/settings/SettingsTabs"
 
 export const Route = createFileRoute("/_authed/settings/security")({
+  head: createPageHead("security"),
   component: SecurityLayout,
 })
 
