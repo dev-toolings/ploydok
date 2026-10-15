@@ -81,7 +81,7 @@ import {
 } from "../i18n/dialog"
 import { resolveDisplayedAppState } from "../../lib/app-runtime"
 import { useApp } from "../../lib/apps"
-import { useLogout, useMe } from "../../lib/auth"
+import { useLogout, useSessionMe } from "../../lib/auth"
 import {
   CommandPaletteProvider,
   useCommandPaletteContext,
@@ -561,11 +561,14 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
-  const { data: me, isPending: meLoading } = useMe()
+  const me = useSessionMe()
+  const meLoading = me === undefined
   const { data: organizations = [], isPending: orgsLoading } =
     useOrganizations()
   const currentOrganization = useCurrentOrganization()
-  const workspaceLoading = orgsLoading
+  // The current workspace is known from the session; the full list only
+  // feeds the switcher and must not hold the sidebar in a second skeleton.
+  const workspaceLoading = orgsLoading && !currentOrganization
   const currentOrgSlug = useCurrentOrganizationSlug()
   const logout = useLogout()
   const router = useRouter()

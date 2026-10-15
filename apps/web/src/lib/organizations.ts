@@ -4,7 +4,7 @@ import { useMatches } from "@tanstack/react-router"
 import { toast } from "sonner"
 import { apiFetch } from "./api"
 import i18n from "./i18n"
-import { useMe } from "./auth"
+import { useSessionMe } from "./auth"
 import type { ApiError } from "./api"
 import type {
   CreateOrganizationBody,
@@ -136,7 +136,7 @@ export function useOrganizationBySlug(orgSlug: string) {
 
 export function useCurrentOrganization(): OrganizationSummary | null {
   const matches = useMatches()
-  const { data: me } = useMe()
+  const me = useSessionMe()
 
   const orgMatch = matches.find(
     (match) => match.routeId === "/_authed/orgs/$orgSlug"
@@ -149,7 +149,7 @@ export function useCurrentOrganization(): OrganizationSummary | null {
 
 export function useCurrentOrganizationSlug(): string | null {
   const matches = useMatches()
-  const { data: me } = useMe()
+  const me = useSessionMe()
 
   const orgMatch = matches.find(
     (match) => match.routeId === "/_authed/orgs/$orgSlug"
