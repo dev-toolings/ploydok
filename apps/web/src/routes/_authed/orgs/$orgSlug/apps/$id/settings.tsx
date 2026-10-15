@@ -249,7 +249,7 @@ function AppMetadataCard({ app }: { app: AppDetail }): React.JSX.Element {
         </div>
 
         {app.gitProvider === "image" ? (
-          <div className="flex items-center justify-between gap-4 rounded-lg border border-panel-border/70 bg-panel-inset p-3">
+          <div className="flex items-center justify-between gap-4 rounded-lg bg-panel-inset p-3 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
             <div className="space-y-1">
               <Label htmlFor="track-latest">{t("settings.trackLatest")}</Label>
               <p className="text-xs text-muted-foreground">
@@ -375,8 +375,8 @@ function InfoTile({
   )
 
   return (
-    <div className="min-w-0 rounded-lg border border-panel-border/70 bg-panel-inset px-3 py-2.5">
-      <p className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+    <div className="min-w-0 rounded-lg bg-panel-inset px-3 py-2.5 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         {icon}
         {label}
       </p>

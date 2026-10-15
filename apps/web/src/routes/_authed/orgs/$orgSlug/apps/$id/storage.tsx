@@ -79,7 +79,7 @@ function AppStoragePage(): React.JSX.Element {
     <div className="w-full space-y-6 px-4 py-6 md:px-8 md:py-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal">{t("storage.title")}</h1>
+          <h1 className="text-xl leading-[26px] font-medium text-foreground">{t("storage.title")}</h1>
           <p className="text-sm text-muted-foreground">
             {t("storage.description")}
           </p>
@@ -206,10 +206,10 @@ function StorageGuideAside({
       <aside className="flex h-full w-full max-w-[34rem] flex-col border-l bg-background shadow-2xl md:w-[34rem]">
         <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
           <div className="min-w-0">
-            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <p className="text-xs font-medium text-muted-foreground">
               {t("storage.guideKicker")}
             </p>
-            <h2 className="mt-1 text-lg font-semibold tracking-normal">
+            <h2 className="mt-1 text-base font-medium tracking-normal">
               {t("storage.guideTitle")}
             </h2>
           </div>
@@ -231,7 +231,7 @@ function StorageGuideAside({
               body={t("storage.step1Body")}
             />
             <div className="rounded-md border border-primary/20 bg-primary/5 p-4">
-              <h3 className="text-sm font-semibold">
+              <h3 className="text-sm font-medium">
                 {t("storage.mountTitle")}
               </h3>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -278,7 +278,7 @@ function StorageGuideAside({
             />
 
             <div className="rounded-md border bg-muted/35 p-4">
-              <h3 className="text-sm font-semibold">{t("storage.notesTitle")}</h3>
+              <h3 className="text-sm font-medium">{t("storage.notesTitle")}</h3>
               <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
                 <li>{t("storage.noteDb")}</li>
                 <li>{t("storage.noteOne")}</li>
@@ -335,7 +335,7 @@ function GuideSection({
 }): React.JSX.Element {
   return (
     <section className="rounded-md border p-4">
-      <h3 className="text-sm font-semibold">{title}</h3>
+      <h3 className="text-sm font-medium">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
     </section>
   )
@@ -521,7 +521,7 @@ function VolumePanel({
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
           <div>
             <div className="mb-3">
-              <h3 className="text-sm font-semibold">Backups</h3>
+              <h3 className="text-sm font-medium">Backups</h3>
               <p className="text-xs text-muted-foreground">
                 Local filesystem backups run here immediately; S3-compatible
                 destinations use your configured provider endpoint.
@@ -537,7 +537,7 @@ function VolumePanel({
 
           <div>
             <div className="mb-3">
-              <h3 className="text-sm font-semibold">Backup policy</h3>
+              <h3 className="text-sm font-medium">Backup policy</h3>
               <p className="text-xs text-muted-foreground">
                 Configure local or S3-compatible scheduled backups for this
                 volume.

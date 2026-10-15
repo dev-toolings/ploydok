@@ -5,15 +5,15 @@ import type { DbHealthStatus, DbStatus } from "../../lib/databases"
 
 const STATUS_CONFIG: Record<DbStatus, { className: string; pulse: boolean }> = {
   creating: {
-    className: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    className: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
     pulse: true,
   },
   starting: {
-    className: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    className: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
     pulse: true,
   },
   running: {
-    className: "bg-green-500/10 text-green-600 dark:text-green-400",
+    className: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
     pulse: false,
   },
   stopped: {
@@ -21,11 +21,11 @@ const STATUS_CONFIG: Record<DbStatus, { className: string; pulse: boolean }> = {
     pulse: false,
   },
   degraded: {
-    className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    className: "bg-orange-100 dark:bg-[#441306]/60 text-orange-800 dark:text-[#ff8904]",
     pulse: true,
   },
   failed: {
-    className: "bg-destructive/10 text-destructive",
+    className: "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e]",
     pulse: false,
   },
 }
@@ -39,19 +39,19 @@ const HEALTH_CONFIG: Record<
     pulse: false,
   },
   starting: {
-    className: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    className: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
     pulse: true,
   },
   healthy: {
-    className: "bg-green-500/10 text-green-600 dark:text-green-400",
+    className: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
     pulse: false,
   },
   degraded: {
-    className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    className: "bg-orange-100 dark:bg-[#441306]/60 text-orange-800 dark:text-[#ff8904]",
     pulse: true,
   },
   unhealthy: {
-    className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    className: "bg-orange-100 dark:bg-[#441306]/60 text-orange-800 dark:text-[#ff8904]",
     pulse: true,
   },
 }
@@ -76,7 +76,7 @@ function Pill({
   return (
     <span
       className={[
-        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+        "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-0.5 text-xs font-medium",
         className,
       ]
         .filter(Boolean)

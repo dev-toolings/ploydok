@@ -195,7 +195,7 @@ export function MetricDetailDialog({
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-1.5 text-muted-foreground">
                 <Icon className={cn("size-3.5", style.accentText)} />
-                <span className="text-[10px] font-semibold tracking-[0.2em] uppercase">
+                <span className="text-xs font-semibold">
                   {title}
                 </span>
               </div>
@@ -204,18 +204,18 @@ export function MetricDetailDialog({
             <DialogTitle className="font-heading text-xl leading-tight">
               {snapshot.name}
             </DialogTitle>
-            <DialogDescription className="font-sans text-[11px] tabular-nums">
+            <DialogDescription className="font-sans text-xs tabular-nums">
               {snapshot.image}
               {snapshot.kind ? (
                 <>
                   <span className="mx-1.5 text-muted-foreground/50">·</span>
-                  <span className="tracking-wider uppercase">
+                  <span className="">
                     {snapshot.kind}
                   </span>
                 </>
               ) : null}
               <span className="mx-1.5 text-muted-foreground/50">·</span>
-              <span className="tracking-wider uppercase">
+              <span className="">
                 {snapshot.status}
               </span>
             </DialogDescription>
@@ -257,7 +257,7 @@ export function MetricDetailDialog({
           {metric === "mem" && memUsagePercent !== null ? (
             <div className="mt-4 rounded-md border border-border bg-muted/30 px-3.5 py-3">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+                <span className="text-xs font-semibold text-muted-foreground">
                   {t("limitUsage")}
                 </span>
                 <span className="font-sans text-[12px] text-foreground tabular-nums">
@@ -422,7 +422,7 @@ export function MetricDetailDialog({
           </div>
 
           {/* Footer — container metadata + ESC hint */}
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/60 pt-3 font-sans text-[10px] tracking-wider text-muted-foreground/80 uppercase tabular-nums">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/60 pt-3 font-sans text-xs text-muted-foreground/80 tabular-nums">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
               <FooterStat
                 icon={<RiTimeLine className="size-3" />}
@@ -445,7 +445,7 @@ export function MetricDetailDialog({
                 value={`${stepSeconds}s`}
               />
             </div>
-            <kbd className="rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[9px] font-medium tracking-normal text-muted-foreground/80 normal-case">
+            <kbd className="rounded border border-border bg-muted/40 px-1.5 py-0.5 text-xs font-medium tracking-normal text-muted-foreground/80 normal-case">
               ESC
             </kbd>
           </div>
@@ -497,7 +497,7 @@ function HeroStatCurrent({
         accentRing && "hover:ring-current"
       )}
     >
-      <span className="text-[9px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+      <span className="text-xs font-semibold text-muted-foreground">
         {label}
       </span>
       <div className="flex items-baseline gap-2">
@@ -505,7 +505,7 @@ function HeroStatCurrent({
         {trend && TrendIcon ? (
           <span
             className={cn(
-              "inline-flex items-center gap-0.5 font-sans text-[10px] font-medium tabular-nums",
+              "inline-flex items-center gap-0.5 font-sans text-xs font-medium tabular-nums",
               trendColor
             )}
             title={
@@ -536,7 +536,7 @@ function HeroStat({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border bg-muted/30 px-3.5 py-3">
-      <span className="text-[9px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+      <span className="text-xs font-semibold text-muted-foreground">
         {label}
       </span>
       <span className={valueClass}>{value}</span>
@@ -601,7 +601,7 @@ function LivePill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/80 px-2 py-0.5 font-sans text-[10px] tracking-wider uppercase",
+        "inline-flex items-center gap-1.5 rounded-sm border border-border/70 bg-background/80 px-2 py-0.5 font-sans text-xs",
         textColor
       )}
       title={t("lastSeen", { count: ageSec })}

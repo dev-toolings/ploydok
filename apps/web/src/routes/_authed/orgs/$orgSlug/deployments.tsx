@@ -29,7 +29,7 @@ import {
   
   DeploymentsTable
 } from "../../../../components/apps/DeploymentsTable"
-import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
+import { ShellPage } from "../../../../components/layout/AppShell"
 import { useApps } from "../../../../lib/apps"
 import { useCurrentOrganization } from "../../../../lib/organizations"
 import {
@@ -177,12 +177,18 @@ function DeploymentsPage(): React.JSX.Element {
     >
       <DeploymentSummary summary={deploymentsQuery.data?.summary} />
 
-      <ShellPanel
-        title={t("deployments.history")}
-        description={t("deployments.historyHint")}
-        action={
+      <section className="flex w-full flex-col rounded-2xl border border-[#ebebeb] pt-2 pb-3 dark:border-neutral-800">
+        <div className="flex flex-col items-start gap-3 px-3 py-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-col">
+            <h2 className="text-sm font-medium text-neutral-400 dark:text-neutral-500">
+              {t("deployments.history")}
+            </h2>
+            <p className="text-sm font-medium text-foreground">
+              {t("deployments.historyHint")}
+            </p>
+          </div>
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={() => void deploymentsQuery.refetch()}
             loading={deploymentsQuery.isFetching}
@@ -190,32 +196,39 @@ function DeploymentsPage(): React.JSX.Element {
             <RiRefreshLine className="size-4" />
             {t("common:refresh")}
           </Button>
-        }
-      >
-        <DeploymentFilters
-          filters={search}
-          apps={appsQuery.data ?? []}
-          onChange={updateSearch}
-        />
+        </div>
+
+        <div className="px-3 pt-2">
+          <DeploymentFilters
+            filters={search}
+            apps={appsQuery.data ?? []}
+            onChange={updateSearch}
+          />
+        </div>
 
         {deploymentsQuery.error ? (
-          <DeploymentError
-            message={deploymentsQuery.error.message}
-            onRetry={() => void deploymentsQuery.refetch()}
-          />
+          <div className="px-3 pt-3">
+            <DeploymentError
+              message={deploymentsQuery.error.message}
+              onRetry={() => void deploymentsQuery.refetch()}
+            />
+          </div>
         ) : (
           <>
-            <DeploymentsTable
-              builds={deployments}
-              isLoading={deploymentsQuery.isLoading}
-              onSelectBuild={handleSelectBuild}
-              onRollback={handleRollback}
-              onCancel={handleCancel}
-              showApplication
-              appDeploymentsHref={appDeploymentsHref}
-              canManage={deploymentsQuery.data?.canManage ?? false}
-              paginate={false}
-            />
+            <div className="mt-3">
+              <DeploymentsTable
+                builds={deployments}
+                isLoading={deploymentsQuery.isLoading}
+                onSelectBuild={handleSelectBuild}
+                onRollback={handleRollback}
+                onCancel={handleCancel}
+                showApplication
+                appDeploymentsHref={appDeploymentsHref}
+                canManage={deploymentsQuery.data?.canManage ?? false}
+                paginate={false}
+                flush
+              />
+            </div>
             {pagination ? (
               <DeploymentPagination
                 page={pagination.page}
@@ -240,7 +253,7 @@ function DeploymentsPage(): React.JSX.Element {
             ) : null}
           </>
         )}
-      </ShellPanel>
+      </section>
 
       {selectedAppId ? (
         <BuildLogDrawer
@@ -263,37 +276,29 @@ function DeploymentSummary({
   const { t } = useTranslation("workspace")
   if (!summary) return null
   const cards = [
-    { label: t("deployments.total"), value: summary.total, className: "text-foreground" },
+    { label: t("deployments.total"), value: summary.total },
     {
       label: t("deployments.inProgress"),
       value: summary.pending + summary.running,
-      className: "text-blue-600 dark:text-blue-400",
     },
     {
       label: t("deployments.successful"),
       value: summary.succeeded + summary.succeededWithWarning,
-      className: "text-emerald-600 dark:text-emerald-400",
     },
-    {
-      label: t("deployments.failed"),
-      value: summary.failed,
-      className: "text-destructive",
-    },
+    { label: t("deployments.failed"), value: summary.failed },
   ]
 
   return (
     <section
-      className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      className="grid grid-cols-2 gap-4 lg:grid-cols-4"
       aria-label={t("deployments.summary")}
     >
       {cards.map((card) => (
-        <div key={card.label} className="rounded-2xl bg-panel px-4 py-3">
-          <p className="text-xs font-medium text-muted-foreground">
+        <div key={card.label} className="rounded-2xl bg-panel p-4">
+          <p className="text-sm font-medium text-muted-foreground">
             {card.label}
           </p>
-          <p
-            className={`mt-1 text-2xl font-semibold tabular-nums ${card.className}`}
-          >
+          <p className="text-2xl leading-[34px] font-medium text-foreground tabular-nums">
             {card.value}
           </p>
         </div>
@@ -325,7 +330,7 @@ function DeploymentFilters({
   )
 
   return (
-    <div className="mb-4 flex flex-col gap-3 border-b border-border pb-4">
+    <div className="flex flex-col gap-3">
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <Select
           value={filters.appId ?? ALL}
@@ -487,8 +492,8 @@ function DeploymentPagination({
 }): React.JSX.Element {
   const { t } = useTranslation("workspace")
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-      <p className="text-xs text-muted-foreground">
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 px-3">
+      <p className="text-[13px] font-medium text-muted-foreground">
         {t("deployments.count", {
           count: total,
           page,

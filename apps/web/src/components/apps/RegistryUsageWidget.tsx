@@ -107,7 +107,7 @@ export function RegistryUsageWidget({ appId }: Props): React.JSX.Element {
       {data && (
         <>
           <div className="flex items-baseline gap-3">
-            <span className="text-2xl font-semibold tabular-nums text-foreground">
+            <span className="text-2xl font-medium tabular-nums text-foreground leading-[34px]">
               {data.tags}
             </span>
             <span className="text-xs text-muted-foreground">

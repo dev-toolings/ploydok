@@ -76,7 +76,7 @@ function PlanOption({
           <span className="size-2 rounded-full border border-border" />
         )}
       </div>
-      <span className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+      <span className="font-sans text-xs text-muted-foreground">
         {t(`plan.${name}Hint`)}
       </span>
       {limits ? (

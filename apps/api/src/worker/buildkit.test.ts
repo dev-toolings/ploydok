@@ -7,6 +7,7 @@
  * digest parsing, and error handling without actually running BuildKit.
  */
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -100,6 +101,54 @@ describe("buildImage", () => {
       "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
     );
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("builds through Docker buildx when the address names a builder", async () => {
+    const digest =
+      "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    spawnSpy = spyOn(Bun, "spawn").mockImplementation(((cmd: string[]) => {
+      const metadata = cmd[cmd.indexOf("--metadata-file") + 1]!;
+      writeFileSync(metadata, JSON.stringify({ "containerimage.digest": digest }));
+      return fakeBunProcess({
+        stderrLines: [
+          "#9 exporting manifest sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        ],
+      });
+    }) as unknown as typeof Bun.spawn);
+
+    // env is typed read-only; tests swap the address and restore it.
+    const env = (await import("../env")).env as { PLOYDOK_BUILDKIT_ADDR: string };
+    const previous = env.PLOYDOK_BUILDKIT_ADDR;
+    env.PLOYDOK_BUILDKIT_ADDR = "buildx://ploydok-dev";
+    try {
+      const { buildImage } = await import("./buildkit");
+      const result = await buildImage({
+        contextDir: tmpDir,
+        dockerfile: path.join(tmpDir, "Dockerfile"),
+        imageRef: "127.0.0.1:5000/app-abc:sha",
+        cacheDir: path.join(tmpDir, "cache"),
+        buildArgs: { NODE_ENV: "production" },
+      });
+
+      const spawnMock = spawnSpy as unknown as {
+        mock: { calls: Array<[string[], object]> };
+      };
+      const cmd = spawnMock.mock.calls[0]![0];
+      expect(cmd.slice(0, 5)).toEqual([
+        "docker",
+        "buildx",
+        "build",
+        "--builder",
+        "ploydok-dev",
+      ]);
+      expect(cmd).toContain("--push");
+      expect(cmd[cmd.indexOf("--tag") + 1]).toBe("127.0.0.1:5000/app-abc:sha");
+      expect(cmd[cmd.indexOf("--build-arg") + 1]).toBe("NODE_ENV=production");
+      expect(cmd.at(-1)).toBe(tmpDir);
+      expect(result.imageDigest).toBe(digest);
+    } finally {
+      env.PLOYDOK_BUILDKIT_ADDR = previous;
+    }
   });
 
   it("streams all log lines via onLog callback", async () => {

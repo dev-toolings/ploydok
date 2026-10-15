@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * BuildKit rootless wrapper.
+ * BuildKit wrapper.
  *
  * Invokes `buildctl` to build a Dockerfile and push the image to a registry.
  * Streams stderr line-by-line via the `onLog` callback.
+ *
+ * Local development can instead point `PLOYDOK_BUILDKIT_ADDR` at a Docker
+ * buildx builder (`buildx://<name>`), the route Dokploy and Coolify take: the
+ * Docker CLI drives BuildKit, so the host needs neither `buildctl` nor a
+ * rootless daemon, which recent Ubuntu AppArmor policies refuse to start.
  */
 import path from "node:path";
 import os from "node:os";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { env } from "../env";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +51,18 @@ export interface BuildImageResult {
   durationMs: number;
 }
 
+const BUILDX_SCHEME = "buildx://";
+
+/** Builder name when the address selects Docker buildx, otherwise null. */
+export function buildxBuilderName(addr: string): string | null {
+  if (!addr.startsWith(BUILDX_SCHEME)) return null;
+  const name = addr.slice(BUILDX_SCHEME.length);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
+    throw new Error(`invalid buildx builder name in ${addr}`);
+  }
+  return name;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -71,30 +88,59 @@ export async function buildImage(
   const dockerfileDir = path.dirname(opts.dockerfile);
   const dockerfileName = path.basename(opts.dockerfile);
 
-  const args = [
-    "--addr",
-    addr,
-    "build",
-    "--frontend",
-    "dockerfile.v0",
-    "--opt",
-    `filename=${dockerfileName}`,
-    "--local",
-    `context=${opts.contextDir}`,
-    "--local",
-    `dockerfile=${dockerfileDir}`,
-    "--output",
-    `type=image,name=${opts.imageRef},push=true`,
-    "--export-cache",
-    `type=local,dest=${opts.cacheDir},mode=max`,
-    "--import-cache",
-    `type=local,src=${opts.cacheDir}`,
-    "--progress",
-    "plain",
-  ];
+  const builder = buildxBuilderName(addr);
+  const metadataDir = builder
+    ? await mkdtemp(path.join(os.tmpdir(), "ploydok-buildx-meta-"))
+    : null;
+  const metadataFile = metadataDir ? path.join(metadataDir, "meta.json") : null;
+
+  const args = builder
+    ? [
+        "buildx",
+        "build",
+        "--builder",
+        builder,
+        "--file",
+        opts.dockerfile,
+        "--tag",
+        opts.imageRef,
+        "--push",
+        // Keep a single-platform manifest, like the buildctl path.
+        "--provenance=false",
+        "--cache-to",
+        `type=local,dest=${opts.cacheDir},mode=max`,
+        "--cache-from",
+        `type=local,src=${opts.cacheDir}`,
+        "--metadata-file",
+        metadataFile!,
+        "--progress",
+        "plain",
+      ]
+    : [
+        "--addr",
+        addr,
+        "build",
+        "--frontend",
+        "dockerfile.v0",
+        "--opt",
+        `filename=${dockerfileName}`,
+        "--local",
+        `context=${opts.contextDir}`,
+        "--local",
+        `dockerfile=${dockerfileDir}`,
+        "--output",
+        `type=image,name=${opts.imageRef},push=true`,
+        "--export-cache",
+        `type=local,dest=${opts.cacheDir},mode=max`,
+        "--import-cache",
+        `type=local,src=${opts.cacheDir}`,
+        "--progress",
+        "plain",
+      ];
 
   for (const [key, value] of Object.entries(opts.buildArgs ?? {})) {
-    args.push("--opt", `build-arg:${key}=${value}`);
+    if (builder) args.push("--build-arg", `${key}=${value}`);
+    else args.push("--opt", `build-arg:${key}=${value}`);
   }
 
   let secretDir: string | null = null;
@@ -112,7 +158,10 @@ export async function buildImage(
 
     const startMs = Date.now();
 
-    const proc = Bun.spawn(["buildctl", ...args], {
+    // buildx takes the build context as its last positional argument.
+    if (builder) args.push(opts.contextDir);
+
+    const proc = Bun.spawn([builder ? "docker" : "buildctl", ...args], {
       stdout: "pipe",
       stderr: "pipe",
       ...(opts.signal ? { signal: opts.signal } : {}),
@@ -161,8 +210,13 @@ export async function buildImage(
 
     if (code !== 0) {
       throw new Error(
-        `buildctl failed (exit ${code}) for image ${opts.imageRef}`
+        `${builder ? "docker buildx" : "buildctl"} failed (exit ${code}) for image ${opts.imageRef}`
       );
+    }
+
+    if (metadataFile) {
+      const digest = await readBuildxDigest(metadataFile);
+      if (digest) imageDigest = digest;
     }
 
     // If we couldn't parse the digest from output, fall back to a placeholder
@@ -176,5 +230,22 @@ export async function buildImage(
     if (secretDir) {
       await rm(secretDir, { recursive: true, force: true });
     }
+    if (metadataDir) {
+      await rm(metadataDir, { recursive: true, force: true });
+    }
+  }
+}
+
+async function readBuildxDigest(file: string): Promise<string | null> {
+  try {
+    const metadata = JSON.parse(await readFile(file, "utf8")) as {
+      "containerimage.digest"?: unknown;
+    };
+    const digest = metadata["containerimage.digest"];
+    return typeof digest === "string" && /^sha256:[a-f0-9]{64}$/.test(digest)
+      ? digest
+      : null;
+  } catch {
+    return null;
   }
 }

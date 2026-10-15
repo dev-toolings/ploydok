@@ -136,7 +136,7 @@ function AuditEventRow({ event }: { event: AuditEvent }): React.JSX.Element {
   const actionColor = getActionColor(event.action)
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-panel-border bg-panel-inset px-4 py-3 shadow-sm">
+    <div className="flex items-center justify-between gap-4 rounded-[10px] bg-panel-inset px-4 py-3 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
       <div className="flex min-w-0 items-center gap-3">
         <span
           className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${actionColor}`}
@@ -167,7 +167,7 @@ function AuditTimelineSkeleton(): React.JSX.Element {
       {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
-          className="flex items-center justify-between gap-4 rounded-xl border border-panel-border bg-panel-inset px-4 py-3 shadow-sm"
+          className="flex items-center justify-between gap-4 rounded-[10px] bg-panel-inset px-4 py-3 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
         >
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="h-5 w-20 skeleton-surface rounded-full" />
@@ -186,10 +186,10 @@ function AuditTimelineSkeleton(): React.JSX.Element {
 function getActionColor(action: string | undefined): string {
   if (!action) return "bg-muted text-muted-foreground"
   if (action.includes("created"))
-    return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-  if (action.includes("deleted")) return "bg-destructive/10 text-destructive"
+    return "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]"
+  if (action.includes("deleted")) return "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e]"
   if (action.includes("updated"))
-    return "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+    return "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]"
   return "bg-muted text-muted-foreground"
 }
 

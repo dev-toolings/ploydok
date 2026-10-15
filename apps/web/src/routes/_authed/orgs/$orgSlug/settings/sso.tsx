@@ -173,7 +173,7 @@ function SSOSettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">SSO Configuration</h1>
+        <h1 className="text-xl leading-[26px] font-medium text-foreground">SSO Configuration</h1>
         <p className="mt-2 text-gray-600">
           Configure OIDC Single Sign-On for your organization
         </p>
@@ -311,7 +311,7 @@ function SSOSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           <div>
-            <h3 className="mb-2 font-semibold">Redirect URI</h3>
+            <h3 className="mb-2 font-medium">Redirect URI</h3>
             <p className="mb-2 text-gray-600">
               Configure your OIDC provider to allow this redirect URI:
             </p>
@@ -319,7 +319,7 @@ function SSOSettingsPage() {
           </div>
 
           <div>
-            <h3 className="mb-2 font-semibold">Required Scopes</h3>
+            <h3 className="mb-2 font-medium">Required Scopes</h3>
             <p className="mb-2 text-gray-600">
               Your OIDC provider must return the following claims:
             </p>
@@ -335,7 +335,7 @@ function SSOSettingsPage() {
           </div>
 
           <div>
-            <h3 className="mb-2 font-semibold">User Provisioning</h3>
+            <h3 className="mb-2 font-medium">User Provisioning</h3>
             <p className="text-gray-600">
               Only existing organization members can log in via SSO. A user must
               be invited to the organization before they can use SSO login.

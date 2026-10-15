@@ -48,9 +48,9 @@ function Kpi({
   hint: string
 }): React.JSX.Element {
   return (
-    <div className="min-w-0 rounded-xl border border-panel-border bg-panel p-4">
+    <div className="min-w-0 rounded-2xl bg-panel p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
+      <p className="mt-2 text-2xl font-medium tabular-nums leading-[34px]">{value}</p>
       <p className="mt-2 text-xs leading-5 break-words text-muted-foreground">
         {hint}
       </p>
@@ -220,8 +220,8 @@ export function DiskInsightsPanel({
         </p>
       ) : null}
       <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-2">
-        <div className="min-w-0 rounded-xl border border-panel-border bg-panel p-4">
-          <h2 className="text-sm font-semibold">
+        <div className="min-w-0 rounded-2xl bg-panel p-4">
+          <h2 className="text-sm font-medium">
             {t("adminDisk.kpi.historyTitle")}
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -338,8 +338,8 @@ export function DiskInsightsPanel({
             </div>
           </div>
         </div>
-        <div className="min-w-0 rounded-xl border border-panel-border bg-panel p-4">
-          <h2 className="text-sm font-semibold">
+        <div className="min-w-0 rounded-2xl bg-panel p-4">
+          <h2 className="text-sm font-medium">
             {t("adminDisk.kpi.topTitle")}
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">

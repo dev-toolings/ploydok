@@ -32,10 +32,10 @@ import type { Build, BuildStatus } from "@ploydok/shared"
 
 const BUILD_STATUS_CLASS: Record<BuildStatus, string> = {
   pending: "bg-muted text-muted-foreground",
-  running: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  succeeded: "bg-green-500/10 text-green-600 dark:text-green-400",
-  succeeded_with_warning: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  failed: "bg-destructive/10 text-destructive",
+  running: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
+  succeeded: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
+  succeeded_with_warning: "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]",
+  failed: "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e]",
   cancelled: "bg-muted text-muted-foreground",
 }
 
@@ -62,11 +62,11 @@ const BUILD_METHOD_LABEL: Record<string, string> = {
 }
 
 const BUILD_METHOD_CLASS: Record<string, string> = {
-  docker: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  dockerfile: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  compose: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  nixpacks: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  railpack: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  docker: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
+  dockerfile: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
+  compose: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
+  nixpacks: "bg-violet-100 dark:bg-[#2f0d68]/60 text-violet-700 dark:text-[#a684ff]",
+  railpack: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
 }
 
 const TRIGGER_SOURCE_KEY: Record<string, string> = {
@@ -81,13 +81,13 @@ const TRIGGER_SOURCE_KEY: Record<string, string> = {
 }
 
 const TRIGGER_SOURCE_CLASS: Record<string, string> = {
-  api: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  api: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
   "webhook:github": "bg-neutral-500/10 text-neutral-700 dark:text-neutral-300",
-  "webhook:gitlab": "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-  "auto:push": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  "auto:tag": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  "cron:gc": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  "cron:cleanup": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  "webhook:gitlab": "bg-orange-100 dark:bg-[#441306]/60 text-orange-800 dark:text-[#ff8904]",
+  "auto:push": "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
+  "auto:tag": "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
+  "cron:gc": "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]",
+  "cron:cleanup": "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]",
   system: "bg-muted text-muted-foreground",
 }
 
@@ -182,6 +182,8 @@ export interface DeploymentsTableProps {
   paginate?: boolean
   /** Hides mutating actions for workspace members without owner rights. */
   canManage?: boolean
+  /** Renders edge to edge inside a bordered table card. */
+  flush?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +411,7 @@ function makeColumns(
         return (
           <span
             className={[
-              "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+              "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
               cls,
             ].join(" ")}
           >
@@ -489,6 +491,7 @@ export function DeploymentsTable({
   appDeploymentsHref,
   canManage = true,
   paginate = true,
+  flush = false,
 }: DeploymentsTableProps): React.JSX.Element {
   const { t } = useTranslation(["apps", "common"])
   const columns = React.useMemo(
@@ -535,6 +538,7 @@ export function DeploymentsTable({
       pageSize={10}
       onRowClick={(build) => onSelectBuild(build.id)}
       paginate={paginate}
+      flush={flush}
     />
   )
 }

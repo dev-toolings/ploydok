@@ -389,14 +389,11 @@ describe("app runtime status helpers", () => {
 })
 
 // ---------------------------------------------------------------------------
-// useRecentBuildsAcrossApps — normalization contract
+// normalizeAppDetail: app detail normalization contract
 // ---------------------------------------------------------------------------
 
-describe("useRecentBuildsAcrossApps — normalizeAppDetail applied to raw response", () => {
+describe("normalizeAppDetail applied to raw app detail responses", () => {
   it("normalizeAppDetail is applied: healthcheck fields are flattened", () => {
-    // Simulates what useRecentBuildsAcrossApps queryFn now does:
-    // const data = await apiFetch<{ app: RawAppDetail; ... }>
-    // return { app: normalizeAppDetail(data.app), ... }
     const raw = makeRaw({
       healthcheck: { path: "/readyz", port: 8080, intervalS: 10 },
     })

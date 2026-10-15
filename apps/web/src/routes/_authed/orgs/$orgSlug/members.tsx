@@ -59,7 +59,7 @@ function MembersPage(): React.JSX.Element {
             </div>
           ) : error ? (
             <p
-              className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+              className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-4 py-3 text-sm text-neg-700 dark:text-[#ff637e]"
               role="alert"
             >
               {t("members.loadFailed")}
@@ -158,7 +158,7 @@ function PendingInvitationRow({
   }
 
   return (
-    <div className="flex items-center justify-between rounded-xl border border-panel-border bg-panel-inset p-4 shadow-sm">
+    <div className="flex items-center justify-between rounded-[10px] bg-panel-inset p-4 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
       <div className="flex-1">
         <p className="text-sm font-medium text-foreground">
           {invitation.email}

@@ -69,7 +69,7 @@ function ServiceDetailPage(): React.JSX.Element {
       >
         <p
           role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-4 py-3 text-sm text-neg-700 dark:text-[#ff637e]"
         >
           {t("loadFailed")}
         </p>
@@ -202,7 +202,7 @@ function Row({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-panel-border bg-panel-inset px-4 py-3 shadow-sm">
+    <div className="flex items-center justify-between gap-4 rounded-[10px] bg-panel-inset px-4 py-3 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <span>{children}</span>
     </div>
@@ -280,7 +280,7 @@ function GeneratedEnvPanel({
             return (
               <div
                 key={key}
-                className="flex items-center gap-2 rounded-xl border border-panel-border bg-panel-inset px-3 py-2 shadow-sm"
+                className="flex items-center gap-2 rounded-[10px] bg-panel-inset px-3 py-2 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-mono text-[11px] font-medium text-foreground">

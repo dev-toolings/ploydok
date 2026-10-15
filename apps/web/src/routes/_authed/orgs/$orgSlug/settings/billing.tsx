@@ -98,7 +98,7 @@ function BillingContent({
       )}
 
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold">{t("billing.currentPlan")}</h3>
+        <h3 className="text-base font-medium">{t("billing.currentPlan")}</h3>
         <div className="rounded-lg border p-6">
           <div className="space-y-2">
             <div className="text-2xl font-bold">{data.plan.name}</div>
@@ -114,7 +114,7 @@ function BillingContent({
 
       {data.subscription.status === "active" && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">{t("billing.subscription")}</h3>
+          <h3 className="text-base font-medium">{t("billing.subscription")}</h3>
           <div className="rounded-lg border p-6">
             <div className="space-y-2">
               <div className="flex justify-between">
@@ -156,7 +156,7 @@ function BillingContent({
       )}
 
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold">{t("billing.availablePlans")}</h3>
+        <h3 className="text-base font-medium">{t("billing.availablePlans")}</h3>
         <div className="space-y-3">
           {["pro", "enterprise"].map((planSlug) => (
             <div key={planSlug} className="rounded-lg border p-4">

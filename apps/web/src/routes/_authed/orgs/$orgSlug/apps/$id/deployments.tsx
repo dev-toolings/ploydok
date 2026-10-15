@@ -294,7 +294,7 @@ function AppDeploymentsTab(): React.JSX.Element {
 
       <section className="flex flex-col gap-3">
         <header>
-          <h2 className="text-sm font-semibold">{t("deployments.triggersTitle")}</h2>
+          <h2 className="text-sm font-medium">{t("deployments.triggersTitle")}</h2>
           <p className="text-xs leading-5 text-muted-foreground">
             {t("deployments.triggersHint")}
           </p>
@@ -306,7 +306,7 @@ function AppDeploymentsTab(): React.JSX.Element {
 
       <section className="flex flex-col gap-3">
         <header>
-          <h2 className="text-sm font-semibold">{t("deployments.webhooksTitle")}</h2>
+          <h2 className="text-sm font-medium">{t("deployments.webhooksTitle")}</h2>
           <p className="text-xs leading-5 text-muted-foreground">
             {t("deployments.webhooksHint")}
           </p>

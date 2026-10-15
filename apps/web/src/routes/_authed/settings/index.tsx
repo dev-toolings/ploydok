@@ -50,7 +50,7 @@ function SettingsOverviewPage(): React.JSX.Element {
 
         <section
           aria-label="Account"
-          className="rounded-xl rounded-2xl bg-panel p-5"
+          className="rounded-2xl bg-panel p-5"
         >
           <div className="flex items-center gap-4">
             <div className="flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
@@ -68,7 +68,7 @@ function SettingsOverviewPage(): React.JSX.Element {
 
           <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
             <div>
-              <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+              <dt className="font-sans text-xs text-muted-foreground">
                 Passkeys
               </dt>
               <dd className="mt-0.5 font-medium">
@@ -76,7 +76,7 @@ function SettingsOverviewPage(): React.JSX.Element {
               </dd>
             </div>
             <div>
-              <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+              <dt className="font-sans text-xs text-muted-foreground">
                 TOTP
               </dt>
               <dd className="mt-0.5 font-medium">
@@ -84,7 +84,7 @@ function SettingsOverviewPage(): React.JSX.Element {
               </dd>
             </div>
             <div>
-              <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+              <dt className="font-sans text-xs text-muted-foreground">
                 Backup codes
               </dt>
               <dd className="mt-0.5 font-medium">
@@ -116,13 +116,13 @@ function SectionLink({ section }: { section: SectionCard }): React.JSX.Element {
   return (
     <Link
       to={section.to}
-      className="group flex items-start gap-3 rounded-xl rounded-2xl bg-panel p-4 transition-colors hover:border-primary/40"
+      className="group flex items-start gap-3 rounded-2xl bg-panel p-4 transition-colors"
     >
       <div className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-background">
         <Icon className="size-5 text-muted-foreground group-hover:text-foreground" />
       </div>
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+        <p className="font-sans text-xs text-muted-foreground">
           {section.eyebrow}
         </p>
         <p className="text-sm font-medium">{section.title}</p>

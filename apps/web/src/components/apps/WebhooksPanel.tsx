@@ -67,10 +67,10 @@ export function WebhooksPanel({ appId }: { appId: string }): React.JSX.Element {
         </CardHeader>
 
         <CardContent className="flex flex-col gap-4">
-          <div className="rounded-lg border border-panel-border/70 bg-panel-inset p-4">
+          <div className="rounded-lg bg-panel-inset p-4 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div className="flex flex-col gap-1">
-                <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
+                <p className="text-xs text-muted-foreground">
                   {t("webhooks.currentState")}
                 </p>
                 <p className="text-sm font-medium">

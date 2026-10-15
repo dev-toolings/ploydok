@@ -43,6 +43,44 @@ export function canStopRuntime(status: AppStatus): boolean {
   return status !== "stopped" && status !== "created"
 }
 
+function useScrollbarInset(ref: React.RefObject<HTMLElement | null>): void {
+  React.useLayoutEffect(() => {
+    const bar = ref.current
+    if (!bar) return
+    let scroller: HTMLElement | null = bar.parentElement
+    while (scroller) {
+      const overflowY = getComputedStyle(scroller).overflowY
+      if (overflowY === "auto" || overflowY === "scroll") break
+      scroller = scroller.parentElement
+    }
+    if (!scroller) return
+    const el = scroller
+    const root = document.documentElement
+    const sync = () => {
+      bar.style.setProperty(
+        "--runtime-bar-scrollbar",
+        `${el.offsetWidth - el.clientWidth}px`
+      )
+      // Toasts are portaled to <body>, outside this layout: publish the bar's
+      // horizontal center so globals.css can center them over the bar.
+      const rect = bar.getBoundingClientRect()
+      root.style.setProperty(
+        "--runtime-bar-center",
+        `${rect.left + rect.width / 2}px`
+      )
+    }
+    sync()
+    const observer = new ResizeObserver(sync)
+    observer.observe(el)
+    observer.observe(bar)
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
+    return () => {
+      observer.disconnect()
+      root.style.removeProperty("--runtime-bar-center")
+    }
+  }, [ref])
+}
+
 export function AppHeaderActions({
   app,
 }: {
@@ -50,6 +88,9 @@ export function AppHeaderActions({
 }): React.JSX.Element {
   const { t } = useTranslation("apps")
   const { data: builds } = useBuilds(app.id, { initialData: app.builds })
+
+  const barRef = React.useRef<HTMLDivElement>(null)
+  useScrollbarInset(barRef)
 
   const deploy = useDeployApp(app.id)
   const restart = useRestartApp(app.id)
@@ -64,7 +105,11 @@ export function AppHeaderActions({
 
   return (
     <>
-      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-30 flex justify-center px-3 md:left-[var(--sidebar-width)] group-data-[sidebar-state=collapsed]/shell:md:left-[calc(var(--sidebar-width-icon)+1rem)]">
+      <div
+        ref={barRef}
+        data-slot="runtime-action-bar"
+        className="pointer-events-none fixed right-[var(--runtime-bar-scrollbar,0px)] bottom-[calc(1rem+env(safe-area-inset-bottom))] left-0 z-30 flex justify-center px-3 md:left-[var(--sidebar-width)] group-data-[sidebar-state=collapsed]/shell:md:left-[calc(var(--sidebar-width-icon)+1rem)]"
+      >
         <div
           role="group"
           aria-label={t("actions.runtimeControls")}

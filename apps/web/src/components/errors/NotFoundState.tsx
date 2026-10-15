@@ -64,13 +64,13 @@ export function NotFoundState(): React.JSX.Element {
       </div>
 
       {/* Status badge */}
-      <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-mono text-muted-foreground">
+      <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs font-mono text-muted-foreground">
         404
       </span>
 
       {/* Title + message */}
       <div className="space-y-1">
-        <h2 className="text-base font-semibold text-foreground">{t("pageNotFound")}</h2>
+        <h2 className="text-base font-medium text-foreground">{t("pageNotFound")}</h2>
         <p className="text-sm text-muted-foreground">
           {t("pageNotFoundBody")}
         </p>

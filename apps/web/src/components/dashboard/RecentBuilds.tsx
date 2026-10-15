@@ -73,7 +73,7 @@ export function RecentBuilds({
   const { t } = useTranslation("workspace")
   return (
     <div className="space-y-3">
-      <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+      <p className="text-xs font-medium text-muted-foreground">
         {t("dashboard.recentBuilds")}
       </p>
       {isLoading ? (

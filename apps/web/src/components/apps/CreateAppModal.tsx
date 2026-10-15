@@ -756,7 +756,7 @@ export function CreateAppModal({
             <div>
               <h2
                 id="create-app-title"
-                className="text-base leading-none font-semibold"
+                className="text-base leading-none font-medium"
               >
                 {t("create.newApp")}
               </h2>
@@ -1068,7 +1068,7 @@ export function BranchSelectionDialog({
             </div>
           ) : error ? (
             <p
-              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-3 py-2 text-sm text-neg-700 dark:text-[#ff637e]"
               role="alert"
             >
               {repo
@@ -1126,7 +1126,7 @@ export function BranchSelectionDialog({
                         {branch.name}
                       </span>
                       {branch.commitSha && (
-                        <code className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                        <code className="shrink-0 font-mono text-xs text-muted-foreground">
                           {branch.commitSha.slice(0, 8)}
                         </code>
                       )}
@@ -1187,7 +1187,7 @@ function SummaryCard({ form }: { form: FormState }): React.JSX.Element {
 
   return (
     <div className="space-y-2.5">
-      <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+      <p className="text-xs font-semibold text-muted-foreground">
         {t("create.summaryTitle")}
       </p>
       <SummaryRow
@@ -1524,11 +1524,11 @@ function ProviderTabs({
                 <span className="text-sm leading-none font-medium">
                   {tab.label}
                 </span>
-                <span className="mt-1 truncate text-[11px] text-muted-foreground">
+                <span className="mt-1 truncate text-xs text-muted-foreground">
                   {tab.hint}
                 </span>
               </span>
-              <span className="ml-auto shrink-0 rounded-full border border-border bg-background px-1.5 py-0.5 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
+              <span className="ml-auto shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5 font-sans text-xs text-muted-foreground">
                 {tab.maturity}
               </span>
               {active ? (
@@ -1620,7 +1620,7 @@ function GitSection({
             <div className="h-9 w-full skeleton-surface rounded-md" />
           ) : branchesError ? (
             <p
-              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-3 py-2 text-sm text-neg-700 dark:text-[#ff637e]"
               role="alert"
             >
               {t("create.loadBranchesFailedFor", {
@@ -1668,7 +1668,7 @@ function GitSection({
           {selectedCommitSha && (
             <p className="text-xs text-muted-foreground">
               {t("create.currentCommit")}{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
                 {selectedCommitSha.slice(0, 12)}
               </code>
             </p>
@@ -1885,7 +1885,7 @@ function BuildStep({
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">{t("create.buildMethod")}</p>
           {detectionLoading && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span className="size-1.5 animate-pulse rounded-full bg-primary" />
               {t("create.detecting")}
             </span>
@@ -2074,7 +2074,7 @@ function BuildStep({
 
           {!isStaticBuild && (
             <div className="space-y-2 border-t border-border/60 pt-3">
-              <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+              <p className="text-xs font-semibold text-muted-foreground">
                 {t("create.healthcheck")}
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -2173,7 +2173,7 @@ function ResourcesStep({
 
       <section className="rounded-2xl bg-panel">
         <div className="border-b border-border px-4 py-3">
-          <h3 className="text-sm font-semibold">{t("create.summary")}</h3>
+          <h3 className="text-sm font-medium">{t("create.summary")}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("create.reviewHint")}
           </p>
@@ -2214,7 +2214,7 @@ function ResourcesStep({
 
       <section className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-2xl bg-panel p-4">
-          <h3 className="text-sm font-semibold">{t("create.variables")}</h3>
+          <h3 className="text-sm font-medium">{t("create.variables")}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("create.manualVars", { count: envCount })}
             {dbVars.length > 0 ? t("create.plusDbVars", { count: dbVars.length }) : ""}
@@ -2249,7 +2249,7 @@ function ResourcesStep({
         </div>
 
         <div className="rounded-2xl bg-panel p-4">
-          <h3 className="text-sm font-semibold">
+          <h3 className="text-sm font-medium">
             {t("create.selectedResources")}
           </h3>
           <div className="mt-3 grid gap-2 text-sm">
@@ -2298,7 +2298,7 @@ function ReviewTile({
 }): React.JSX.Element {
   return (
     <div className="min-w-0 border-b border-border px-4 py-3 xl:border-r xl:border-b-0 xl:last:border-r-0">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <p className="text-xs font-medium text-muted-foreground">
         {label}
       </p>
       <p
@@ -2347,7 +2347,7 @@ function DetectedPanel({
   return (
     <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
       <div className="flex items-center gap-2">
-        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 font-sans text-[9px] font-semibold tracking-wide text-primary uppercase">
+        <span className="rounded-sm bg-primary/15 px-1.5 py-0.5 font-sans text-xs font-semibold text-primary">
           {labelByConfidence[classification.confidence]}
         </span>
         <span className="text-sm font-medium">
@@ -2359,7 +2359,7 @@ function DetectedPanel({
           {classification.signals.map((s) => (
             <span
               key={s}
-              className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
             >
               {s}
             </span>
@@ -2404,7 +2404,7 @@ function LaravelRuntimePanel({
             {t("create.laravelSqliteHint")}
           </p>
         </div>
-        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-sans text-[9px] font-semibold tracking-wide text-primary uppercase">
+        <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 font-sans text-xs font-semibold text-primary">
           SQLite
         </span>
       </div>
@@ -3281,7 +3281,7 @@ function BuildMethodCard({
       <div className="flex w-full items-center justify-between">
         <span className="text-sm font-medium">{label}</span>
         {detected && (
-          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-sans text-[9px] font-medium tracking-wide text-primary uppercase">
+          <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 font-sans text-xs font-medium text-primary">
             {t("create.detected")}
           </span>
         )}

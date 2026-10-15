@@ -39,7 +39,7 @@ export function AppearancePanel(): React.JSX.Element {
   return (
     <section
       aria-label={t("theme.label")}
-      className="space-y-6 rounded-xl rounded-2xl bg-panel p-5"
+      className="space-y-6 rounded-2xl bg-panel p-5"
     >
       <div className="space-y-4">
         <div>
@@ -62,9 +62,9 @@ export function AppearancePanel(): React.JSX.Element {
                 type="button"
                 role="radio"
                 aria-checked={active}
-                onClick={() => setMode(opt.value)}
+                onClick={(event) => setMode(opt.value, event.currentTarget)}
                 className={cn(
-                  "flex w-full flex-col items-start gap-1.5 rounded-xl border border-panel-border bg-panel-inset p-3 text-left shadow-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "flex w-full flex-col items-start gap-1.5 rounded-[10px] bg-panel-inset p-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]",
                   active
                     ? "border-primary ring-1 ring-primary"
                     : "hover:border-muted-foreground/30 hover:bg-accent/40"

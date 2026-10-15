@@ -111,7 +111,7 @@ function CreateCredentialForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="space-y-3 rounded-xl rounded-2xl bg-panel p-5"
+      className="space-y-3 rounded-2xl bg-panel p-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -227,7 +227,7 @@ function CredentialList({
   credentials: Array<RegistryCredential>
 }): React.JSX.Element {
   return (
-    <ul className="divide-y divide-border rounded-xl rounded-2xl bg-panel">
+    <ul className="divide-y divide-border rounded-2xl bg-panel">
       {credentials.map((c) => (
         <CredentialRow key={c.id} credential={c} />
       ))}
@@ -271,7 +271,7 @@ function CredentialRow({
         className={cn(
           "h-8 gap-1.5 px-2.5",
           confirming
-            ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
+            ? "border-destructive/40 bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e] hover:bg-destructive/15"
             : "text-muted-foreground hover:text-foreground"
         )}
       >
@@ -305,7 +305,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Element {
 
 function CredentialListSkeleton(): React.JSX.Element {
   return (
-    <div className="divide-y divide-border rounded-xl rounded-2xl bg-panel">
+    <div className="divide-y divide-border rounded-2xl bg-panel">
       {Array.from({ length: 2 }).map((_, i) => (
         <div key={i} className="flex items-center gap-3 px-4 py-3">
           <div className="size-9 rounded-md skeleton-surface" />

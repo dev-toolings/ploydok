@@ -53,7 +53,7 @@ export function GitLabPanel(): React.JSX.Element {
   return (
     <div className="space-y-6">
       {justConnected ? (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300">
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-pos-100 dark:bg-[#192e03]/60 p-3 text-xs text-pos-700 dark:text-[#9ae600]">
           <RiCheckboxCircleFill className="size-4" />
           <span>
             {t("gitlab.connectedBanner")}
@@ -71,7 +71,7 @@ export function GitLabPanel(): React.JSX.Element {
       ) : null}
 
       {isLoading ? (
-        <div className="rounded-2xl rounded-xl bg-panel p-5 text-xs text-muted-foreground">
+        <div className="rounded-2xl bg-panel p-5 text-xs text-muted-foreground">
           {t("common:loading")}
         </div>
       ) : configured ? (
@@ -190,7 +190,7 @@ function ConfiguredState({
 }): React.JSX.Element {
   const { t } = useTranslation("settings")
   return (
-    <section className="space-y-4 rounded-2xl rounded-xl bg-panel p-5">
+    <section className="space-y-4 rounded-2xl bg-panel p-5">
       <header className="flex items-center gap-3">
         <div className="flex size-10 items-center justify-center rounded-md border border-border bg-background">
           <RiGitlabFill className="size-5 text-[#fc6d26]" />
@@ -202,7 +202,7 @@ function ConfiguredState({
             </h2>
             <span
               className={cn(
-                "inline-flex items-center gap-1 font-sans text-[10px] tracking-wide uppercase",
+                "inline-flex items-center gap-1 font-sans text-xs",
                 connectionState === "unavailable"
                   ? "text-amber-600 dark:text-amber-400"
                   : "text-emerald-600 dark:text-emerald-400"
@@ -235,7 +235,7 @@ function ConfiguredState({
 
       <dl className="grid gap-3 text-xs sm:grid-cols-2">
         <div>
-          <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <dt className="font-sans text-xs text-muted-foreground">
             {t("gitlab.applicationId")}
           </dt>
           <dd className="mt-0.5 font-mono text-xs">
@@ -243,7 +243,7 @@ function ConfiguredState({
           </dd>
         </div>
         <div>
-          <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <dt className="font-sans text-xs text-muted-foreground">
             {t("gitlab.instance")}
           </dt>
           <dd className="mt-0.5 truncate font-mono text-xs">

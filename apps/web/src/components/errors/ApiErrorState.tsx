@@ -126,7 +126,7 @@ export function ApiErrorState({
           <AlertCircleIcon className="size-6 text-destructive" />
         </div>
         <div className="space-y-1">
-          <h2 className="text-base font-semibold text-foreground">{title}</h2>
+          <h2 className="text-base font-medium text-foreground">{title}</h2>
           <p className="text-sm text-muted-foreground">
             {t("secondFactorBody")}
           </p>
@@ -158,14 +158,14 @@ export function ApiErrorState({
 
       {/* Status badge */}
       {status !== undefined && (
-        <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 font-sans text-xs text-muted-foreground">
+        <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 font-sans text-xs text-muted-foreground">
           {status}
         </span>
       )}
 
       {/* Title + message */}
       <div className="space-y-1">
-        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+        <h2 className="text-base font-medium text-foreground">{title}</h2>
         {message && <p className="text-sm text-muted-foreground">{message}</p>}
       </div>
 

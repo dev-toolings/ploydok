@@ -320,7 +320,7 @@ export function GitHubPanel(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-base font-semibold">{t("github.appTitle")}</h2>
+        <h2 className="text-base font-medium">{t("github.appTitle")}</h2>
         <p className="text-sm text-muted-foreground">
           {t("github.appDescription")}
         </p>
@@ -401,7 +401,7 @@ function GitHubUserConnection({
           <GitHubIcon className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold">
+          <h2 className="text-sm font-medium">
             {status?.connected
               ? t("github.connected")
               : t("github.connectAccount")}
@@ -518,7 +518,7 @@ export function InstallationsCard({
         data-testid="github-installations-header"
       >
         <div>
-          <h2 className="text-base font-semibold">
+          <h2 className="text-base font-medium">
             {t("github.installations")}
           </h2>
           <p className="text-sm text-muted-foreground">
@@ -879,7 +879,7 @@ function GitHubAppConfiguredState({
           </p>
         </div>
         <div className="ml-auto">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+          <span className="inline-flex items-center gap-1.5 rounded-md bg-pos-100 dark:bg-[#192e03]/60 px-2.5 py-0.5 text-xs font-medium text-pos-700 dark:text-[#9ae600]">
             <span
               className="size-1.5 rounded-full bg-current"
               aria-hidden="true"

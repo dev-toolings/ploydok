@@ -88,7 +88,7 @@ function ChannelRow({ channel, appId, onEdit }: ChannelRowProps) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-panel-border/70 bg-panel-inset p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-lg bg-panel-inset p-4 sm:flex-row sm:items-center sm:justify-between shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium">{channel.name}</span>
@@ -177,7 +177,7 @@ export function ChannelList({
       {showHeader ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="font-heading text-lg font-semibold">
+            <h2 className="font-heading text-base font-medium">
               Notification channels
             </h2>
             <p className="text-sm text-muted-foreground">

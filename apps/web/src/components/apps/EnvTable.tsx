@@ -347,7 +347,7 @@ export function EnvTable({
             </p>
           </div>
           {diff && pendingCount > 0 && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               {t("env.unsaved", { count: pendingCount })}
             </span>
           )}
@@ -404,7 +404,7 @@ export function EnvTable({
       {importError && (
         <div
           role="alert"
-          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          className="rounded-md border border-destructive/40 bg-neg-100 dark:bg-[#4d0218]/60 px-3 py-2 text-xs text-neg-700 dark:text-[#ff637e]"
         >
           {importError}
         </div>
@@ -427,12 +427,12 @@ export function EnvTable({
       )}
 
       {/* Table */}
-      <div className="overflow-hidden rounded-2xl rounded-xl bg-panel/30">
+      <div className="overflow-hidden rounded-2xl bg-panel/30">
         {rows.length === 0 ? (
           <EmptyDropArea onPickFile={openFilePicker} onAddManually={addRow} />
         ) : (
           <>
-            <div className="grid grid-cols-[minmax(200px,1.1fr)_minmax(260px,2fr)_auto_auto_auto] gap-0 border-b border-border bg-muted/40 px-4 py-2.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <div className="grid grid-cols-[minmax(200px,1.1fr)_minmax(260px,2fr)_auto_auto_auto] gap-0 border-b border-border bg-muted/40 px-4 py-2.5 text-xs font-medium text-muted-foreground">
               <span>{t("env.key")}</span>
               <span>{t("env.value")}</span>
               <span className="px-3">{t("env.secret")}</span>

@@ -35,7 +35,7 @@ function AppDetailLayout(): React.JSX.Element {
       className={
         isLogsRoute
           ? "flex min-h-0 w-full flex-1 flex-col bg-background pb-[calc(6rem+env(safe-area-inset-bottom))]"
-          : "flex w-full flex-1 flex-col bg-background pb-[calc(6rem+env(safe-area-inset-bottom))]"
+          : "mx-auto flex w-full max-w-[1348px] flex-1 flex-col bg-background pb-[calc(6rem+env(safe-area-inset-bottom))]"
       }
     >
       {currentApp ? <AppBar app={currentApp} /> : null}

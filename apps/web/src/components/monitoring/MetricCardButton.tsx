@@ -84,7 +84,7 @@ export function MetricCardButton({
       <div className="relative z-10 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Icon className="size-3" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.16em]">
+          <span className="text-[10px] font-semibold tracking-[0.16em]">
             {label}
           </span>
         </div>
@@ -107,7 +107,7 @@ export function MetricCardButton({
           {value}
         </span>
         {deltaLabel ? (
-          <span className="font-sans text-[10px] leading-none tabular-nums text-muted-foreground">
+          <span className="font-sans text-xs leading-none tabular-nums text-muted-foreground">
             {deltaLabel}
           </span>
         ) : null}

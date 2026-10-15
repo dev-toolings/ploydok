@@ -30,14 +30,14 @@ export function WorkspacesSection(): React.JSX.Element {
   return (
     <section
       aria-label={t("workspace.listTitle")}
-      className="rounded-2xl rounded-xl bg-panel p-5"
+      className="rounded-2xl bg-panel p-5"
     >
       <header className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-xs text-muted-foreground">
             {t("account")}
           </p>
-          <h2 className="mt-1 text-base font-semibold text-foreground">
+          <h2 className="mt-1 text-base font-medium text-foreground">
             {t("workspace.listTitle")}
           </h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
@@ -111,7 +111,7 @@ function WorkspaceRow({
         <p className="truncate text-sm font-medium text-foreground">
           {organization.name}
           {organization.is_default ? (
-            <span className="ml-2 inline-flex rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+            <span className="ml-2 inline-flex rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-xs text-muted-foreground">
               {t("workspace.default")}
             </span>
           ) : null}

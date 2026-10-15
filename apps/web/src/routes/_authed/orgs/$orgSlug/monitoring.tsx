@@ -337,7 +337,7 @@ function OpsStrip({
   return (
     <section
       aria-label={t("fleet")}
-      className="relative overflow-hidden rounded-xl rounded-2xl bg-panel"
+      className="relative overflow-hidden rounded-2xl bg-panel"
     >
       <div
         aria-hidden
@@ -364,7 +364,7 @@ function OpsStrip({
           <div className="space-y-0.5">
             <p
               className={cn(
-                "font-sans text-[10px] tracking-wide uppercase",
+                "font-sans text-xs",
                 liveStyles.label
               )}
             >
@@ -425,7 +425,7 @@ function OpsStripSkeleton(): React.JSX.Element {
     <section
       aria-busy="true"
       aria-label={t("fleet")}
-      className="overflow-hidden rounded-xl rounded-2xl bg-panel"
+      className="overflow-hidden rounded-2xl bg-panel"
     >
       <div className="grid divide-y divide-border md:grid-cols-[auto_1fr] md:divide-x md:divide-y-0">
         <div className="flex items-center gap-3 px-5 py-4">
@@ -469,7 +469,7 @@ function Metric({
   }[accent]
   return (
     <div className="flex min-w-0 flex-col gap-1 px-5 py-4">
-      <dt className="flex items-center gap-1.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="flex items-center gap-1.5 font-sans text-xs text-muted-foreground">
         <Icon className={cn("size-3", accentText)} />
         {label}
       </dt>
@@ -485,7 +485,7 @@ function Metric({
           {value}
         </span>
         {sub ? (
-          <span className="ml-1 font-sans text-[10px] text-muted-foreground">
+          <span className="ml-1 font-sans text-xs text-muted-foreground">
             {sub}
           </span>
         ) : null}
@@ -607,7 +607,7 @@ function ChipGroup({
 }): React.JSX.Element {
   return (
     <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 p-0.5">
-      <span className="flex items-center gap-1 pr-1 pl-2 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
+      <span className="flex items-center gap-1 pr-1 pl-2 font-sans text-xs text-muted-foreground">
         <Icon className="size-3" />
         {label}
       </span>
@@ -645,7 +645,7 @@ function Chip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex h-6 items-center gap-1 rounded-sm px-2 text-[11px] font-medium transition-colors",
+        "inline-flex h-6 items-center gap-1 rounded-sm px-2 text-xs font-medium transition-colors",
         active
           ? "bg-background shadow-[0_0_0_1px_var(--border)]"
           : "hover:text-foreground",
@@ -654,7 +654,7 @@ function Chip({
     >
       {children}
       {count !== undefined ? (
-        <span className="font-sans text-[9px] opacity-60">{count}</span>
+        <span className="font-sans text-xs opacity-60">{count}</span>
       ) : null}
     </button>
   )
@@ -689,7 +689,7 @@ function InlineAlert({
     >
       <Icon className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-0.5">
-        <p className="font-sans text-[10px] tracking-wide uppercase opacity-80">
+        <p className="font-sans text-xs opacity-80">
           {code}
         </p>
         <p className="text-xs leading-5">{message}</p>

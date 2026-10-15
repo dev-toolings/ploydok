@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { chmod, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises"
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+} from "node:fs/promises"
 import { existsSync, mkdirSync } from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -229,6 +240,36 @@ export interface NixpacksGeneratedContext {
   dockerfile: string
 }
 
+/**
+ * Recursive copy that never follows symlinks, never overwrites an existing
+ * destination file, and skips the top-level `.git` plus the output dir itself
+ * (fs.cp refuses a destination inside its source).
+ */
+async function copySources(
+  src: string,
+  dest: string,
+  skip: string,
+  top = true
+): Promise<void> {
+  if (!existsSync(src)) return
+  await mkdir(dest, { recursive: true })
+  for (const entry of await readdir(src, { withFileTypes: true })) {
+    const from = path.join(src, entry.name)
+    const to = path.join(dest, entry.name)
+    if (path.resolve(from) === skip) continue
+    if (top && entry.name === ".git") continue
+    if (entry.isDirectory()) {
+      await copySources(from, to, skip, false)
+    } else if (!existsSync(to)) {
+      if (entry.isSymbolicLink()) {
+        await symlink(await readlink(from), to)
+      } else {
+        await copyFile(from, to)
+      }
+    }
+  }
+}
+
 export async function nixpacksBuild(
   opts: NixpacksBuildOptions
 ): Promise<NixpacksGeneratedContext> {
@@ -380,6 +421,18 @@ export async function nixpacksBuild(
   if (code !== 0) {
     await rm(outputDir, { recursive: true, force: true })
     throw new Error(`nixpacks build failed (exit ${code}) for tag ${opts.tag}`)
+  }
+
+  // `nixpacks build --out` writes only `.nixpacks/`. The generated Dockerfile
+  // does `COPY . /app/.` and COPYs `.nixpacks/*` assets, so the context must
+  // hold the sources too. Generated files win on clash (an existing destination
+  // file is never overwritten); `.git` and the output dir itself (it may live
+  // inside the workspace) are skipped. The original workspace is untouched.
+  try {
+    await copySources(ctx, outputDir, path.resolve(outputDir))
+  } catch (err) {
+    await rm(outputDir, { recursive: true, force: true })
+    throw err
   }
   return {
     contextDir: outputDir,

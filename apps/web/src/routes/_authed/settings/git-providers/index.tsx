@@ -121,7 +121,7 @@ function ProviderCard({
     <Link
       to="/settings/git-providers/$slug"
       params={{ slug }}
-      className="group flex flex-col gap-4 rounded-2xl rounded-xl bg-panel p-5 transition-colors hover:border-primary/40"
+      className="group flex flex-col gap-4 rounded-2xl bg-panel p-5 transition-colors"
     >
       {inner}
     </Link>
@@ -135,21 +135,21 @@ function StatusBadge({
 }): React.JSX.Element {
   if (status === "loading") {
     return (
-      <span className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+      <span className="font-sans text-xs text-muted-foreground">
         …
       </span>
     )
   }
   if (status === "configured") {
     return (
-      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 font-sans text-xs text-emerald-600 dark:text-emerald-400">
         <RiCheckboxCircleFill className="size-3" />
         Configured
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+    <span className="inline-flex items-center gap-1 font-sans text-xs text-muted-foreground">
       <RiCircleLine className="size-3" />
       Not set
     </span>

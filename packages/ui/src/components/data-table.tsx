@@ -18,6 +18,8 @@ interface DataTableProps<TData> {
   className?: string
   /** Set false when pagination is owned by the server. */
   paginate?: boolean
+  /** Drops the rounded frame when a bordered table card already wraps it. */
+  flush?: boolean
 }
 
 function DataTable<TData>({
@@ -27,6 +29,7 @@ function DataTable<TData>({
   onRowClick,
   className,
   paginate = true,
+  flush = false,
 }: DataTableProps<TData>) {
   const table = useReactTable({
     data: rows,
@@ -43,15 +46,22 @@ function DataTable<TData>({
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
-      <div className="-mx-3 overflow-x-auto rounded-lg border border-border sm:mx-0">
+      <div
+        className={cn(
+          "overflow-x-auto bg-background",
+          flush
+            ? "border-y border-[#ebebeb] dark:border-neutral-800"
+            : "-mx-3 rounded-2xl border border-[#ebebeb] sm:mx-0 dark:border-neutral-800"
+        )}
+      >
         <table className="w-full min-w-[640px] text-sm">
-          <thead className="border-b border-border bg-muted/50">
+          <thead className="border-b border-[#ebebeb] bg-[#f7f7f7] dark:border-neutral-800 dark:bg-[#151515]">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="px-3 py-2 text-left font-medium text-muted-foreground"
+                    className="px-3 py-2.5 text-left font-medium whitespace-nowrap text-neutral-400 dark:text-neutral-500"
                   >
                     {header.isPlaceholder
                       ? null
@@ -70,13 +80,17 @@ function DataTable<TData>({
                 key={row.id}
                 data-slot="data-table-row"
                 className={cn(
-                  "border-b border-border transition-colors last:border-0",
-                  onRowClick && "cursor-pointer hover:bg-muted/50"
+                  "border-b border-[#ebebeb] transition-colors last:border-0 dark:border-neutral-800",
+                  onRowClick &&
+                    "cursor-pointer hover:bg-[#f7f7f7]/70 dark:hover:bg-neutral-900"
                 )}
                 onClick={() => onRowClick?.(row.original)}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-3 py-2">
+                  <td
+                    key={cell.id}
+                    className="h-[58px] px-3 py-2 font-medium text-foreground"
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

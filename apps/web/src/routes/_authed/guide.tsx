@@ -29,11 +29,11 @@ function GuidePage(): React.JSX.Element {
       eyebrow={t("onboarding:guide.eyebrow")}
     >
       <div className="space-y-8">
-        <header className="rounded-2xl rounded-2xl bg-panel p-8 shadow-sm">
+        <header className="rounded-2xl bg-panel p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">{t("onboarding:guide.operational")}</p>
-              <h1 className="text-3xl font-semibold tracking-tight">{t("onboarding:guide.heading")}</h1>
+              <p className="text-xs font-semibold text-primary">{t("onboarding:guide.operational")}</p>
+              <h1 className="text-xl leading-[26px] font-medium text-foreground">{t("onboarding:guide.heading")}</h1>
               <p className="text-sm leading-6 text-muted-foreground">
                 {t("onboarding:guide.intro")}
               </p>
@@ -213,8 +213,8 @@ function GuidePage(): React.JSX.Element {
           </div>
         </GuideSection>
 
-        <section id="expected" className="rounded-2xl rounded-2xl bg-panel p-6">
-          <h2 className="text-lg font-semibold">Expected URLs reference</h2>
+        <section id="expected" className="rounded-2xl bg-panel p-6">
+          <h2 className="text-base font-medium">Expected URLs reference</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Keep these values aligned between the API environment, the manifest flow, and the GitHub App settings page.
           </p>
@@ -259,9 +259,9 @@ function GuideSection({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <section className="rounded-2xl rounded-2xl bg-panel p-6 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">{eyebrow}</p>
-      <h2 className="mt-2 text-xl font-semibold">{title}</h2>
+    <section className="rounded-2xl bg-panel p-6">
+      <p className="text-xs font-semibold text-primary">{eyebrow}</p>
+      <h2 className="mt-2 text-xl font-medium">{title}</h2>
       <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
       <div className="mt-5 space-y-5">{children}</div>
     </section>
@@ -287,8 +287,8 @@ function QuickCard({
     ? ({ to, ...(params ? { params } : {}) } as Parameters<typeof Link>[0])
     : null;
   return (
-    <div className="rounded-2xl rounded-2xl bg-panel p-5 shadow-sm">
-      <h2 className="text-base font-semibold">{title}</h2>
+    <div className="rounded-2xl bg-panel p-5">
+      <h2 className="text-base font-medium">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
       <div className="mt-4">
         {to?.startsWith("#") ? (
@@ -320,7 +320,7 @@ function StatusRow({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border/70 bg-card px-3 py-2">
-      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-xs text-muted-foreground">{label}</span>
       <span className={mono ? "font-mono text-xs break-all" : "text-sm font-medium"}>{value}</span>
     </div>
   );
@@ -350,11 +350,11 @@ function WhatYouShouldSee({
 }): React.JSX.Element {
   return (
     <div className="rounded-2xl border border-dashed border-panel-border bg-panel-inset p-5">
-      <h3 className="text-sm font-semibold">{title}</h3>
+      <h3 className="text-sm font-medium">{title}</h3>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         {lines.map((line, index) => (
-          <div key={line} className="rounded-xl rounded-2xl bg-panel p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Screen {index + 1}</p>
+          <div key={line} className="rounded-2xl bg-panel p-4">
+            <p className="text-[11px] font-semibold text-muted-foreground">Screen {index + 1}</p>
             <p className="mt-2 text-sm leading-6 text-foreground">{line}</p>
           </div>
         ))}
@@ -379,7 +379,7 @@ function Callout({
 
   return (
     <div className={`rounded-2xl border p-4 ${className}`}>
-      <h3 className="text-sm font-semibold">{title}</h3>
+      <h3 className="text-sm font-medium">{title}</h3>
       <div className="mt-2 text-sm leading-6">{children}</div>
     </div>
   );
@@ -394,7 +394,7 @@ function CodeBlock({
 }): React.JSX.Element {
   return (
     <div className="rounded-2xl border border-border bg-zinc-950 p-4 text-zinc-50">
-      <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
+      <h3 className="text-sm font-medium text-zinc-100">{title}</h3>
       <pre className="mt-3 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-6 text-zinc-300">
         {lines.join("\n")}
       </pre>

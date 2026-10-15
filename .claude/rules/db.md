@@ -6,7 +6,7 @@ DB de dev : **Postgres** dans le container `ploydok-postgres` (image `postgres`)
 
 ```bash
 make secrets-init    # génère PLOYDOK_PG_PASSWORD + DATABASE_URL dans .env.local
-make infra-up        # docker compose : postgres + redis + caddy + buildkitd + registry
+make infra-up        # docker compose : postgres + redis + caddy + registry + agent
 make db-ensure-auth  # attend Postgres + réaligne le rôle si le volume a dérivé
 make db-migrate      # applique les migrations sur Postgres
 ```

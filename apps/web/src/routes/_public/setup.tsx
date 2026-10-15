@@ -349,7 +349,7 @@ function SetupPage(): React.JSX.Element {
               </div>
             </div>
             <div className="space-y-1">
-              <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+              <p className="font-sans text-xs text-muted-foreground">
                 {t("setup.totp.manualEntry")}
               </p>
               <div className="flex items-center gap-2">

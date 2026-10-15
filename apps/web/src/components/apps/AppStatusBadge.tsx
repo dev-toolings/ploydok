@@ -17,27 +17,27 @@ const STATUS_STYLE: Record<
     pulse: false,
   },
   running: {
-    className: "bg-green-500/10 text-green-600 dark:text-green-400",
+    className: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
     pulse: false,
   },
   serving: {
-    className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    className: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
     pulse: false,
   },
   building: {
-    className: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    className: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
     pulse: true,
   },
   restarting: {
-    className: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
+    className: "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]",
     pulse: true,
   },
   deleting: {
-    className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    className: "bg-orange-100 dark:bg-[#441306]/60 text-orange-800 dark:text-[#ff8904]",
     pulse: true,
   },
   failed: {
-    className: "bg-destructive/10 text-destructive",
+    className: "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e]",
     pulse: false,
   },
   stopped: {
@@ -66,11 +66,11 @@ const HEALTH_STYLE: Record<
   { className: string; pulse: boolean }
 > = {
   healthy: {
-    className: "bg-green-500/10 text-green-600 dark:text-green-400",
+    className: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
     pulse: false,
   },
   unhealthy: {
-    className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    className: "bg-orange-100 dark:bg-[#441306]/60 text-orange-800 dark:text-[#ff8904]",
     pulse: true,
   },
 }
@@ -95,7 +95,7 @@ function Pill({
   return (
     <span
       className={[
-        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+        "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-0.5 text-xs font-medium",
         className,
       ]
         .filter(Boolean)

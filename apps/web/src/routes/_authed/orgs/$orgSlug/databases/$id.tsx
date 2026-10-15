@@ -474,7 +474,7 @@ function DatabaseDetailPage(): React.JSX.Element {
           <TabsContent value="general" className="flex flex-col gap-4">
             {db.linked_apps && db.linked_apps.length > 0 && (
               <div className="flex flex-col gap-2 rounded-lg border p-4">
-                <h2 className="text-sm font-semibold">
+                <h2 className="text-sm font-medium">
                   {t("detail.linkedApps")}
                 </h2>
                 {db.linked_apps.map((link) => {
@@ -588,7 +588,7 @@ function DatabaseDetailPage(): React.JSX.Element {
                 <div className="rounded-lg border p-4">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-sm font-semibold">
+                      <h2 className="text-sm font-medium">
                         {t("detail.backupsTitle")}
                       </h2>
                       <p className="text-xs text-muted-foreground">
@@ -615,7 +615,7 @@ function DatabaseDetailPage(): React.JSX.Element {
 
                 <div className="rounded-lg border p-4">
                   <div className="mb-4">
-                    <h2 className="text-sm font-semibold">
+                    <h2 className="text-sm font-medium">
                       {t("detail.policyTitle")}
                     </h2>
                     <p className="text-xs text-muted-foreground">

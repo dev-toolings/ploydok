@@ -1,39 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { Link, createFileRoute, useRouter } from "@tanstack/react-router"
+import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import {
   RiAddLine,
   RiAppsLine,
-  RiArrowRightLine,
-  RiCheckboxCircleFill,
-  RiErrorWarningFill,
+  RiCheckboxCircleLine,
   RiGithubFill,
   RiPlayCircleLine,
-  RiPulseFill,
-  RiTimeLine,
+  RiRocketLine,
+  RiTimerLine,
 } from "@remixicon/react"
 import { healthClass } from "@ploydok/shared"
 import { useTranslation } from "react-i18next"
 import { createPageHead } from "../../../../lib/page-metadata"
 import { CreateAppModal } from "../../../../components/apps/CreateAppModal"
 import { GettingStartedPanel } from "../../../../components/apps/GettingStartedPanel"
-import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
+import { ShellPage } from "../../../../components/layout/AppShell"
+import {
+  AppsShowcaseCard,
+  DeploymentActivityCard,
+  HostResourcesCard,
+  KpiCard,
+  RecentDeploymentsCard,
+  formatKpiDuration,
+  useKpis,
+} from "../../../../components/dashboard/WorkspaceInsights"
 import {
   resolveRuntimeAppStatus,
   selectAppSnapshot,
 } from "../../../../lib/app-runtime"
-import { useApps, useRecentBuildsAcrossApps } from "../../../../lib/apps"
+import { useApps } from "../../../../lib/apps"
+import { useMe } from "../../../../lib/auth"
 import { useGitHubAppConfig } from "../../../../lib/github"
 import { useOrgMonitoring } from "../../../../lib/org-monitoring"
 import {
   organizationPath,
   useCurrentOrganization,
-  useCurrentOrganizationSlug,
 } from "../../../../lib/organizations"
-import i18n from "../../../../lib/i18n"
-import type { BuildWithApp } from "../../../../lib/apps"
-import type { BuildStatus, ContainerSnapshot } from "@ploydok/shared"
+import type { ContainerSnapshot } from "@ploydok/shared"
 
 interface DashboardSearch {
   create?: "github" | "gitlab" | "image"
@@ -124,17 +130,17 @@ function DashboardPage(): React.JSX.Element {
   const { create } = Route.useSearch()
   const [modalOpen, setModalOpen] = React.useState(create !== undefined)
   const organization = useCurrentOrganization()
+  const orgSlug = organization?.slug ?? ""
+  const { data: me } = useMe()
   const {
     data: apps = [],
     isLoading: appsLoading,
     error: appsError,
   } = useApps(organization?.id)
-  const { builds: recentBuilds, isLoading: buildsLoading } =
-    useRecentBuildsAcrossApps(apps, 6)
   const { data: appConfig, isLoading: appConfigLoading } = useGitHubAppConfig()
-  const { data: monitoring, isLoading: monitoringLoading } = useOrgMonitoring(
-    organization?.slug ?? ""
-  )
+  const { data: monitoring, isLoading: monitoringLoading } =
+    useOrgMonitoring(orgSlug)
+  const kpis = useKpis(orgSlug)
   const containers = monitoring?.containers ?? []
   const runtimeSummary = React.useMemo(
     () => summarizeRuntimeResources(containers),
@@ -151,6 +157,10 @@ function DashboardPage(): React.JSX.Element {
       })),
     [apps, containers]
   )
+  const appIds = React.useMemo(
+    () => (appsLoading ? undefined : apps.map((app) => app.id)),
+    [apps, appsLoading]
+  )
 
   const runningApps = appsWithRuntimeStatus.filter(
     (app) => app.runtimeStatus === "running"
@@ -158,8 +168,17 @@ function DashboardPage(): React.JSX.Element {
   const failedApps = appsWithRuntimeStatus.filter(
     (app) => app.runtimeStatus === "failed"
   ).length
-  const latestBuild = recentBuilds.at(0)
-  const showOnboarding = apps.length === 0 || !appConfig?.configured
+  // Decide only once both sources answered: an undecided panel would flash in
+  // during the skeleton pass and push every card down when it disappears.
+  const showOnboarding =
+    !appsLoading &&
+    !appConfigLoading &&
+    (apps.length === 0 || !appConfig?.configured)
+  const isAdmin = me?.is_instance_admin === true
+  const comparisonHint = (delta: number | null): string =>
+    delta === null
+      ? t("dashboard.kpi.noBaseline")
+      : t("dashboard.kpi.vsPrevious")
 
   React.useEffect(() => {
     if (create) setModalOpen(true)
@@ -171,6 +190,73 @@ function DashboardPage(): React.JSX.Element {
       void router.navigate({ href: window.location.pathname, replace: true })
     }
   }, [create, router])
+
+  const openBuild = React.useCallback(
+    (buildId: string, appId: string) => {
+      void router.navigate({
+        href: `${organizationPath(orgSlug, "deployments")}?buildId=${encodeURIComponent(buildId)}&logAppId=${encodeURIComponent(appId)}`,
+      })
+    },
+    [orgSlug, router]
+  )
+
+  const servicesCard = (
+    <StatCard
+      icon={<RiPlayCircleLine className="size-4" />}
+      label={t("dashboard.services")}
+      value={String(runtimeSummary.running)}
+      hint={
+        monitoring?.error
+          ? t("dashboard.agentOffline")
+          : runtimeSummary.total > 0
+            ? runtimeSummary.issues > 0
+              ? t("dashboard.runtimeHintIssues", {
+                  apps: runtimeSummary.apps,
+                  databases: runtimeSummary.databases,
+                  issues: runtimeSummary.issues,
+                })
+              : t("dashboard.runtimeHint", {
+                  apps: runtimeSummary.apps,
+                  databases: runtimeSummary.databases,
+                })
+            : t("dashboard.noRuntimeResources")
+      }
+      loading={monitoringLoading || Boolean(organization && !monitoring)}
+      tone={
+        monitoring?.error
+          ? "warning"
+          : runtimeSummary.issues > 0
+            ? "danger"
+            : "default"
+      }
+    />
+  )
+
+  const githubCard = (
+    <Link
+      to="/settings/git-providers/$slug"
+      params={{ slug: "github" }}
+      aria-label={t("dashboard.openGitHubSettings")}
+      className="group block rounded-2xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+    >
+      <StatCard
+        icon={<RiGithubFill className="size-4" />}
+        label={t("dashboard.githubApp")}
+        value={
+          appConfig?.configured
+            ? t("dashboard.connected")
+            : t("dashboard.notConfigured")
+        }
+        hint={
+          appConfig?.configured
+            ? (appConfig.name ?? t("dashboard.installed"))
+            : t("dashboard.installToDeploy")
+        }
+        loading={appConfigLoading}
+        tone={appConfig?.configured ? "success" : "warning"}
+      />
+    </Link>
+  )
 
   return (
     <ShellPage
@@ -187,82 +273,47 @@ function DashboardPage(): React.JSX.Element {
         </Button>
       }
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={<RiAppsLine className="size-4" />}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          icon={<RiAppsLine />}
           label={t("dashboard.applications")}
           value={String(apps.length)}
           hint={t("dashboard.runningHint", { count: runningApps })}
           loading={appsLoading}
         />
-        <StatCard
-          icon={<RiPlayCircleLine className="size-4" />}
-          label={t("dashboard.services")}
-          value={String(runtimeSummary.running)}
-          hint={
-            monitoring?.error
-              ? t("dashboard.agentOffline")
-              : runtimeSummary.total > 0
-                ? runtimeSummary.issues > 0
-                  ? t("dashboard.runtimeHintIssues", {
-                      apps: runtimeSummary.apps,
-                      databases: runtimeSummary.databases,
-                      issues: runtimeSummary.issues,
-                    })
-                  : t("dashboard.runtimeHint", {
-                      apps: runtimeSummary.apps,
-                      databases: runtimeSummary.databases,
-                    })
-                : t("dashboard.noRuntimeResources")
-          }
-          loading={monitoringLoading || Boolean(organization && !monitoring)}
-          tone={
-            monitoring?.error
-              ? "warning"
-              : runtimeSummary.issues > 0
-                ? "danger"
-                : "default"
-          }
+        <KpiCard
+          icon={<RiRocketLine />}
+          label={t("dashboard.kpi.deployments")}
+          value={String(kpis.deploys)}
+          delta={kpis.deploysDelta}
+          hint={comparisonHint(kpis.deploysDelta)}
+          loading={kpis.loading}
         />
-        <StatCard
-          icon={<RiTimeLine className="size-4" />}
-          label={t("dashboard.lastDeploy")}
-          value={
-            latestBuild
-              ? relativeTime(latestBuild.createdAt)
-              : t("dashboard.never")
-          }
+        <KpiCard
+          icon={<RiCheckboxCircleLine />}
+          label={t("dashboard.kpi.successRate")}
+          value={kpis.rate === null ? "–" : `${Math.round(kpis.rate)}%`}
+          delta={kpis.rateDelta}
           hint={
-            latestBuild
-              ? `${latestBuild.appName} · ${latestBuild.status}`
-              : t("dashboard.noDeploymentsYet")
+            kpis.rate === null
+              ? t("dashboard.kpi.noBuilds")
+              : comparisonHint(kpis.rateDelta)
           }
-          loading={buildsLoading}
-          tone={latestBuild?.status === "failed" ? "danger" : "default"}
+          loading={kpis.loading}
         />
-        <Link
-          to="/settings/git-providers/$slug"
-          params={{ slug: "github" }}
-          aria-label={t("dashboard.openGitHubSettings")}
-          className="group block rounded-2xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
-          <StatCard
-            icon={<RiGithubFill className="size-4" />}
-            label={t("dashboard.githubApp")}
-            value={
-              appConfig?.configured
-                ? t("dashboard.connected")
-                : t("dashboard.notConfigured")
-            }
-            hint={
-              appConfig?.configured
-                ? (appConfig.name ?? t("dashboard.installed"))
-                : t("dashboard.installToDeploy")
-            }
-            loading={appConfigLoading}
-            tone={appConfig?.configured ? "success" : "warning"}
-          />
-        </Link>
+        <KpiCard
+          icon={<RiTimerLine />}
+          label={t("dashboard.kpi.medianBuild")}
+          value={formatKpiDuration(kpis.median)}
+          delta={kpis.medianDelta}
+          inverse
+          hint={
+            kpis.median === null
+              ? t("dashboard.kpi.noBuilds")
+              : comparisonHint(kpis.medianDelta)
+          }
+          loading={kpis.loading}
+        />
       </div>
 
       {appsError ? (
@@ -274,84 +325,42 @@ function DashboardPage(): React.JSX.Element {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <ShellPanel
-          title={t("dashboard.recentActivity")}
-          description={t("dashboard.recentActivityHint")}
-          action={
-            apps.length > 0 ? (
-              <Button variant="ghost" size="sm" asChild>
-                <Link
-                  to={
-                    (organization
-                      ? organizationPath(organization.slug, "apps")
-                      : "/apps") as never
-                  }
-                >
-                  {t("dashboard.viewAllApplications")}
-                  <RiArrowRightLine className="size-3.5" />
-                </Link>
-              </Button>
-            ) : null
-          }
-        >
-          {buildsLoading ? (
-            <ActivitySkeleton />
-          ) : recentBuilds.length > 0 ? (
-            <ul className="space-y-1">
-              {recentBuilds.slice(0, 6).map((build) => (
-                <ActivityRow key={build.id} build={build} />
-              ))}
-            </ul>
-          ) : (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              {t("dashboard.noDeploymentsYet")}
-            </p>
-          )}
-        </ShellPanel>
+      {showOnboarding ? (
+        <GettingStartedPanel
+          githubConnected={appConfig?.configured ?? false}
+          onCreateApp={() => setModalOpen(true)}
+        />
+      ) : null}
 
-        {showOnboarding ? (
-          <GettingStartedPanel
-            githubConnected={appConfig?.configured ?? false}
-            onCreateApp={() => setModalOpen(true)}
-          />
-        ) : (
-          <ShellPanel
-            title={t("dashboard.quickLinks")}
-            description={t("dashboard.quickLinksHint")}
-          >
-            <div className="space-y-2">
-              <QuickLink
-                label={t("dashboard.allApplications")}
-                hint={t("dashboard.appsHint", { count: apps.length })}
-                to={
-                  organization
-                    ? organizationPath(organization.slug, "apps")
-                    : "/apps"
-                }
-              />
-              <QuickLink
-                label={t("dashboard.deployments")}
-                hint={t("dashboard.deploymentsHint")}
-                to={
-                  organization
-                    ? organizationPath(organization.slug, "deployments")
-                    : "/deployments"
-                }
-              />
-              <QuickLink
-                label={t("dashboard.monitoring")}
-                hint={t("dashboard.monitoringHint")}
-                to={
-                  organization
-                    ? organizationPath(organization.slug, "monitoring")
-                    : "/monitoring"
-                }
-              />
-            </div>
-          </ShellPanel>
-        )}
+      <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+        <DeploymentActivityCard orgSlug={orgSlug} />
+        <AppsShowcaseCard
+          apps={appsWithRuntimeStatus}
+          orgSlug={orgSlug}
+          loading={appsLoading}
+        />
       </div>
+
+      {isAdmin ? (
+        <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+          <HostResourcesCard />
+          <div className="grid gap-4">
+            {githubCard}
+            {servicesCard}
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {githubCard}
+          {servicesCard}
+        </div>
+      )}
+
+      <RecentDeploymentsCard
+        orgSlug={orgSlug}
+        appIds={appIds}
+        onOpenBuild={openBuild}
+      />
 
       <CreateAppModal
         open={modalOpen}
@@ -392,160 +401,46 @@ function StatCard({
   loading?: boolean
   tone?: StatTone
 }): React.JSX.Element {
-  const accent =
+  const badgeVariant =
     tone === "success"
-      ? "text-green-600 dark:text-green-400"
+      ? "success"
       : tone === "warning"
-        ? "text-amber-600 dark:text-amber-400"
+        ? "warning"
         : tone === "danger"
-          ? "text-destructive"
-          : "text-muted-foreground"
+          ? "destructive"
+          : null
 
   return (
-    <div className="h-full rounded-2xl bg-panel px-4 py-3.5 transition-colors group-hover:bg-accent/40">
-      <div className={`flex items-center gap-1.5 ${accent}`}>
+    <div className="flex h-full min-h-[132px] flex-col items-start justify-between gap-3 rounded-2xl bg-panel p-4 transition-colors group-hover:bg-accent/40">
+      <span className="flex items-center rounded-md bg-panel-inset p-1.5 text-foreground dark:bg-neutral-800 [&_svg]:size-5">
         {icon}
-        <span className="text-xs font-medium tracking-wide uppercase">
-          {label}
-        </span>
-      </div>
-      {loading ? (
-        <div className="mt-2 space-y-2" aria-hidden="true">
-          <div className="h-7 w-16 skeleton-surface rounded" />
-          <div className="h-3 w-28 skeleton-surface rounded" />
-        </div>
-      ) : (
-        <>
-          <p className="mt-2 text-xl font-semibold tracking-tight text-foreground">
-            {value}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {hint}
-          </p>
-        </>
-      )}
-    </div>
-  )
-}
-
-function QuickLink({
-  label,
-  hint,
-  to,
-}: {
-  label: string
-  hint: string
-  to: string
-}): React.JSX.Element {
-  return (
-    <Link
-      to={to}
-      className="group flex min-h-12 items-center justify-between gap-3 rounded-xl border border-panel-border bg-panel-inset px-4 py-3 shadow-sm transition-colors outline-none hover:border-muted-foreground/30 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span>
-        <span className="block text-sm font-medium text-foreground">
-          {label}
-        </span>
-        <span className="block text-xs text-muted-foreground">{hint}</span>
       </span>
-      <RiArrowRightLine className="size-4 text-muted-foreground/60 transition-colors group-hover:text-muted-foreground" />
-    </Link>
-  )
-}
-
-function ActivityRow({ build }: { build: BuildWithApp }): React.JSX.Element {
-  const tone = buildTone(build.status)
-  const sha = build.commitSha
-    ? build.commitSha.slice(0, 7)
-    : i18n.t("workspace:dashboard.manual")
-  const orgSlug = useCurrentOrganizationSlug()
-
-  return (
-    <li>
-      <Link
-        to={
-          (orgSlug
-            ? organizationPath(orgSlug, `apps/${build.appId}/settings`)
-            : `/apps/${build.appId}/settings`) as never
-        }
-        className="group -mx-2 flex items-start gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-accent/40"
-      >
-        <span className={`mt-1.5 inline-flex ${tone.color}`}>{tone.icon}</span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">
-            {build.appName}
-          </p>
-          <p className="truncate text-xs text-muted-foreground">
-            <span className="font-mono">{sha}</span>
-            <span className="mx-1 opacity-60">·</span>
-            <span className="capitalize">{build.status}</span>
-            <span className="mx-1 opacity-60">·</span>
-            {relativeTime(build.createdAt)}
-          </p>
-        </div>
-      </Link>
-    </li>
-  )
-}
-
-function ActivitySkeleton(): React.JSX.Element {
-  return (
-    <div className="space-y-3">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="flex items-start gap-2.5">
-          <div className="mt-1 size-3 skeleton-surface rounded-full" />
-          <div className="flex-1 space-y-1.5">
-            <div className="h-3 w-24 skeleton-surface rounded" />
-            <div className="h-2.5 w-40 skeleton-surface rounded" />
+      <div className="flex w-full min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium text-muted-foreground">
+          {label}
+        </span>
+        {loading ? (
+          <div className="flex flex-col gap-0.5" aria-hidden="true">
+            <div className="my-[3px] h-7 w-16 skeleton-surface rounded" />
+            <div className="my-[3px] h-3 w-28 skeleton-surface rounded" />
           </div>
-        </div>
-      ))}
+        ) : (
+          <>
+            <p className="truncate text-2xl leading-[34px] font-medium text-foreground">
+              {value}
+            </p>
+            {badgeVariant ? (
+              <Badge variant={badgeVariant} className="max-w-full truncate">
+                {hint}
+              </Badge>
+            ) : (
+              <p className="truncate text-[13px] leading-[18px] font-medium text-muted-foreground">
+                {hint}
+              </p>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
-}
-
-function buildTone(status: BuildStatus): {
-  icon: React.JSX.Element
-  color: string
-} {
-  switch (status) {
-    case "succeeded":
-      return {
-        icon: <RiCheckboxCircleFill className="size-3.5" />,
-        color: "text-green-600 dark:text-green-400",
-      }
-    case "failed":
-    case "cancelled":
-      return {
-        icon: <RiErrorWarningFill className="size-3.5" />,
-        color: "text-destructive",
-      }
-    case "running":
-      return {
-        icon: <RiPulseFill className="size-3.5 animate-pulse" />,
-        color: "text-blue-600 dark:text-blue-400",
-      }
-    case "pending":
-    default:
-      return {
-        icon: <RiTimeLine className="size-3.5" />,
-        color: "text-muted-foreground",
-      }
-  }
-}
-
-function relativeTime(ms: number): string {
-  const delta = Date.now() - ms
-  if (delta < 60_000) return i18n.t("common:relative.justNow")
-  const minutes = Math.floor(delta / 60_000)
-  if (minutes < 60)
-    return i18n.t("common:relative.minutesAgo", { count: minutes })
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return i18n.t("common:relative.hoursAgo", { count: hours })
-  const days = Math.floor(hours / 24)
-  if (days < 7) return i18n.t("common:relative.daysAgo", { count: days })
-  return new Date(ms).toLocaleDateString(i18n.language, {
-    day: "2-digit",
-    month: "short",
-  })
 }

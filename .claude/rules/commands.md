@@ -10,7 +10,7 @@
 | Redis                     | `127.0.0.1:6381` (container `ploydok-redis`)    |
 | Caddy data                | `8181` (http) / `8543` (https)                  |
 | Caddy admin               | `http://127.0.0.1:2020/config/`                 |
-| BuildKit                  | `docker-container://ploydok-buildkitd`          |
+| BuildKit                  | builder buildx `ploydok-dev` (`buildx://ploydok-dev`, réseau `ploydok_ploydok`) |
 | Registry v2               | `http://127.0.0.1:5000/v2/`                     |
 | Agent Rust                | `unix:///tmp/ploydok-agent.sock`                |
 
@@ -48,7 +48,7 @@ make db-migrate     # drizzle-kit migrate sur Postgres (DATABASE_URL de .env.loc
 make reset          # wipe containers runtime + schemas Postgres + Redis, puis réapplique les migrations
 make db-seed        # seed dev (dev@ploydok.local / backup code DEVD-EVDE-VDEV)
 make secrets-init  # génère PLOYDOK_PG_PASSWORD/REDIS + DATABASE_URL/REDIS_URL + PLOYDOK_SETUP_TOKEN + PLOYDOK_STATIC_ROOT dans .env.local
-make infra-up      # docker compose : postgres + redis + caddy + buildkitd + registry
+make infra-up      # docker compose : postgres + redis + caddy + registry + agent, puis builder buildx ploydok-dev
 make infra-down    # cleanup infra
 make infra-logs    # tail logs caddy
 make dod           # lance les 11 specs Playwright DoD Sprint 3 (requiert infra + agent + dev up)

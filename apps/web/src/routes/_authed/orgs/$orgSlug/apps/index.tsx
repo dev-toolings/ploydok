@@ -78,7 +78,7 @@ function AppsPage(): React.JSX.Element {
           <AppsGridSkeleton />
         ) : error ? (
           <p
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-4 py-3 text-sm text-neg-700 dark:text-[#ff637e]"
             role="alert"
           >
             {t("list.loadFailed", { message: error.message })}
@@ -180,7 +180,7 @@ function AppCard({
   }
 
   return (
-    <article className="group overflow-hidden rounded-xl border border-panel-border bg-panel-inset shadow-sm transition-colors hover:border-muted-foreground/30">
+    <article className="group overflow-hidden rounded-[10px] bg-panel-inset transition-colors shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
       <Link
         to={settingsPath as never}
         className="block p-4 hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -255,7 +255,7 @@ function AppsGridSkeleton(): React.JSX.Element {
       {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
-          className="rounded-xl border border-panel-border bg-panel-inset p-4 shadow-sm"
+          className="rounded-[10px] bg-panel-inset p-4 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">

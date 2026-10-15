@@ -37,7 +37,7 @@ export function LanguageSwitcher({
             onClick={() => changeLocale(locale)}
             aria-pressed={selected}
             className={cn(
-              "rounded-[5px] px-2 py-1 font-sans text-[11px] font-medium uppercase transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "rounded-[5px] px-2 py-1 font-sans text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"

@@ -167,7 +167,7 @@ function RepoItem({
             {owner}
           </span>
           {repo.private && (
-            <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+            <span className="ml-auto shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
               {t("repo.private")}
             </span>
           )}

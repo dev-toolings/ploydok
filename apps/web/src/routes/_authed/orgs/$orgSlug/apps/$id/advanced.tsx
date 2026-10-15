@@ -109,7 +109,7 @@ function AdvancedSettingsPage() {
   return (
     <div className="w-full space-y-6 px-4 py-6 md:px-8 md:py-8">
       <div>
-        <h2 className="mb-2 text-lg font-semibold">{t("advanced.title")}</h2>
+        <h2 className="mb-2 text-base font-medium">{t("advanced.title")}</h2>
         <p className="mb-4 text-sm text-muted-foreground">
           {t("advanced.description", {
             docs: t("advanced.docs"),

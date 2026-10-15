@@ -45,7 +45,7 @@ function ServicesPage(): React.JSX.Element {
         ) : error ? (
           <p
             role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-4 py-3 text-sm text-neg-700 dark:text-[#ff637e]"
           >
             {t("listFailed")}
           </p>
@@ -83,7 +83,7 @@ function ServiceCard({
   return (
     <Link
       to={detailPath as never}
-      className="group rounded-xl border border-panel-border bg-panel-inset p-4 shadow-sm transition-colors outline-none hover:border-muted-foreground/30 hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring"
+      className="group rounded-[10px] bg-panel-inset p-4 transition-colors outline-none hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -146,7 +146,7 @@ function ServicesGridSkeleton(): React.JSX.Element {
       {Array.from({ length: 4 }).map((_, idx) => (
         <div
           key={idx}
-          className="rounded-xl border border-panel-border bg-panel-inset p-4 shadow-sm"
+          className="rounded-[10px] bg-panel-inset p-4 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 space-y-2">

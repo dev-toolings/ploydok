@@ -39,23 +39,23 @@ const STATUS_BADGE: Record<
   },
   running: {
     label: "Running",
-    cls: "bg-blue-500/15 text-blue-300 ring-blue-500/30",
+    cls: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff] ring-blue-500/30",
     Icon: RiLoader4Line,
     pulse: true,
   },
   succeeded: {
     label: "Succeeded",
-    cls: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+    cls: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600] ring-emerald-500/30",
     Icon: RiCheckLine,
   },
   succeeded_with_warning: {
     label: "Warning",
-    cls: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
+    cls: "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700] ring-amber-500/30",
     Icon: RiErrorWarningLine,
   },
   failed: {
     label: "Failed",
-    cls: "bg-red-500/15 text-red-300 ring-red-500/30",
+    cls: "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e] ring-red-500/30",
     Icon: RiErrorWarningLine,
   },
   cancelled: {
@@ -94,7 +94,7 @@ function StatusBadge({ status }: { status: BuildStatus }): React.JSX.Element {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        "inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
         cls
       )}
     >

@@ -193,7 +193,7 @@ export function EnvImportDialog({
                       <div className="flex items-center gap-2">
                         <span className="truncate font-mono font-medium">{entry.key}</span>
                         {isConflict && (
-                          <span className="rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                          <span className="rounded-md bg-amber-100 px-1.5 py-px text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                             {t("env.conflict")}
                           </span>
                         )}
