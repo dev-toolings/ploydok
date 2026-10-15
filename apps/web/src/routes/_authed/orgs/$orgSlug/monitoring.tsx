@@ -20,6 +20,7 @@ import { healthClass } from "@ploydok/shared"
 import { cn } from "@workspace/ui/lib/utils"
 import { Input } from "@workspace/ui/components/input"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import {
   useOrgMonitoring,
   useOrgMonitoringEvents,
@@ -37,6 +38,7 @@ import type { ContainerKind,
 } from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/monitoring")({
+  head: createPageHead("monitoring"),
   component: OrgMonitoringPage,
 })
 

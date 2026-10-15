@@ -51,7 +51,7 @@ export async function bootstrapSetupToken(db: Db): Promise<void> {
           "",
           "┌─ Ploydok first boot ─────────────────────────────────────────────────────────┐",
           `│ Open: ${env.WEB_ORIGIN}/setup`,
-          "│ Setup token disabled by PLOYDOK_SETUP_TOKEN_REQUIRED=0; rely on firewall/IP allowlist.",
+          "│ Create the first admin on that page. The first visitor to submit owns the instance.",
           "└──────────────────────────────────────────────────────────────────────────────┘",
           "",
         ].join("\n")
@@ -97,10 +97,9 @@ export async function bootstrapSetupToken(db: Db): Promise<void> {
 
 export const SETUP_SESSION_COOKIE = "ploydok_setup"
 
-// Le wizard doit s'ouvrir sur /setup nu, sans coller de query string : hors
-// prod l'API dépose le token actif dans un cookie HttpOnly. En prod il reste à
-// présenter explicitement — une instance fraîche joignable depuis le réseau
-// serait sinon revendiquable par le premier visiteur.
+// Le wizard s'ouvre sur /setup nu. Sans jeton (défaut), le formulaire crée le
+// premier admin. Si PLOYDOK_SETUP_TOKEN_REQUIRED=1, hors prod l'API dépose le
+// token actif dans un cookie HttpOnly ; en prod il reste à présenter.
 export function setupSessionGrantAllowed(): boolean {
   return env.NODE_ENV !== "prod"
 }

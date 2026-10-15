@@ -13,6 +13,7 @@ import {
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
 import { Textarea } from "@workspace/ui/components/textarea"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import {
   createSSOConfig,
   deleteSSOConfig,
@@ -27,6 +28,7 @@ import type {
 } from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/settings/sso")({
+  head: createPageHead("sso"),
   component: SSOSettingsPage,
 })
 

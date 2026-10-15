@@ -285,12 +285,11 @@ resolve_public_endpoint() {
     PUBLIC_PORT="$HTTP_PORT"
   fi
 
+  # Default matches Coolify, Dokploy and OpenShip: /setup is a registration
+  # form until the first admin exists. Set PLOYDOK_SETUP_TOKEN_REQUIRED=1 to
+  # keep the one-shot token lock.
   if [[ -z "$SETUP_TOKEN_REQUIRED" ]]; then
-    if [[ "$MODE" == "bootstrap-http" ]]; then
-      SETUP_TOKEN_REQUIRED="0"
-    else
-      SETUP_TOKEN_REQUIRED="1"
-    fi
+    SETUP_TOKEN_REQUIRED="0"
   fi
 
   DOMAIN_BASE="$(derive_domain_base "$PUBLIC_HOST")"
@@ -1165,7 +1164,11 @@ main() {
   db_migrate
   wait_health
   test_alert_receiver
-  log "Ploydok installed. Open ${PUBLIC_ORIGIN}/setup"
+  if [[ "$SETUP_TOKEN_REQUIRED" == "1" ]]; then
+    log "Ploydok installed. First admin is locked: open the URL printed in the API logs, or set PLOYDOK_SETUP_TOKEN."
+  else
+    log "Ploydok installed. Open ${PUBLIC_ORIGIN}/setup and create the first admin. The first person to submit the form owns the instance."
+  fi
 }
 
 main "$@"

@@ -7,6 +7,7 @@ import {
   RiShapesLine,
 } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import {
   ShellPage,
   ShellPanel,
@@ -20,6 +21,7 @@ import {
 import type { ServiceSummary } from "../../../../../lib/services"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/services/")({
+  head: createPageHead("services"),
   component: ServicesPage,
 })
 

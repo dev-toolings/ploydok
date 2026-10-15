@@ -6,6 +6,7 @@ import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Separator } from "@workspace/ui/components/separator"
 import { Button } from "@workspace/ui/components/button"
 import { RiBookOpenLine } from "@remixicon/react"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import {
   useCreateDomain,
   useDeleteDomain,
@@ -189,6 +190,7 @@ function AppDomainsTab(): React.JSX.Element {
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/apps/$id/domains")(
   {
+  head: createPageHead("domains"),
     component: AppDomainsTab,
   }
 )

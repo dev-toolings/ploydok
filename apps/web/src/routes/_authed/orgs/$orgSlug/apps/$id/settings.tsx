@@ -32,6 +32,7 @@ import { Label } from "@workspace/ui/components/label"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import { ChannelList } from "../../../../../../components/notifications/ChannelList"
 import { AppIcon } from "../../../../../../components/apps/AppIcon"
 import { useApp } from "../../../../../../lib/apps"
@@ -444,5 +445,6 @@ function SettingsSkeleton(): React.JSX.Element {
 export const Route = createFileRoute(
   "/_authed/orgs/$orgSlug/apps/$id/settings"
 )({
+  head: createPageHead("applicationSettings"),
   component: AppSettingsGeneral,
 })

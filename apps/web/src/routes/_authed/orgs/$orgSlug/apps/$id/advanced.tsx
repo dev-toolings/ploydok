@@ -10,6 +10,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Textarea } from "@workspace/ui/components/textarea"
 import { Alert, AlertDescription } from "@workspace/ui/components/alert"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import {
   useAppCaddyExtra,
   useUpdateAppCaddyExtra,
@@ -19,6 +20,7 @@ import type {CaddyExtraHandlers} from "@ploydok/shared";
 export const Route = createFileRoute(
   "/_authed/orgs/$orgSlug/apps/$id/advanced"
 )({
+  head: createPageHead("advanced"),
   component: AdvancedSettingsPage,
 })
 

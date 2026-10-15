@@ -10,6 +10,7 @@ import {
   RiGitBranchLine,
   RiGlobalLine,
 } from "@remixicon/react"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import { CreateAppModal } from "../../../../../components/apps/CreateAppModal"
 import {
   ShellPage,
@@ -281,5 +282,6 @@ function AppsGridSkeleton(): React.JSX.Element {
 }
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/apps/")({
+  head: createPageHead("applications"),
   component: AppsPage,
 })

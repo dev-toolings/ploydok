@@ -7,6 +7,7 @@ import {
   useParams,
   useRouterState,
 } from "@tanstack/react-router"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import { AppBar } from "../../../../../components/apps/AppBar"
 import { normalizeAppDetail, useApp } from "../../../../../lib/apps"
 import { useCurrentOrganizationSlug } from "../../../../../lib/organizations"
@@ -53,6 +54,7 @@ function AppDetailLayout(): React.JSX.Element {
 }
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/apps/$id")({
+  head: createPageHead("application"),
   loader: async ({ params }) => {
     const [organizationData, appData] = await Promise.all([
       apiFetch<{ organization: OrganizationSummary }>(

@@ -75,9 +75,9 @@ export function parseEnvFile(content: string): Map<string, string> {
   return entries
 }
 
-// Même lecture que le schema Zod de apps/api/src/env.ts : absent ⇒ true.
+// Même lecture que le schema Zod de apps/api/src/env.ts : absent ⇒ false.
 export function setupTokenRequired(value: string | undefined): boolean {
-  if (value === undefined) return true
+  if (value === undefined) return false
   return /^(1|true|yes|on)$/i.test(value.trim())
 }
 
@@ -87,8 +87,8 @@ export function checkSetupToken(
 ): Check {
   if (!required) {
     return {
-      level: "warn",
-      detail: "PLOYDOK_SETUP_TOKEN_REQUIRED=0 — /setup ouvert sans token",
+      level: "ok",
+      detail: "PLOYDOK_SETUP_TOKEN_REQUIRED=0 — /setup ouvert, le premier visiteur crée l'admin",
     }
   }
   if (!value) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, test, beforeEach } from "bun:test"
+import { describe, expect, test, beforeEach, afterEach } from "bun:test"
+import { env } from "../env"
 import {
   __resetSetupTokenForTest,
   bootstrapSetupToken,
@@ -24,9 +25,24 @@ function makeDb(userCount: number): Db {
 }
 
 describe("setup-token", () => {
+  const testEnv = env as { PLOYDOK_SETUP_TOKEN_REQUIRED: boolean }
+  let tokenRequired = testEnv.PLOYDOK_SETUP_TOKEN_REQUIRED
+
   beforeEach(() => {
+    tokenRequired = testEnv.PLOYDOK_SETUP_TOKEN_REQUIRED
+    testEnv.PLOYDOK_SETUP_TOKEN_REQUIRED = true
     __resetSetupTokenForTest()
     delete Bun.env["PLOYDOK_SETUP_TOKEN"]
+  })
+
+  afterEach(() => {
+    testEnv.PLOYDOK_SETUP_TOKEN_REQUIRED = tokenRequired
+  })
+
+  test("leaves setup open when the token lock is off", async () => {
+    testEnv.PLOYDOK_SETUP_TOKEN_REQUIRED = false
+    await bootstrapSetupToken(makeDb(0))
+    expect(getSetupTokenState().active).toBe(false)
   })
 
   test("does not generate a token when users already exist", async () => {

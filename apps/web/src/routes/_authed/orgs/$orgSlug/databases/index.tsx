@@ -20,6 +20,7 @@ import {
   RiSearchLine,
   RiShieldCheckLine,
 } from "@remixicon/react"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import {
   ShellPage,
   ShellPanel,
@@ -40,6 +41,7 @@ import type {
 import type { Database } from "../../../../../lib/databases"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/databases/")({
+  head: createPageHead("databases"),
   component: DatabasesPage,
 })
 

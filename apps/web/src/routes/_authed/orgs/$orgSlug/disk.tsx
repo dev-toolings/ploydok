@@ -24,6 +24,7 @@ import {
   AlertDialogTrigger,
 } from "@workspace/ui/components/alert-dialog"
 import { cn } from "@workspace/ui/lib/utils"
+import { createPageHead } from "../../../../lib/page-metadata"
 import {
   cleanupDocker,
   getDiskJob,
@@ -42,6 +43,7 @@ import type {
 } from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/disk")({
+  head: createPageHead("disk"),
   component: AdminDiskPage,
 })
 
