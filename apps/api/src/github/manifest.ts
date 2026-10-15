@@ -49,6 +49,7 @@ export function buildManifest(opts: ManifestOptions) {
     default_permissions: {
       contents: "read",
       deployments: "write",
+      members: "read",
       metadata: "read",
       pull_requests: "read",
       // Required for posting commit-status checks (✓/✗) on push SHAs.

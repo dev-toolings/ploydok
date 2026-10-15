@@ -32,8 +32,15 @@ const installationAssignments: Array<{
   installationId: string
   userId: string
 }> = []
+const organizationGrants: Array<{
+  orgId: string
+  installationId: string
+  grantedBy: string
+}> = []
+const installationAudits: Array<Record<string, unknown>> = []
 const localDisconnects: Array<{ installationId: string; userId: string }> = []
 let userGitHubInstallationIds = ["42"]
+let organizationGitHubInstallationIds = ["42"]
 let cacheStatusRows: Array<Record<string, unknown>> = []
 let cachedRepoRows: Array<Record<string, unknown>> = []
 const cacheStatusFilters: unknown[][] = []
@@ -44,6 +51,7 @@ let listInstallationsCalls = 0
 const revokedInstallations: number[] = []
 let revokeFailure: Error | null = null
 let fakeInstanceAdmin = true
+let fakeOrganizationOwnerExists = true
 let recentDelivery: { id: string; decision: string } | null = null
 const deliveryInserts: Array<{
   row: Record<string, unknown>
@@ -57,6 +65,7 @@ const fakeProviderCredentials = {
 const fakeProviderInstallations = {
   provider: Symbol("provider_installations.provider"),
 }
+const fakeAuditLog = Symbol("audit_log")
 const fakeTable = new Proxy(
   {},
   {
@@ -92,20 +101,36 @@ const fakeRedis = {
     }
   ),
 }
+const fakeMembershipRows = () =>
+  fakeOrganizationOwnerExists
+    ? [
+        {
+          is_instance_admin: fakeInstanceAdmin,
+          id: "org-1",
+          role: "owner",
+        },
+      ]
+    : []
 const fakeDb = {
   select: mock(() => ({
     from: () => ({
       where: () => ({
-        limit: async () => [{ is_instance_admin: fakeInstanceAdmin }],
+        limit: async () => fakeMembershipRows(),
+      }),
+      innerJoin: () => ({
+        where: () => ({ limit: async () => fakeMembershipRows() }),
       }),
     }),
   })),
-  insert: mock(() => ({
-    values: (values: Record<string, unknown>) => ({
-      onConflictDoUpdate: async (conflict: Record<string, unknown>) => {
-        credentialUpserts.push({ values, conflict })
-      },
-    }),
+  insert: mock((table?: unknown) => ({
+    values: (values: Record<string, unknown>) => {
+      if (table === fakeAuditLog) installationAudits.push(values)
+      return {
+        onConflictDoUpdate: async (conflict: Record<string, unknown>) => {
+          credentialUpserts.push({ values, conflict })
+        },
+      }
+    },
   })),
   delete: mock((table: unknown) => ({
     where: async () => {
@@ -126,8 +151,19 @@ mock.module("@ploydok/db", () => ({
   gitlab_tokens: fakeTable,
   preview_deployments: fakeTable,
   preview_queue_jobs: fakeTable,
+  projects: {
+    id: Symbol("projects.id"),
+  },
+  memberships: {
+    id: Symbol("memberships.id"),
+    org_id: Symbol("memberships.org_id"),
+    user_id: Symbol("memberships.user_id"),
+    role: Symbol("memberships.role"),
+    accepted_at: Symbol("memberships.accepted_at"),
+  },
   provider_credentials: fakeProviderCredentials,
   provider_installations: fakeProviderInstallations,
+  audit_log: fakeAuditLog,
   users: {
     id: "id",
     is_instance_admin: "is_instance_admin",
@@ -204,6 +240,7 @@ mock.module("@ploydok/db/queries", () => ({
       ? mockGitHubAppConfig
       : lockedGitHubAppConfigOverride
   },
+  lockGitHubAppConfigForUse: async () => mockGitHubAppConfig,
   deleteGitHubAppLocalState: async () => {
     deletedTables.push(fakeProviderCredentials, fakeProviderInstallations)
     deleteInstallationUsersCalls += 1
@@ -216,6 +253,26 @@ mock.module("@ploydok/db/queries", () => ({
   ) => {
     installationAssignments.push({ installationId, userId })
   },
+  grantGitHubInstallationToOrganization: async (
+    _db: unknown,
+    orgId: string,
+    installationId: string,
+    grantedBy: string
+  ) => {
+    organizationGrants.push({ orgId, installationId, grantedBy })
+  },
+  revokeGitHubInstallationFromOrganization: async () => true,
+  listGitHubInstallationIdsForOrganization: async () =>
+    organizationGitHubInstallationIds,
+  listGitHubInstallationIdsForOrganizationAndUser: async (
+    _db: unknown, _orgId: string, userId: string
+  ) =>
+    Array.from(
+      new Set([
+        ...organizationGitHubInstallationIds,
+        ...(userId === FAKE_USER.id ? userGitHubInstallationIds : []),
+      ])
+    ),
   deleteGitHubInstallationUser: async () => undefined,
   deleteGitHubInstallationUsers: async () => {
     deleteInstallationUsersCalls += 1
@@ -287,12 +344,18 @@ function signState(state: string): string {
 function signInstallState(
   state: string,
   userId = FAKE_USER.id,
-  returnTo?: string
+  returnTo?: string,
+  organizationId?: string,
+  claimInstallationId?: string
 ): string {
   const payload = Buffer.from(
-    JSON.stringify(
-      returnTo === undefined ? { state, userId } : { state, userId, returnTo }
-    )
+    JSON.stringify({
+      state,
+      userId,
+      ...(returnTo === undefined ? {} : { returnTo }),
+      ...(organizationId ? { organizationId, issuedAt: Date.now() } : {}),
+      ...(claimInstallationId ? { claimInstallationId } : {}),
+    })
   ).toString("base64url")
   const mac = createHmac("sha256", env.SESSION_SECRET)
     .update(payload)
@@ -310,6 +373,17 @@ function signAppState(state: string, returnTo?: string): string {
   return `${payload}.${mac}`
 }
 
+function extractCookie(headers: Headers, name: string): string {
+  const raw = headers.get("set-cookie") ?? ""
+  const cookie = raw
+    .split(/,(?=[^;,=]+=)/)
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`))
+    ?.split(";", 1)[0]
+  if (!cookie) throw new Error(`missing ${name} cookie`)
+  return cookie
+}
+
 beforeEach(() => {
   mockGitHubAppConfig = null
   lockedGitHubAppConfigOverride = undefined
@@ -324,8 +398,11 @@ beforeEach(() => {
   enqueuedSyncs.length = 0
   syncEnqueueFailure = null
   installationAssignments.length = 0
+  organizationGrants.length = 0
+  installationAudits.length = 0
   localDisconnects.length = 0
   userGitHubInstallationIds = ["42"]
+  organizationGitHubInstallationIds = ["42"]
   cacheStatusRows = []
   cachedRepoRows = []
   cacheStatusFilters.length = 0
@@ -336,6 +413,7 @@ beforeEach(() => {
   revokedInstallations.length = 0
   revokeFailure = null
   fakeInstanceAdmin = true
+  fakeOrganizationOwnerExists = true
   recentDelivery = null
   deliveryInserts.length = 0
 })
@@ -542,7 +620,7 @@ describe("GET /github/repos/:owner/:repo/files-exist", () => {
 
     const app = buildApp(FAKE_USER)
     const res = await app.request(
-      "/github/repos/dev-toolings/fixture-symfony-api/files-exist?path=composer.json&path=symfony.lock&path=Dockerfile&ref=main"
+      "/github/repos/dev-toolings/fixture-symfony-api/files-exist?organizationId=org-1&path=composer.json&path=symfony.lock&path=Dockerfile&ref=main"
     )
 
     expect(res.status).toBe(200)
@@ -618,7 +696,7 @@ describe("GitHub routes are user-scoped", () => {
     )
 
     const res = await buildApp(FAKE_USER).request(
-      "/github/repos/MakFly/private/env-file?path=.env&ref=main"
+      "/github/repos/MakFly/private/env-file?organizationId=org-1&path=.env&ref=main"
     )
 
     expect(res.status).toBe(200)
@@ -638,7 +716,7 @@ describe("GitHub routes are user-scoped", () => {
     )
 
     const res = await buildApp(FAKE_USER).request(
-      "/github/repos/MakFly/monorepo/manifest-file?path=apps%2Fblog%2Fpackage.json&ref=main"
+      "/github/repos/MakFly/monorepo/manifest-file?organizationId=org-1&path=apps%2Fblog%2Fpackage.json&ref=main"
     )
 
     expect(res.status).toBe(200)
@@ -647,7 +725,7 @@ describe("GitHub routes are user-scoped", () => {
 
   it("rejects traversal in a nested manifest path", async () => {
     const res = await buildApp(FAKE_USER).request(
-      "/github/repos/MakFly/monorepo/manifest-file?path=apps%2F..%2Fpackage.json&ref=main"
+      "/github/repos/MakFly/monorepo/manifest-file?organizationId=org-1&path=apps%2F..%2Fpackage.json&ref=main"
     )
 
     expect(res.status).toBe(400)
@@ -1242,10 +1320,20 @@ describe("DELETE /github/app/config/local", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /github/repos", () => {
+  it("requires organization context before listing repositories", async () => {
+    mockGitHubAppConfig = { app_id: "123" }
+    const res = await buildApp(FAKE_USER).request(
+      "/github/repos?search=MakFly%2Fastro-docs"
+    )
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: "organization_required" })
+  })
+
   it("returns 503 github_app_not_configured when no App is set up", async () => {
     mockGitHubAppConfig = null
     const app = buildApp(FAKE_USER)
-    const res = await app.request("/github/repos")
+    const res = await app.request("/github/repos?organizationId=org-1")
     expect(res.status).toBe(503)
     const body = (await res.json()) as Record<string, unknown>
     expect(body["error"]).toBe("github_app_not_configured")
@@ -1264,7 +1352,7 @@ describe("GET /github/repos", () => {
     })
 
     const res = await buildApp(FAKE_USER).request(
-      "/github/repos?search=MakFly%2Fastro-docs"
+      "/github/repos?organizationId=org-1&search=MakFly%2Fastro-docs"
     )
 
     expect(res.status).toBe(200)
@@ -1275,6 +1363,9 @@ describe("GET /github/repos", () => {
           installationId: "42",
         },
       ],
+      installUrl: expect.stringContaining(
+        "/github/installations/start?organizationId=org-1"
+      ),
     })
   })
 
@@ -1293,7 +1384,9 @@ describe("GET /github/repos", () => {
       },
     ]
 
-    const res = await buildApp(FAKE_USER).request("/github/repos")
+    const res = await buildApp(FAKE_USER).request(
+      "/github/repos?organizationId=org-1"
+    )
 
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({
@@ -1304,6 +1397,87 @@ describe("GET /github/repos", () => {
         },
       ],
     })
+  })
+
+  it("keeps personal installs visible for management and excludes other org installs from repo reads", async () => {
+    mockGitHubAppConfig = { app_id: "123" }
+    userGitHubInstallationIds = ["77"]
+    organizationGitHubInstallationIds = ["42"]
+    liveInstallations = [
+      { id: 42, accountLogin: "Acme" },
+      { id: 77, accountLogin: "Personal" },
+      { id: 88, accountLogin: "OtherOrg" },
+    ]
+    using _repos = spyOn(
+      githubModule.ghProvider,
+      "listRepos"
+    ).mockResolvedValue({
+      repos: [],
+      hasMore: false,
+    })
+    const attemptedIds: string[] = []
+    using _getRepo = spyOn(
+      githubModule.ghProvider,
+      "getRepo"
+    ).mockImplementation(async (installationId, fullName) => {
+      attemptedIds.push(installationId)
+      if (
+        (installationId === "42" && fullName === "Acme/service") ||
+        (installationId === "77" && fullName === "Personal/service")
+      ) {
+        return {
+          id: Number(installationId),
+          fullName,
+          description: null,
+          private: true,
+          defaultBranch: "main",
+          cloneUrl: `https://github.com/${fullName}.git`,
+        }
+      }
+      throw new Error("repository not visible")
+    })
+
+    const management = await buildApp(FAKE_USER).request(
+      "/github/installations?organizationId=org-1"
+    )
+    const repos = await buildApp(FAKE_USER).request(
+      "/github/repos?organizationId=org-1&search=Acme%2Fservice"
+    )
+    const personalRepos = await buildApp(FAKE_USER).request(
+      "/github/repos?organizationId=org-1&search=Personal%2Fservice"
+    )
+    const otherOrganizationRepos = await buildApp(FAKE_USER).request(
+      "/github/repos?organizationId=org-1&search=OtherOrg%2Fservice"
+    )
+
+    expect(management.status).toBe(200)
+    expect(await management.json()).toMatchObject({
+      installations: [
+        expect.objectContaining({ id: 42, granted: true }),
+        expect.objectContaining({ id: 77, granted: false }),
+      ],
+      installUrl: expect.stringContaining(
+        "/github/installations/start?organizationId=org-1"
+      ),
+    })
+    expect(repos.status).toBe(200)
+    expect(await repos.json()).toMatchObject({
+      repos: [expect.objectContaining({ installationId: "42" })],
+    })
+    expect(personalRepos.status).toBe(200)
+    expect(await personalRepos.json()).toMatchObject({
+      repos: [expect.objectContaining({ installationId: "77" })],
+    })
+    expect(otherOrganizationRepos.status).toBe(200)
+    expect(await otherOrganizationRepos.json()).toMatchObject({ repos: [] })
+    expect(attemptedIds).not.toContain("88")
+    attemptedIds.length = 0
+    const otherMemberRepos = await buildApp({
+      ...FAKE_USER, id: "other-org-member",
+    }).request("/github/repos?organizationId=org-1&search=Personal%2Fservice")
+    expect(otherMemberRepos.status).toBe(200)
+    expect(await otherMemberRepos.json()).toMatchObject({ repos: [] })
+    expect(attemptedIds).not.toContain("77")
   })
 })
 
@@ -1338,6 +1512,41 @@ describe("GET /github/installations/start", () => {
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: "admin_required" })
     expect(res.headers.get("set-cookie")).toBeNull()
+  })
+
+  it("rejects an apps:read PAT before starting an installation", async () => {
+    mockGitHubAppConfig = { slug: "ploydok-local" }
+    const patUser: AuthUser = {
+      ...FAKE_USER,
+      token_scopes: ["apps:read"],
+      pat_id: "pat-1",
+    }
+
+    const res = await buildApp(patUser).request(
+      "/github/installations/start?organizationId=org-1"
+    )
+
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({
+      error: {
+        code: "FORBIDDEN",
+        message: "Token missing required scope: apps:write",
+      },
+    })
+  })
+
+  it("allows an authenticated organization owner to start an installation", async () => {
+    fakeInstanceAdmin = false
+    mockGitHubAppConfig = { slug: "ploydok-local" }
+
+    const res = await buildApp(FAKE_USER).request(
+      "/github/installations/start?organizationId=org-1"
+    )
+
+    expect(res.status).toBe(302)
+    expect(res.headers.get("location")).toContain(
+      "https://github.com/apps/ploydok-local/installations/new?state="
+    )
   })
 })
 
@@ -1470,7 +1679,425 @@ describe("DELETE /github/installations/:id", () => {
   })
 })
 
+describe("DELETE /github/installations/:id/grant", () => {
+  it("rejects an apps:read PAT before revoking an organization grant", async () => {
+    const patUser: AuthUser = {
+      ...FAKE_USER,
+      token_scopes: ["apps:read"],
+      pat_id: "pat-1",
+    }
+    const res = await buildApp(patUser).request(
+      "/github/installations/42/grant?organizationId=org-1",
+      { method: "DELETE" }
+    )
+
+    expect(res.status).toBe(403)
+    expect(installationAudits).toHaveLength(0)
+  })
+
+  it("revokes an organization grant and records the owner actor atomically", async () => {
+    const res = await buildApp(FAKE_USER).request(
+      "/github/installations/42/grant?organizationId=org-1",
+      { method: "DELETE" }
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      ok: true,
+      revoked: true,
+      installationId: "42",
+    })
+    expect(transactionCalls).toBe(1)
+    expect(installationAudits).toEqual([
+      expect.objectContaining({
+        action: "github.installation.revoked",
+        org_id: "org-1",
+        target_id: "42",
+        user_id: FAKE_USER.id,
+      }),
+    ])
+  })
+})
+
+describe("GET /github/installations/:id/claim", () => {
+  it.each([
+    ["GET", "/github/installations/start?organizationId=org-1"],
+    ["GET", "/github/installations/42/claim?organizationId=org-1"],
+    ["DELETE", "/github/installations/42/grant?organizationId=org-1"],
+  ])("rejects write-scoped PATs on owner action %s %s", async (method, path) => {
+    const response = await buildApp({
+      ...FAKE_USER, pat_id: "pat-write", token_scopes: ["apps:write"],
+    }).request(path!, { method })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: "session_required" })
+  })
+
+  it("allows an owner session to start an installation claim", async () => {
+    mockGitHubAppConfig = { slug: "ploydok-test", client_id: "Iv1.test" }
+    const res = await buildApp(FAKE_USER).request(
+      "/github/installations/42/claim?organizationId=org-1"
+    )
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get("location")!)
+    expect(location.origin).toBe("https://github.com")
+    expect(location.pathname).toBe("/apps/ploydok-test/installations/new")
+    expect(res.headers.get("set-cookie")).toContain("gh_install_state=")
+  })
+
+  it("rejects an apps:read PAT before starting an installation claim", async () => {
+    const patUser: AuthUser = {
+      ...FAKE_USER,
+      token_scopes: ["apps:read"],
+      pat_id: "pat-1",
+    }
+    const res = await buildApp(patUser).request(
+      "/github/installations/42/claim?organizationId=org-1"
+    )
+
+    expect(res.status).toBe(403)
+    expect(installationAudits).toHaveLength(0)
+  })
+})
+
 describe("GET /github/app/setup", () => {
+  it("rejects an organization member before starting an OAuth proof", async () => {
+    fakeOrganizationOwnerExists = false
+    mockGitHubAppConfig = { client_id: "Iv1.org-proof" }
+    const state = "org-member-state"
+    const res = await buildApp().request(
+      `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+      {
+        headers: {
+          cookie: `gh_install_state=${encodeURIComponent(
+            signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+          )}`,
+        },
+      }
+    )
+
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get("location")!)
+    expect(location.searchParams.get("install_error")).toBe(
+      "organization_owner_required"
+    )
+    expect(location.searchParams.get("installed")).toBeNull()
+    expect(organizationGrants).toHaveLength(0)
+  })
+
+  it("requires a GitHub user proof before granting an installation to an organization", async () => {
+    const app = buildApp()
+    mockGitHubAppConfig = { client_id: "Iv1.org-proof" }
+    const state = "org-install-state"
+    const res = await app.request(
+      `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+      {
+        headers: {
+          cookie: `gh_install_state=${encodeURIComponent(
+            signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+          )}`,
+        },
+      }
+    )
+
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get("location")!)
+    expect(location.origin).toBe("https://github.com")
+    expect(location.pathname).toBe("/login/oauth/authorize")
+    expect(location.searchParams.get("client_id")).toBe("Iv1.org-proof")
+    expect(location.searchParams.get("state")).toBeTruthy()
+    expect(organizationGrants).toHaveLength(0)
+  })
+
+  it.each(["admin", "member"])(
+    "checks GitHub organization authority for role %s",
+    async (githubRole) => {
+      const realFetch = globalThis.fetch
+      mockGitHubAppConfig = {
+        client_id: "Iv1.org-proof",
+        client_secret_enc: Buffer.from("enc:secret"),
+        client_secret_nonce: Buffer.from("nonce"),
+      }
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url === "https://github.com/login/oauth/access_token") {
+          return new Response(JSON.stringify({ access_token: "short-lived" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        }
+        if (url === "https://api.github.com/user") {
+          return new Response(JSON.stringify({ login: "octocat" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        }
+        if (url.startsWith("https://api.github.com/user/installations")) {
+          return new Response(
+            JSON.stringify({
+              installations: [
+                {
+                  id: 42,
+                  account: { login: "acme", type: "Organization" },
+                  repository_selection: "selected",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          )
+        }
+        if (url === "https://api.github.com/orgs/acme/memberships/octocat") {
+          return new Response(
+            JSON.stringify({ state: "active", role: githubRole }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }
+          )
+        }
+        throw new Error(`unexpected fetch: ${url}`)
+      }) as unknown as typeof fetch
+
+      try {
+        const state = "org-install-oauth"
+        const setup = await buildApp().request(
+          `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+          {
+            headers: {
+              cookie: `gh_install_state=${encodeURIComponent(
+                signInstallState(
+                  state,
+                  FAKE_USER.id,
+                  "/onboarding",
+                  "org-1",
+                  "42"
+                )
+              )}`,
+            },
+          }
+        )
+        const oauthUrl = new URL(setup.headers.get("location")!)
+        const setCookie = setup.headers.get("set-cookie")
+        expect(setCookie).toBeString()
+        expect(setCookie).toContain("gh_install_state=")
+        expect(setCookie).toContain("gh_install_oauth_state=")
+        const oauthCookie = extractCookie(
+          setup.headers,
+          "gh_install_oauth_state"
+        )
+        const callback = await buildApp().request(
+          `/github/app/callback?code=oauth-code&state=${oauthUrl.searchParams.get(
+            "state"
+          )}`,
+          { headers: { cookie: oauthCookie } }
+        )
+
+        expect(callback.status).toBe(302)
+        const location = new URL(callback.headers.get("location")!)
+        expect(location.pathname).toBe("/onboarding")
+        if (githubRole === "admin") {
+          expect(location.searchParams.get("installed")).toBe("1")
+          expect(organizationGrants).toEqual([
+            { orgId: "org-1", installationId: "42", grantedBy: FAKE_USER.id },
+          ])
+          expect(installationAudits).toEqual([
+            expect.objectContaining({
+              action: "github.installation.claimed",
+              org_id: "org-1",
+              target_id: "42",
+              user_id: FAKE_USER.id,
+            }),
+            expect.objectContaining({
+              action: "github.installation.granted",
+              org_id: "org-1",
+              target_id: "42",
+              user_id: FAKE_USER.id,
+            }),
+          ])
+        } else {
+          expect(location.searchParams.get("install_error")).toBe(
+            "github_org_membership_unverified"
+          )
+          expect(location.searchParams.get("installed")).toBeNull()
+          expect(organizationGrants).toHaveLength(0)
+          expect(installationAudits).toHaveLength(0)
+        }
+      } finally {
+        globalThis.fetch = realFetch
+      }
+    }
+  )
+
+  it("redirects with an actionable error when GitHub hides organization membership", async () => {
+    const realFetch = globalThis.fetch
+    mockGitHubAppConfig = {
+      client_id: "Iv1.org-proof",
+      client_secret_enc: Buffer.from("enc:secret"),
+      client_secret_nonce: Buffer.from("nonce"),
+    }
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "short-lived" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(JSON.stringify({ login: "octocat" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.startsWith("https://api.github.com/user/installations")) {
+        return new Response(
+          JSON.stringify({
+            installations: [
+              {
+                id: 42,
+                account: { login: "acme", type: "Organization" },
+                repository_selection: "selected",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url === "https://api.github.com/orgs/acme/memberships/octocat") {
+        return new Response(
+          JSON.stringify({ message: "Members permission required" }),
+          {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          }
+        )
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as unknown as typeof fetch
+
+    try {
+      const state = "org-members-permission"
+      const setup = await buildApp().request(
+        `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+        {
+          headers: {
+            cookie: `gh_install_state=${encodeURIComponent(
+              signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+            )}`,
+          },
+        }
+      )
+      const oauthUrl = new URL(setup.headers.get("location")!)
+      const callback = await buildApp().request(
+        `/github/app/callback?code=oauth-code&state=${oauthUrl.searchParams.get(
+          "state"
+        )}`,
+        {
+          headers: {
+            cookie: extractCookie(setup.headers, "gh_install_oauth_state"),
+          },
+        }
+      )
+
+      expect(callback.status).toBe(302)
+      expect(
+        new URL(callback.headers.get("location")!).searchParams.get(
+          "install_error"
+        )
+      ).toBe("github_members_permission_required")
+      expect(organizationGrants).toHaveLength(0)
+      expect(installationAudits).toHaveLength(0)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  it("refuses the grant when the Ploydok owner role is removed before OAuth commit", async () => {
+    const realFetch = globalThis.fetch
+    mockGitHubAppConfig = {
+      client_id: "Iv1.org-proof",
+      client_secret_enc: Buffer.from("enc:secret"),
+      client_secret_nonce: Buffer.from("nonce"),
+    }
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "short-lived" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(JSON.stringify({ login: "octocat" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.startsWith("https://api.github.com/user/installations")) {
+        return new Response(
+          JSON.stringify({
+            installations: [
+              {
+                id: 42,
+                account: { login: "acme", type: "Organization" },
+                repository_selection: "selected",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url === "https://api.github.com/orgs/acme/memberships/octocat") {
+        return new Response(
+          JSON.stringify({ state: "active", role: "admin" }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        )
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as unknown as typeof fetch
+
+    try {
+      const state = "org-owner-removed"
+      const setup = await buildApp().request(
+        `/github/app/setup?installation_id=42&setup_action=install&state=${state}`,
+        {
+          headers: {
+            cookie: `gh_install_state=${encodeURIComponent(
+              signInstallState(state, FAKE_USER.id, "/onboarding", "org-1")
+            )}`,
+          },
+        }
+      )
+      const oauthUrl = new URL(setup.headers.get("location")!)
+      const setCookie = setup.headers.get("set-cookie")
+      expect(setCookie).toBeString()
+      expect(setCookie).toContain("gh_install_state=")
+      expect(setCookie).toContain("gh_install_oauth_state=")
+      fakeOrganizationOwnerExists = false
+      const callback = await buildApp().request(
+        `/github/app/callback?code=oauth-code&state=${oauthUrl.searchParams.get(
+          "state"
+        )}`,
+        {
+          headers: {
+            cookie: extractCookie(setup.headers, "gh_install_oauth_state"),
+          },
+        }
+      )
+
+      expect(callback.status).toBe(302)
+      const location = new URL(callback.headers.get("location")!)
+      expect(location.searchParams.get("install_error")).toBe(
+        "claim_authority_missing"
+      )
+      expect(organizationGrants).toHaveLength(0)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   it("upserts the installation credential, enqueues sync, and redirects with installed=1 when state is valid", async () => {
     const app = buildApp()
     const state = "abc123"
@@ -1815,11 +2442,25 @@ describe("GET /github/app/callback", () => {
 })
 
 describe("GitHub application directory discovery", () => {
+  it.each([
+    "/github/repos?search=acme%2Frepo",
+    "/github/repos/acme/repo/branches",
+    "/github/repos/acme/repo/deployment-targets?ref=main",
+    "/github/repos/acme/repo/env-file?path=.env&ref=main",
+    "/github/repos/acme/repo/manifest-file?path=package.json&ref=main",
+  ])("requires organization context for %s", async (path) => {
+    mockGitHubAppConfig = { app_id: "123" }
+    const res = await buildApp(FAKE_USER).request(path)
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: "organization_required" })
+  })
+
   it("requires authentication and only uses installations visible to the current user", async () => {
     expect(
       (
         await buildApp().request(
-          "/github/repos/acme/repo/deployment-targets?ref=main"
+          "/github/repos/acme/repo/deployment-targets?organizationId=org-1&ref=main"
         )
       ).status
     ).toBe(401)
@@ -1838,7 +2479,7 @@ describe("GitHub application directory discovery", () => {
       return ["products/service/go.mod"]
     })
     const res = await buildApp(FAKE_USER).request(
-      "/github/repos/acme/repo/deployment-targets?ref=main"
+      "/github/repos/acme/repo/deployment-targets?organizationId=org-1&ref=main"
     )
     expect(res.status).toBe(200)
     const body = (await res.json()) as { targets: { rootDir: string }[] }

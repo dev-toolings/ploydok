@@ -39,6 +39,7 @@ function buildFilesExistUrl(
   fullName: string,
   paths: ReadonlyArray<string>,
   ref: string,
+  organizationId?: string,
 ): string {
   const params = new URLSearchParams();
   for (const path of paths) params.append("path", path);
@@ -46,6 +47,7 @@ function buildFilesExistUrl(
 
   if (source === "github") {
     const [owner, repo] = fullName.split("/");
+    if (organizationId) params.set("organizationId", organizationId);
     return `/github/repos/${encodeURIComponent(owner ?? "")}/${encodeURIComponent(
       repo ?? "",
     )}/files-exist?${params.toString()}`;
@@ -59,11 +61,13 @@ function buildManifestFileUrl(
   fullName: string,
   path: string,
   ref: string,
+  organizationId?: string,
 ): string {
   const params = new URLSearchParams({ path, ref });
 
   if (source === "github") {
     const [owner, repo] = fullName.split("/");
+    if (organizationId) params.set("organizationId", organizationId);
     return `/github/repos/${encodeURIComponent(owner ?? "")}/${encodeURIComponent(
       repo ?? "",
     )}/manifest-file?${params.toString()}`;
@@ -76,14 +80,15 @@ async function runProbes(
   source: Source,
   fullName: string,
   ref: string,
-  rootDir?: string
+  rootDir?: string,
+  organizationId?: string,
 ): Promise<{ probes: ProbeResults; files: Record<string, boolean> }> {
   const paths = Array.from(
     new Set([...ALL_PROBE_KEYS, ...MANIFEST_FILE_PROBE_KEYS])
   )
   const repoPaths = paths.map((path) => pathWithinRoot(path, rootDir))
   const res = await apiFetch<FileExistsBatchResponse>(
-    buildFilesExistUrl(source, fullName, repoPaths, ref)
+    buildFilesExistUrl(source, fullName, repoPaths, ref, organizationId)
   )
   const out: ProbeResults = {}
   for (const key of ALL_PROBE_KEYS) {
@@ -102,9 +107,16 @@ export async function runStackClassificationProbes(
   source: Source,
   fullName: string,
   ref: string,
-  rootDir?: string
+  rootDir?: string,
+  organizationId?: string,
 ): Promise<{ probes: ProbeResults; classification: StackClassification }> {
-  const { probes, files } = await runProbes(source, fullName, ref, rootDir)
+  const { probes, files } = await runProbes(
+    source,
+    fullName,
+    ref,
+    rootDir,
+    organizationId,
+  )
   const manifestEntries = await Promise.all(
     MANIFEST_FILE_PROBE_KEYS.map(async (path) => {
       if (files[path] !== true) return null
@@ -114,7 +126,8 @@ export async function runStackClassificationProbes(
             source,
             fullName,
             pathWithinRoot(path, rootDir),
-            ref
+            ref,
+            organizationId,
           )
         )
         return [path, response.content] as const
@@ -157,11 +170,13 @@ function buildEnvFileUrl(
   fullName: string,
   path: string,
   ref: string,
+  organizationId?: string,
 ): string {
   const params = new URLSearchParams({ path, ref });
 
   if (source === "github") {
     const [owner, repo] = fullName.split("/");
+    if (organizationId) params.set("organizationId", organizationId);
     return `/github/repos/${encodeURIComponent(owner ?? "")}/${encodeURIComponent(
       repo ?? "",
     )}/env-file?${params.toString()}`;
@@ -176,6 +191,7 @@ export async function importEnvFileVars(params: {
   path: string;
   ref: string;
   rootDir?: string;
+  organizationId?: string;
 }): Promise<Array<ParsedEnvVar>> {
   const response = await apiFetch<EnvFileResponse>(
     buildEnvFileUrl(
@@ -183,6 +199,7 @@ export async function importEnvFileVars(params: {
       params.fullName,
       pathWithinRoot(params.path, params.rootDir),
       params.ref,
+      params.organizationId,
     ),
   );
   return parseEnvFile(response.content);
@@ -206,6 +223,7 @@ export function useStackClassification(
   fullName: string | undefined,
   ref: string | undefined,
   rootDir?: string,
+  organizationId?: string,
 ): UseStackClassificationResult {
   const enabled = Boolean(source && fullName && ref);
   const query = useQuery<
@@ -218,6 +236,7 @@ export function useStackClassification(
       fullName ?? "",
       ref ?? "",
       rootDir?.trim() ?? "",
+      organizationId ?? "",
     ],
     queryFn: async () => {
       return runStackClassificationProbes(
@@ -225,9 +244,10 @@ export function useStackClassification(
         fullName as string,
         ref as string,
         rootDir,
+        organizationId,
       );
     },
-    enabled,
+    enabled: enabled && (source !== "github" || Boolean(organizationId)),
     staleTime: 5 * 60_000,
   });
 
@@ -244,17 +264,26 @@ export function useStackClassification(
 export function useRepositoryTargets(
   source: Source | undefined,
   fullName: string | undefined,
-  ref: string | undefined
+  ref: string | undefined,
+  organizationId?: string,
 ) {
   return useQuery<
     { targets: Array<RepositoryTarget> },
     ApiError
   >({
-    queryKey: ["repository-targets", source, fullName, ref],
-    enabled: Boolean(source && fullName && ref),
+    queryKey: ["repository-targets", source, fullName, ref, organizationId],
+    enabled: Boolean(
+      source &&
+        fullName &&
+        ref &&
+        (source !== "github" || organizationId)
+    ),
     staleTime: 5 * 60_000,
     queryFn: () => {
       const params = new URLSearchParams({ ref: ref! })
+      if (source === "github" && organizationId) {
+        params.set("organizationId", organizationId)
+      }
       const repoPath =
         source === "github"
           ? fullName!.split("/").map(encodeURIComponent).join("/")

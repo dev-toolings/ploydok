@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
+  backfillLegacyGitHubInstallationGrants,
   replaceInstallationSnapshot,
   getGitHubAppConfig,
   lockGitHubAppConfigForUse,
@@ -540,18 +541,25 @@ async function syncGitHubInstallation(
   }
 
   try {
-    await replaceInstallationSnapshot(
-      db,
-      buildLiveGitHubInstallationRow(liveInstallation, now),
-      allRepos
-    )
-    await db
-      .update(provider_credentials)
-      .set({
-        last_sync_status: "completed",
-        updated_at: new Date(),
-      })
-      .where(eq(provider_credentials.id, credentialId))
+    await db.transaction(async (tx) => {
+      const transactionDb = tx as unknown as Db
+      await replaceInstallationSnapshot(
+        transactionDb,
+        buildLiveGitHubInstallationRow(liveInstallation, now),
+        allRepos
+      )
+      await backfillLegacyGitHubInstallationGrants(
+        transactionDb,
+        externalInstallationId
+      )
+      await transactionDb
+        .update(provider_credentials)
+        .set({
+          last_sync_status: "completed",
+          updated_at: new Date(),
+        })
+        .where(eq(provider_credentials.id, credentialId))
+    })
     workerLog.info(
       { installationId: externalInstallationId, count: allRepos.length },
       "github sync: done"

@@ -28,6 +28,24 @@ describe("sanitizeReturnTo", () => {
     ).toBe(GITHUB_RETURN_FALLBACK)
   })
 
+  it("allows the organization GitHub settings route without widening redirects", () => {
+    const path = "/orgs/acme-tools/settings/github"
+    expect(sanitizeReturnTo(path, GITHUB_RETURN_FALLBACK)).toBe(path)
+    expect(buildReturnUrl(path)).toBe(`${env.WEB_ORIGIN}${path}`)
+    for (const invalid of [
+      "/orgs/../settings/github",
+      "/orgs/%2f%2fevil.com/settings/github",
+      "/orgs/acme/settings/github?next=https://evil.com",
+      "/orgs/acme/settings/github#other",
+      "/orgs/acme/settings/general",
+      "//evil.com/orgs/acme/settings/github",
+    ]) {
+      expect(sanitizeReturnTo(invalid, GITHUB_RETURN_FALLBACK)).toBe(
+        GITHUB_RETURN_FALLBACK
+      )
+    }
+  })
+
   it("rejects absolute URLs, scheme-relative hosts and dangerous schemes", () => {
     const hostile = [
       "https://evil.com/onboarding",

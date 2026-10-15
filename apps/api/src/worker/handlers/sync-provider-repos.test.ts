@@ -239,6 +239,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
   let listReposSpy: ReturnType<typeof spyOn>
   let listInstallationsSpy: ReturnType<typeof spyOn>
   let replaceSnapshotSpy: ReturnType<typeof spyOn>
+  let legacyBackfillSpy: ReturnType<typeof spyOn>
 
   beforeEach(async () => {
     const { ghProvider } = await import("../../routes/github")
@@ -306,12 +307,17 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
       providerReposQueries,
       "replaceInstallationSnapshot"
     ).mockResolvedValue(undefined)
+    legacyBackfillSpy = spyOn(
+      providerReposQueries,
+      "backfillLegacyGitHubInstallationGrants"
+    ).mockResolvedValue(0)
   })
 
   afterEach(() => {
     listReposSpy.mockRestore()
     listInstallationsSpy.mockRestore()
     replaceSnapshotSpy.mockRestore()
+    legacyBackfillSpy.mockRestore()
   })
 
   it("publishes installation freshness and all pages as one snapshot", async () => {
@@ -325,6 +331,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
 
     expect(listReposSpy).toHaveBeenCalledTimes(2)
     expect(replaceSnapshotSpy).toHaveBeenCalledTimes(1)
+    expect(legacyBackfillSpy).toHaveBeenCalledWith(db, "999")
 
     const [, installation, rows] = replaceSnapshotSpy.mock.calls[0] as [
       unknown,
@@ -350,6 +357,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     ).rejects.toThrow("GitHub API down")
 
     expect(replaceSnapshotSpy).not.toHaveBeenCalled()
+    expect(legacyBackfillSpy).not.toHaveBeenCalled()
   })
 
   it("does not publish freshness or repos when a later GitHub page fails", async () => {
@@ -379,6 +387,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     ).rejects.toThrow("GitHub page 2 unavailable")
 
     expect(replaceSnapshotSpy).not.toHaveBeenCalled()
+    expect(legacyBackfillSpy).not.toHaveBeenCalled()
   })
 
   it("rejects an unclaimable GitHub credential (missing trust source)", async () => {
