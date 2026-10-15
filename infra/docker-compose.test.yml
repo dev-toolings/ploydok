@@ -7,7 +7,7 @@ volumes:
 services:
   s3-test:
     image: dxflrs/garage:v1.0.1
-    command: ["server"]
+    command: ["/garage", "server"]
     ports:
       - "127.0.0.1:3900:3900"
       - "127.0.0.1:3901:3901"
