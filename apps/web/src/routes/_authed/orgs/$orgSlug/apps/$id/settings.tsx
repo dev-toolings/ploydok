@@ -161,22 +161,23 @@ function AppMetadataCard({ app }: { app: AppDetail }): React.JSX.Element {
       </CardHeader>
 
       <CardContent className="max-w-2xl space-y-6">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1 space-y-2">
-            <Label htmlFor="app-icon-url">{t("settings.iconUrl")}</Label>
+        <div className="space-y-2">
+          <Label htmlFor="app-icon-url">{t("settings.iconUrl")}</Label>
+          <div className="flex items-center gap-3">
             <Input
               id="app-icon-url"
               type="url"
               value={iconUrl}
               onChange={(e) => setIconUrl(e.target.value)}
               placeholder="https://example.com/icon.png"
+              className="min-w-0 flex-1"
+            />
+            <AppIcon
+              name={app.name}
+              src={iconUrl || null}
+              className="size-8"
             />
           </div>
-          <AppIcon
-            name={app.name}
-            src={iconUrl || null}
-            className="mt-7 size-9"
-          />
         </div>
 
         <div className="space-y-3">
