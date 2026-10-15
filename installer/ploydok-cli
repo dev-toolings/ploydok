@@ -76,6 +76,10 @@ validate_agent_pki_bundle() {
 
 verify_image() {
   local image="$1"
+  if [[ "${PLOYDOK_INSTALL_SKIP_COSIGN:-0}" == "1" ]]; then
+    echo "[ploydok-cli] WARN: image signature verification explicitly skipped for $image (controlled staging upgrade)" >&2
+    return
+  fi
   local identity_regex='^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$'
   identity_regex="${PLOYDOK_COSIGN_IDENTITY_REGEXP:-$identity_regex}"
   if command -v cosign >/dev/null 2>&1; then
@@ -83,7 +87,7 @@ verify_image() {
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       --certificate-identity-regexp "$identity_regex" \
       "$image"
-  elif [[ "$DRY_RUN" == "1" || "${PLOYDOK_INSTALL_SKIP_COSIGN:-0}" == "1" ]]; then
+  elif [[ "$DRY_RUN" == "1" ]]; then
     echo "[ploydok-cli] WARN: cosign not installed; image signature verification skipped for $image" >&2
   else
     echo "cosign is required to verify $image (set PLOYDOK_INSTALL_SKIP_COSIGN=1 only for controlled test upgrades)" >&2

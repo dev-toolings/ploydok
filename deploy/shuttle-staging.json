@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "app": "ploydok",
+  "stack": "ploydok",
+  "server": {
+    "host": "192.168.1.235",
+    "user": "ops",
+    "port": 22,
+    "host_key": "SHA256:USkEQTLH8BNKqY3VTmkJq6a4gaPeioMsHVW0wch409w",
+    "identity_file": "~/.ssh/id_ed25519",
+    "sudo": true
+  },
+  "registry": "127.0.0.1:5000",
+  "timeout_seconds": 900,
+  "build": {
+    "services": {
+      "api": {
+        "context": ".",
+        "dockerfile": "apps/api/Dockerfile",
+        "services": [
+          "api"
+        ],
+        "args": {
+          "PLOYDOK_BUILD_VERSION": "{{version}}"
+        }
+      },
+      "web": {
+        "context": ".",
+        "dockerfile": "apps/web/Dockerfile",
+        "services": [
+          "web"
+        ],
+        "args": {
+          "PLOYDOK_BUILD_VERSION": "{{version}}"
+        }
+      },
+      "agent": {
+        "context": ".",
+        "dockerfile": "agent/Dockerfile.prod",
+        "services": [
+          "agent"
+        ],
+        "args": {
+          "PLOYDOK_BUILD_VERSION": "{{version}}"
+        }
+      },
+      "caddy": {
+        "context": "infra/caddy",
+        "dockerfile": "Dockerfile",
+        "services": [
+          "caddy",
+          "caddy-admin"
+        ]
+      },
+      "adminer": {
+        "context": "infra/adminer",
+        "dockerfile": "Dockerfile",
+        "services": [
+          "adminer"
+        ]
+      }
+    }
+  },
+  "manifest": {
+    "PLOYDOK_API_IMAGE": "api",
+    "PLOYDOK_WEB_IMAGE": "web",
+    "PLOYDOK_AGENT_IMAGE": "agent",
+    "PLOYDOK_CADDY_IMAGE": "caddy",
+    "PLOYDOK_ADMINER_IMAGE": "adminer"
+  },
+  "verify_image": [
+    "bash",
+    "scripts/deploy-shuttle/verify-image.sh",
+    "{{image}}"
+  ],
+  "apply": [
+    "/usr/local/bin/ploydok-shuttle-upgrade",
+    "{{version}}",
+    "{{manifest}}"
+  ]
+}
