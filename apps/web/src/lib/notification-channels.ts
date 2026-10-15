@@ -109,7 +109,7 @@ export function channelsQueryKey(appId?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// useChannels: GET /notifications/channels[?appId=...]
+// useChannels — GET /notifications/channels[?appId=...]
 // ---------------------------------------------------------------------------
 
 interface ChannelsResponse {
@@ -132,7 +132,7 @@ export function useChannels(appId?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// useCreateChannel: POST /notifications/channels
+// useCreateChannel — POST /notifications/channels
 // ---------------------------------------------------------------------------
 
 export function useCreateChannel(appId?: string) {
@@ -152,7 +152,7 @@ export function useCreateChannel(appId?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// useUpdateChannel: PATCH /notifications/channels/:id
+// useUpdateChannel — PATCH /notifications/channels/:id
 // ---------------------------------------------------------------------------
 
 export function useUpdateChannel(appId?: string) {
@@ -176,7 +176,7 @@ export function useUpdateChannel(appId?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// useDeleteChannel: DELETE /notifications/channels/:id
+// useDeleteChannel — DELETE /notifications/channels/:id
 // ---------------------------------------------------------------------------
 
 export function useDeleteChannel(appId?: string) {
@@ -195,7 +195,7 @@ export function useDeleteChannel(appId?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// useTestChannel: POST /notifications/channels/:id/test
+// useTestChannel — POST /notifications/channels/:id/test
 // ---------------------------------------------------------------------------
 
 interface TestChannelResponse {
@@ -215,7 +215,7 @@ export function useTestChannel() {
 }
 
 // ---------------------------------------------------------------------------
-// useToggleChannel: PATCH enabled only (convenience for the switch)
+// useToggleChannel — PATCH enabled only (convenience for the switch)
 // ---------------------------------------------------------------------------
 
 export function useToggleChannel(appId?: string) {

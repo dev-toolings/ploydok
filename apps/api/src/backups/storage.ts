@@ -15,8 +15,9 @@ import {
   headObject,
   uploadStream,
 } from "../storage/s3"
+import type { S3Client } from "@aws-sdk/client-s3"
 
-type S3BackedConfig = Pick<
+export type S3BackedConfig = Pick<
   BackupConfigRow,
   "s3_endpoint" | "s3_region" | "s3_credentials_secret_id"
 > &
@@ -44,6 +45,11 @@ type BackupDestinationConfig = Pick<
 export interface S3Credentials {
   accessKeyId: string
   secretAccessKey: string
+}
+
+export interface BackupS3Probe {
+  client: S3Client
+  credentials: S3Credentials
 }
 
 export interface BackupArtifactMetadata {
@@ -131,23 +137,18 @@ export async function inspectBackupArtifact(
   db: Db,
   location: string,
   config: S3BackedConfig | null,
+  probe?: BackupS3Probe,
 ): Promise<BackupArtifactMetadata | null> {
   if (location.startsWith("s3://")) {
     if (!config) {
       throw new Error("S3 backup configuration is unavailable")
     }
 
-    const creds = await resolveS3Credentials(db, config)
-    const client = createS3Client({
-      ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),
-      region: config.s3_region ?? "auto",
-      accessKeyId: creds.accessKeyId,
-      secretAccessKey: creds.secretAccessKey,
-    })
+    const resources = probe ?? (await createBackupS3Probe(db, config))
     const { bucket, key } = parseS3Location(location)
     let object
     try {
-      object = await headObject(client, bucket, key)
+      object = await headObject(resources.client, bucket, key)
     } catch (error) {
       if (isMissingS3ObjectError(error)) return null
       throw error
@@ -222,6 +223,23 @@ export async function resolveS3Credentials(
     )
   }
   return creds
+}
+
+/** Resolve credentials and build one destination client for a request scope. */
+export async function createBackupS3Probe(
+  db: Db,
+  config: S3BackedConfig
+): Promise<BackupS3Probe> {
+  const credentials = await resolveS3Credentials(db, config)
+  return {
+    credentials,
+    client: createS3Client({
+      ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),
+      region: config.s3_region ?? "auto",
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+    }),
+  }
 }
 
 export function buildBackupFilename(

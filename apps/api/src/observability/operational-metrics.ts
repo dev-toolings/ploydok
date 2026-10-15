@@ -9,6 +9,7 @@ import { counter, gauge } from "./metrics"
 import type { HealthReport } from "./health"
 import {
   backupAgeSeconds,
+  backupIsStale,
   backupFreshnessKey,
   backupMaxAgeSeconds,
   listBackupFreshness,
@@ -22,7 +23,6 @@ interface OperationalCounts extends Record<string, unknown> {
   stuck_builds: string | number
   stuck_jobs: string | number
   backup_failures_24h: string | number
-  stale_backup_resources: string | number
   outbox_pending: string | number
   outbox_stuck: string | number
   outbox_dead_lettered: string | number
@@ -63,7 +63,7 @@ const backupFailures = gauge(
 )
 const staleBackupResources = gauge(
   "ploydok_stale_backup_resources",
-  "Enabled backup resources without a successful backup during the last 24 hours."
+  "Enabled backup resources whose latest successful backup exceeds their schedule-derived age window."
 )
 const backupConfiguredAt = gauge(
   "ploydok_backup_configured_at_timestamp_seconds",
@@ -187,7 +187,10 @@ function setBackupFreshnessMetrics(
     backupConfiguredAt.set(labels, configuredAt)
     backupLastSuccess.set(labels, lastSuccess)
     backupAge.set(labels, age)
-    backupMaxAge.set(labels, backupMaxAgeSeconds())
+    backupMaxAge.set(
+      labels,
+      backupMaxAgeSeconds(row.schedule_cron, now)
+    )
   }
 
   for (const key of backupFreshnessSeries.keys()) {
@@ -317,24 +320,6 @@ export async function collectOperationalMetrics(
           + (SELECT count(*) FROM volume_backups
             WHERE status = 'failed'
               AND started_at >= now() - interval '24 hours')) AS backup_failures_24h,
-        ((SELECT count(*) FROM backup_configs config
-            WHERE config.enabled = true
-              AND config.created_at < now() - interval '24 hours'
-              AND NOT EXISTS (
-                SELECT 1 FROM backups backup
-                WHERE backup.config_id = config.id
-                  AND backup.status = 'succeeded'
-                  AND backup.finished_at >= now() - interval '24 hours'
-              ))
-          + (SELECT count(*) FROM volume_backup_configs config
-            WHERE config.enabled = true
-              AND config.created_at < now() - interval '24 hours'
-              AND NOT EXISTS (
-                SELECT 1 FROM volume_backups backup
-                WHERE backup.config_id = config.id
-                  AND backup.status = 'succeeded'
-                  AND backup.finished_at >= now() - interval '24 hours'
-              ))) AS stale_backup_resources,
         (SELECT count(*) FROM outbox_events
           WHERE delivered_at IS NULL AND dead_lettered_at IS NULL) AS outbox_pending,
         (SELECT count(*) FROM outbox_events
@@ -359,7 +344,6 @@ export async function collectOperationalMetrics(
     stuckBuilds.set(undefined, number(row.stuck_builds))
     stuckJobs.set(undefined, number(row.stuck_jobs))
     backupFailures.set(undefined, number(row.backup_failures_24h))
-    staleBackupResources.set(undefined, number(row.stale_backup_resources))
     outboxPending.set(undefined, number(row.outbox_pending))
     outboxStuck.set(undefined, number(row.outbox_stuck))
     outboxDeadLettered.set(undefined, number(row.outbox_dead_lettered))
@@ -386,7 +370,12 @@ export async function collectOperationalMetrics(
 
   try {
     const freshnessRows = await listBackupFreshness(db)
-    setBackupFreshnessMetrics(freshnessRows, new Date())
+    const now = new Date()
+    setBackupFreshnessMetrics(freshnessRows, now)
+    staleBackupResources.set(
+      undefined,
+      freshnessRows.filter((row) => backupIsStale(row, now)).length
+    )
   } catch (error) {
     console.error("[operational-metrics] backup freshness collection failed", error)
     failed = true

@@ -18,8 +18,8 @@ import { dispatch } from "../../notify/index"
 import { env } from "../../env"
 import {
   backupAgeSeconds,
+  backupIsStale,
   backupFreshnessKey,
-  backupMaxAgeSeconds,
   listBackupFreshness,
   timestampSeconds,
   type BackupFreshnessRow,
@@ -123,14 +123,8 @@ async function notifyStaleBackupConfigs(db: Db, now: Date): Promise<void> {
     for (const row of rows) {
       if (!isBackupFreshnessRow(row)) continue
 
-      const configuredAt = timestampSeconds(row.configured_at)
       const lastSuccess = timestampSeconds(row.last_success_at)
-      const maxAge = backupMaxAgeSeconds()
-      const stale =
-        lastSuccess === 0
-          ? now.getTime() / 1_000 - configuredAt > maxAge
-          : backupAgeSeconds(now, row.last_success_at) > maxAge
-      if (!stale) continue
+      if (!backupIsStale(row, now)) continue
 
       const channels = await db
         .select({ events: notification_channels.events })
@@ -159,6 +153,7 @@ async function notifyStaleBackupConfigs(db: Db, now: Date): Promise<void> {
         row.project_id,
         row.resource_type,
         row.config_id,
+        row.resource_status ?? "unknown",
         lastSuccessKey,
       ].join(":")
       const claimed = await redis.set(
@@ -179,7 +174,9 @@ async function notifyStaleBackupConfigs(db: Db, now: Date): Promise<void> {
           appName: row.resource_name,
           commitSha: `stale:${backupFreshnessKey(row)}:${lastSuccessKey}`,
           errorMessage:
-            lastSuccess === 0
+            row.resource_status === "stopped"
+              ? "Resource is stopped; scheduled backups cannot run"
+              : lastSuccess === 0
               ? "No successful backup has been recorded"
               : `The last successful backup is ${backupAgeSeconds(now, row.last_success_at)} seconds old`,
         },

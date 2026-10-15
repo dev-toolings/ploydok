@@ -133,9 +133,11 @@
     "destination": "Destination",
     "size": "Taille",
     "encrypted": "Chiffré",
+    "notEncrypted": "Non chiffrée",
     "empty": "Aucune sauvegarde pour le moment.",
     "createNow": "En créer une maintenant",
     "restore": "Restaurer",
+    "refreshAria": "Actualiser les sauvegardes",
     "local": "Local",
     "s3": "Compatible S3",
     "status": {

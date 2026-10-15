@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { RiRefreshLine } from "@remixicon/react"
 import {
   useDeleteBackup,
   useTargetBackupInventory,
@@ -71,12 +72,16 @@ export function BackupsList({
   backupNowLoading,
 }: BackupsListProps): React.JSX.Element {
   const { t, i18n } = useTranslation("databases")
-  const { data: backups, isLoading } = useTargetBackups(target)
+  const {
+    data: backups,
+    isLoading,
+    refetch: refetchBackups,
+  } = useTargetBackups(target)
   const inventory = useTargetBackupInventory(target)
   const deleteBackup = useDeleteBackup(target)
   const [restoreBackup, setRestoreBackup] = React.useState<Backup | null>(null)
+  const [isRefreshing, setIsRefreshing] = React.useState(false)
   const restoreEnabled = target.kind === "database"
-  const inventoryUnavailable = inventory.isError || inventory.isPending
   const inventoryById = React.useMemo(
     () =>
       new Map(
@@ -84,6 +89,31 @@ export function BackupsList({
       ),
     [inventory.data]
   )
+  const refresh = React.useCallback(async () => {
+    setIsRefreshing(true)
+    try {
+      await Promise.all([refetchBackups(), inventory.refetch()])
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [inventory.refetch, refetchBackups])
+  const refreshButton = (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => void refresh()}
+      loading={isRefreshing}
+      aria-label={t("backupsList.refreshAria")}
+    >
+      <RiRefreshLine className="size-4" />
+      {t("common:refresh")}
+    </Button>
+  )
+  const inventoryErrorMessage = inventory.isError ? (
+    <p className="mb-2 text-xs text-destructive" role="status">
+      {t("backupsList.inventoryUnavailable")}
+    </p>
+  ) : null
 
   if (isLoading) {
     return (
@@ -101,11 +131,8 @@ export function BackupsList({
   if (!backups || backups.length === 0) {
     return (
       <div className="py-4 text-sm text-muted-foreground">
-        {inventory.isError && (
-          <p className="mb-2 text-destructive">
-            {t("backupsList.inventoryUnavailable")}
-          </p>
-        )}
+        <div className="mb-2 flex justify-end">{refreshButton}</div>
+        {inventoryErrorMessage}
         {t("backupsList.empty")}{" "}
         {onBackupNow && (
           <Button
@@ -123,6 +150,8 @@ export function BackupsList({
 
   return (
     <>
+      <div className="mb-2 flex justify-end">{refreshButton}</div>
+      {inventoryErrorMessage}
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
@@ -156,8 +185,13 @@ export function BackupsList({
           <tbody className="divide-y">
             {backups.map((backup) => {
               const artifact = inventoryById.get(backup.id)
-              const verified =
-                artifact?.present === true && !inventoryUnavailable
+              const unavailable =
+                inventory.isError ||
+                backup.status !== "succeeded" ||
+                artifact === undefined ||
+                artifact.present === null ||
+                artifact.probeError === "unreachable"
+              const verified = !unavailable && artifact?.present === true
               return (
                 <tr key={backup.id} className="hover:bg-muted/30">
                   <td className="px-3 py-2 tabular-nums">
@@ -170,14 +204,14 @@ export function BackupsList({
                   <td className="px-3 py-2">
                     <Badge
                       variant={
-                        inventoryUnavailable || backup.status !== "succeeded"
+                        unavailable
                           ? "secondary"
                           : verified
                             ? "default"
                             : "destructive"
                       }
                     >
-                      {inventoryUnavailable || backup.status !== "succeeded"
+                      {unavailable
                         ? t("backupsList.unavailable")
                         : verified
                           ? t("backupsList.present")
@@ -185,10 +219,9 @@ export function BackupsList({
                     </Badge>
                   </td>
                   <td className="px-3 py-2 tabular-nums">
-                    {formatAge(
-                      verified ? (artifact?.ageSeconds ?? null) : null,
-                      t
-                    )}
+                    {verified
+                      ? formatAge(artifact?.ageSeconds ?? null, t)
+                      : null}
                   </td>
                   <td className="px-3 py-2">
                     {backup.destinationKind === "s3"
@@ -196,10 +229,12 @@ export function BackupsList({
                       : t("backupsList.local")}
                   </td>
                   <td className="px-3 py-2 tabular-nums">
-                    {formatSize(
-                      verified ? (artifact?.sizeBytes ?? null) : null,
-                      t("common:unavailable")
-                    )}
+                    {verified
+                      ? formatSize(
+                          artifact?.sizeBytes ?? null,
+                          t("common:unavailable")
+                        )
+                      : null}
                   </td>
                   <td className="px-3 py-2">
                     <StatusBadge status={backup.status} />
@@ -213,7 +248,9 @@ export function BackupsList({
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    {backup.ageEncrypted ? "age" : t("common:unavailable")}
+                    {backup.ageEncrypted
+                      ? "age"
+                      : t("backupsList.notEncrypted")}
                   </td>
                   <td className="flex items-center gap-2 px-3 py-2">
                     {restoreEnabled && backup.status === "succeeded" && (
@@ -241,12 +278,6 @@ export function BackupsList({
           </tbody>
         </table>
       </div>
-      {inventory.isError && (
-        <p className="mt-2 text-xs text-destructive" role="status">
-          {t("backupsList.inventoryUnavailable")}
-        </p>
-      )}
-
       {restoreBackup && (
         <RestoreDialog
           backup={restoreBackup}

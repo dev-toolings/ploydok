@@ -45,8 +45,10 @@ export interface Database {
   last_started_at: string | null
   created_at: string
   backup_enabled?: boolean
+  backup_max_age_seconds?: number | null
   latest_backup_status?: "running" | "succeeded" | "failed" | null
   latest_backup_at?: string | null
+  last_successful_backup_at?: string | null
   linked_apps?: Array<{
     app_id: string
     app_name: string | null

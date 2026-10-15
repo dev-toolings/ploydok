@@ -19,11 +19,13 @@ s3_secret_key=${AWS_SECRET_ACCESS_KEY:-}
 source_snapshot_at=${SOURCE_SNAPSHOT_AT:-}
 verify_database=${VERIFY_DATABASE:-}
 target_image=${TARGET_POSTGRES_IMAGE:-postgres:16-alpine}
-target_password=${TARGET_POSTGRES_PASSWORD:-restore-drill-only}
+target_password=${TARGET_POSTGRES_PASSWORD:-}
 age_identity_file=${AGE_IDENTITY_FILE:-}
 target_container=${TARGET_CONTAINER:-ploydok-restore-drill-$$}
 keep_target=0
 declare -a expected_rows=()
+
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TARGET_POSTGRES_PASSWORD
 
 usage() {
   sed -n '1,9p' "$0"
@@ -35,6 +37,7 @@ Usage:
 Required environment or options:
   S3_ENDPOINT, S3_REGION, S3_BUCKET, S3_KEY
   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+  TARGET_POSTGRES_PASSWORD  temporary password for the fresh target container
   SOURCE_SNAPSHOT_AT       UTC timestamp of the source database snapshot
   VERIFY_DATABASE           database restored by pg_dumpall to check
   EXPECT_ROWS               comma-separated table:count entries
@@ -49,7 +52,6 @@ Options:
   --expect-rows TABLE:N     expected row count, repeatable
   --target-image IMAGE      PostgreSQL image (default: postgres:16-alpine)
   --target-container NAME   task-owned container name
-  --target-password VALUE   temporary target password
   --age-identity FILE       decrypt an object ending in .age
   --keep-target             keep the target container after verification
   --help                    show this help
@@ -116,11 +118,6 @@ parse_args() {
         target_container=$2
         shift 2
         ;;
-      --target-password)
-        (($# >= 2)) || fail "--target-password needs a value"
-        target_password=$2
-        shift 2
-        ;;
       --age-identity)
         (($# >= 2)) || fail "--age-identity needs a value"
         age_identity_file=$2
@@ -153,6 +150,7 @@ validate_inputs() {
   [[ -n "$s3_key" ]] || fail "S3_KEY is required"
   [[ -n "$s3_access_key" ]] || fail "AWS_ACCESS_KEY_ID is required"
   [[ -n "$s3_secret_key" ]] || fail "AWS_SECRET_ACCESS_KEY is required"
+  [[ -n "$target_password" ]] || fail "TARGET_POSTGRES_PASSWORD is required"
   [[ -n "$source_snapshot_at" ]] || fail "SOURCE_SNAPSHOT_AT is required for RPO"
   [[ -n "$verify_database" ]] || fail "VERIFY_DATABASE is required"
   ((${#expected_rows[@]} > 0)) || fail "at least one --expect-rows entry is required"
@@ -190,7 +188,7 @@ parse_epoch() {
 wait_for_postgres() {
   local attempt
   for attempt in $(seq 1 90); do
-    if docker exec --user postgres "$target_container" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+    if docker exec --user postgres "$target_container" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -230,15 +228,19 @@ target_started=0
 trap cleanup EXIT
 
 downloaded="$workdir/backup"
-docker run --rm --network host \
-  -e AWS_ACCESS_KEY_ID="$s3_access_key" \
-  -e AWS_SECRET_ACCESS_KEY="$s3_secret_key" \
-  -v "$workdir:/work" \
-  "$S3_CLIENT_IMAGE" \
-  s3 cp "s3://$s3_bucket/$s3_key" /work/backup \
-  --endpoint-url "$s3_endpoint" \
-  --region "$s3_region" \
-  --only-show-errors >/dev/null
+(
+  export AWS_ACCESS_KEY_ID="$s3_access_key"
+  export AWS_SECRET_ACCESS_KEY="$s3_secret_key"
+  docker run --rm --network host \
+    -e AWS_ACCESS_KEY_ID \
+    -e AWS_SECRET_ACCESS_KEY \
+    -v "$workdir:/work" \
+    "$S3_CLIENT_IMAGE" \
+    s3 cp "s3://$s3_bucket/$s3_key" /work/backup \
+    --endpoint-url "$s3_endpoint" \
+    --region "$s3_region" \
+    --only-show-errors >/dev/null
+)
 [[ -s "$downloaded" ]] || fail "downloaded S3 object is empty"
 
 dump_file="$downloaded"
@@ -249,14 +251,17 @@ if [[ "$s3_key" == *.age ]]; then
   dump_file=$decrypted
 fi
 
-docker run -d \
-  --name "$target_container" \
-  --label "ploydok.task=DEV-333-restore-drill" \
-  --label "ploydok.owner=restore-postgres-drill.sh" \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD="$target_password" \
-  -e POSTGRES_DB=postgres \
-  "$target_image" >/dev/null
+(
+  export POSTGRES_PASSWORD="$target_password"
+  docker run -d \
+    --name "$target_container" \
+    --label "ploydok.task=DEV-333-restore-drill" \
+    --label "ploydok.owner=restore-postgres-drill.sh" \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_PASSWORD \
+    -e POSTGRES_DB=postgres \
+    "$target_image" >/dev/null
+)
 target_started=1
 wait_for_postgres
 

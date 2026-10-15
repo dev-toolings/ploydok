@@ -62,24 +62,49 @@ async function createBackupShadowTables(
 
 describe("operational metrics", () => {
   test("publishes deployment, backup, queue, certificate, agent and disk gauges", async () => {
+    let executeCalls = 0
     const db = {
-      execute: async () => [
-        {
-          deployments_total_15m: "10",
-          deployments_failed_15m: "2",
-          stuck_builds: "1",
-          stuck_jobs: "3",
-          backup_failures_24h: "3",
-          stale_backup_resources: "2",
-          outbox_pending: "4",
-          outbox_stuck: "1",
-          outbox_dead_lettered: "2",
-          outbox_dead_lettered_15m: "1",
-          certificates_expiring_30d: "3",
-          certificates_expiring_7d: "2",
-          certificates_expiring_1d: "1",
-        },
-      ],
+      execute: async () => {
+        executeCalls += 1
+        if (executeCalls === 1) {
+          return [
+            {
+              deployments_total_15m: "10",
+              deployments_failed_15m: "2",
+              stuck_builds: "1",
+              stuck_jobs: "3",
+              backup_failures_24h: "3",
+              outbox_pending: "4",
+              outbox_stuck: "1",
+              outbox_dead_lettered: "2",
+              outbox_dead_lettered_15m: "1",
+              certificates_expiring_30d: "3",
+              certificates_expiring_7d: "2",
+              certificates_expiring_1d: "1",
+            },
+          ]
+        }
+        return [
+          {
+            resource_type: "database",
+            config_id: "metrics-stale-database",
+            resource_id: "metrics-database",
+            schedule_cron: "0 3 * * *",
+            configured_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000),
+            last_success_at: null,
+            resource_status: "running",
+          },
+          {
+            resource_type: "volume",
+            config_id: "metrics-stale-volume",
+            resource_id: "metrics-volume",
+            schedule_cron: "0 3 * * *",
+            configured_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000),
+            last_success_at: null,
+            resource_status: "running",
+          },
+        ]
+      },
     } as unknown as Db
 
     await collectOperationalMetrics(
@@ -302,6 +327,89 @@ describe("operational metrics", () => {
           line.includes(`config_id=\"${volumeConfigId}\"`)
       )
     ).toHaveLength(1)
+  })
+
+  test("exports schedule-derived thresholds for hourly and weekly configs, including never-successful configs", async () => {
+    const suffix = nanoid(8)
+    const weeklyConfigId = `freshness-weekly-${suffix}`
+    const hourlyConfigId = `freshness-hourly-${suffix}`
+    const counts = {
+      deployments_total_15m: 0,
+      deployments_failed_15m: 0,
+      stuck_builds: 0,
+      stuck_jobs: 0,
+      backup_failures_24h: 0,
+      stale_backup_resources: 0,
+      outbox_pending: 0,
+      outbox_stuck: 0,
+      outbox_dead_lettered: 0,
+      outbox_dead_lettered_15m: 0,
+      certificates_expiring_30d: 0,
+      certificates_expiring_7d: 0,
+      certificates_expiring_1d: 0,
+    }
+    let executeCalls = 0
+    const db = {
+      execute: async () => {
+        executeCalls += 1
+        if (executeCalls === 1) return [counts]
+        return [
+          {
+            resource_type: "database",
+            config_id: weeklyConfigId,
+            resource_id: `weekly-database-${suffix}`,
+            schedule_cron: "0 3 * * 0",
+            configured_at: new Date("2026-10-01T03:00:00.000Z"),
+            last_success_at: new Date("2026-10-14T10:00:00.000Z"),
+          },
+          {
+            resource_type: "volume",
+            config_id: hourlyConfigId,
+            resource_id: `hourly-volume-${suffix}`,
+            schedule_cron: "0 * * * *",
+            configured_at: new Date("2026-10-01T03:00:00.000Z"),
+            last_success_at: null,
+          },
+        ]
+      },
+    } as unknown as Db
+
+    await collectOperationalMetrics(
+      db,
+      async () => hostStats,
+      async () => ({
+        ok: true,
+        version: "test",
+        components: {
+          db: { status: "ok" },
+          agent: { status: "ok" },
+          caddy: { status: "ok" },
+          ingress: {
+            status: "ok",
+            expected_http_routes: 0,
+            missing_http_routes: [],
+            expected_tcp_proxies: 0,
+            missing_tcp_proxies: [],
+          },
+        },
+      }),
+      async () => ({
+        configured: false,
+        lastSuccessTimestampSeconds: 0,
+        lastFailureTimestampSeconds: 0,
+      })
+    )
+
+    const output = renderMetrics()
+    expect(output).toContain(
+      `ploydok_backup_max_age_seconds{config_id="${weeklyConfigId}",resource_id="weekly-database-${suffix}",resource_type="database"} 907230`
+    )
+    expect(output).toContain(
+      `ploydok_backup_max_age_seconds{config_id="${hourlyConfigId}",resource_id="hourly-volume-${suffix}",resource_type="volume"} 5430`
+    )
+    expect(output).toContain(
+      `ploydok_backup_last_success_timestamp_seconds{config_id="${hourlyConfigId}",resource_id="hourly-volume-${suffix}",resource_type="volume"} 0`
+    )
   })
 
   test("keeps the scrape available and exposes collector failure", async () => {

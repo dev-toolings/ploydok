@@ -209,10 +209,25 @@ describe("scheduled backups", () => {
     )
     const alert = rules.groups
       .flatMap(
-        (g: { rules: Array<{ alert: string; expr: string }> }) => g.rules
+        (g: { rules: Array<{ alert: string; expr: string; for?: string }> }) =>
+          g.rules
       )
-      .find((r: { alert: string }) => r.alert === "BackupFailureOrStale")
-    expect(alert.expr).toContain("or ploydok_stale_backup_resources > 0")
+      .find((r: { alert: string }) => r.alert === "BackupFailureOrStale") as {
+      alert: string
+      expr: string
+      for?: string
+    }
+    expect(alert.expr).toContain("ploydok_backup_failures_24h > 0")
+    expect(alert.expr).toContain(
+      "ploydok_backup_last_success_timestamp_seconds == 0"
+    )
+    expect(alert.expr).toContain(
+      "time() - ploydok_backup_configured_at_timestamp_seconds"
+    )
+    expect(alert.expr).toContain(
+      "time() - ploydok_backup_last_success_timestamp_seconds"
+    )
+    expect(alert.for).toBe("10m")
   })
 })
 
@@ -432,7 +447,7 @@ test.skipIf(!process.env.DATABASE_URL)(
           management_mode: "managed",
           volume_name: `stale-db-volume-two-${suffix}`,
           container_id: `stale-db-container-two-${suffix}`,
-          status: "running",
+          status: "stopped",
           health_status: "healthy",
           created_at: configuredAt,
         },

@@ -47,7 +47,7 @@ maintenance window.
 | Agent authenticated RPC | 99.5% successful probes                                             | rolling 30 days                     |
 | Deployment completion   | 95% finish without platform failure                                 | rolling 30 days, minimum 20 deploys |
 | Queue latency           | 95% of builds claimed within 5 minutes                              | rolling 7 days                      |
-| Backup freshness        | every protected resource has a successful backup under 24 hours old | continuous                          |
+| Backup freshness        | every protected application resource meets its configured freshness age | continuous                       |
 
 Evaluate the objectives from Prometheus with these initial SLIs:
 
@@ -159,15 +159,28 @@ backup candidates. Local `stat` and S3 `HEAD` probes confirm presence; a missing
 object is distinct from an unavailable destination. Probe errors leave the UI
 in the unavailable state. Copying an old archive does not reset its displayed
 age, which uses the older of the snapshot start and destination modification.
+The API caches each destination probe for 60 seconds per backup and invalidates
+that cache when the backup or destination configuration changes.
+The web inventory query is cached and refreshed every five minutes. An explicit
+Refresh action fetches the backup rows and destination inventory immediately.
+The endpoint supports limit-only pagination: callers may request a bounded
+result set up to 200 entries, but there is no offset or cursor. Resource-scoped
+queries keep the UI response bounded while the cache avoids repeating probes.
 
-Each enabled database or volume backup config is checked against the existing
-24-hour RPO, including resources that are stopped. A recent failed or running
-job does not reset the age of the last successful backup. A config with no
-success becomes stale after its first 24 hours. Per-config Prometheus series
-feed `BackupFailureOrStale` after its existing ten-minute hold. API channels
-that subscribe to `backup.stale` receive the same condition through the
-resource's project owner, with a four-hour repeat window per stale episode.
-An episode changes when a new successful backup is recorded.
+Each enabled database or volume backup config is checked against its
+schedule-derived maximum age, including resources that are stopped. For a valid
+UTC cron schedule, the age is `max(30 seconds, ceil(1.5 * consecutive schedule
+interval seconds + 30 seconds))`; invalid legacy expressions use the 24-hour
+default. The API exposes that per-config age to the database list, and the UI
+does not infer a fixed freshness window. The protection badge uses the newest
+enabled config and successful backups from that same config. A recent failed or
+running job does not reset the age of the last successful backup. A config with
+no success becomes stale once its configured maximum age has elapsed. Per-config
+Prometheus series feed
+`BackupFailureOrStale` after its existing ten-minute hold. API channels that
+subscribe to `backup.stale` receive the same condition through the resource's
+project owner, with a four-hour repeat window per stale episode. An episode
+changes when a new successful backup is recorded.
 
 ### Application backup restore drill
 
@@ -195,8 +208,10 @@ scripts/restore-postgres-drill.sh
 ```
 
 The environment file must provide `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`,
-`S3_KEY`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. Destination and verification settings also have command-line options;
-credentials remain environment variables. The command accepts repeated `--expect-rows schema.table:count`
+`S3_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
+`TARGET_POSTGRES_PASSWORD`. Destination and verification settings also have
+command-line options; credentials and the target password remain environment
+variables. The command accepts repeated `--expect-rows schema.table:count`
 options. `SOURCE_SNAPSHOT_AT` must come from the source fixture creation or
 dump timestamp, never from the S3 upload timestamp. An object ending in `.age`
 also requires `--age-identity` and a local `age` binary.
@@ -207,22 +222,28 @@ expected `postgres` role or database already-exists messages from a plain
 `pg_dumpall`; any other SQL error fails the drill. By default it removes the
 target container and temporary files on exit. `--keep-target` is available for
 post-drill inspection and still requires the task-owned container name prefix.
+The script passes secret environment names to Docker without placing their
+values in the `docker run` argument list. Docker still stores those values in
+the target container environment, which Docker daemon operators can inspect;
+this drill does not provide secret-manager storage.
 
 Measured local drill on 2026-10-15 UTC, with Garage v1.0.1 on loopback
-and cached `postgres:16-alpine` and `amazon/aws-cli:2.17.65` images:
+and cached `postgres:16-alpine` and `amazon/aws-cli:2.17.65` images. The
+task-owned source was removed before the drill and the downloaded object was
+checked against the uploaded bytes:
 
 ```text
 ROW_COUNT table=public.tenants expected=17 actual=17
 ROW_COUNT table=public.events expected=257 actual=257
-S3_OBJECT=s3://dev333-drill/fixture/application.dump
-SOURCE_SNAPSHOT_AT=2026-10-15T15:56:43.959Z
-RPO_SECONDS=325
+S3_OBJECT=s3://dev333-fix-drill/fixture/application.dump
+SOURCE_SNAPSHOT_AT=2026-10-15T16:29:22.754Z
+RPO_SECONDS=12
 RTO_SECONDS=4
 RESTORE_STATUS=verified
 ```
 
 The source was a task-owned PostgreSQL 16 fixture with two related tables.
-Its 12,439-byte plain `pg_dumpall` object was uploaded and downloaded with an
+Its 6,400-byte plain `pg_dumpall` object was uploaded and downloaded with an
 exact byte comparison. The source container was removed before the drill.
 The restore target had fresh storage and received only the S3 object. The
 measured RTO includes download, target startup, SQL restore and row-count
@@ -313,9 +334,9 @@ that an ordinary running deployment is stuck without a heartbeat signal.
 
 ### BackupFailureOrStale
 
-Trigger: `ploydok_backup_failures_24h > 0`, no successful protected-resource
-backup exists within the 24-hour RPO, the control-plane success stamp is older
-than 24 hours, or its failure stamp is newer than its success stamp. The
+Trigger: `ploydok_backup_failures_24h > 0`, an enabled application backup config
+exceeds its schedule-derived maximum age, the control-plane success stamp is
+older than 24 hours, or its failure stamp is newer than its success stamp. The
 control-plane rule is gated by `ploydok_control_plane_backup_configured`, so a
 fresh installation does not page before its backup timer is configured.
 

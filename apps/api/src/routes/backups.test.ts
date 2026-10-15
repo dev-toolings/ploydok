@@ -352,16 +352,18 @@ describe("backup inventory route", () => {
       backups: Array<{
         id: string
         kind: string
-        present: boolean
-        sizeBytes: number
-        ageSeconds: number
+        present: boolean | null
+        probeError?: string
+        sizeBytes: number | null
+        ageSeconds: number | null
         databaseId: string | null
         volumeId: string | null
       }>
     }
-    expect(body.backups).toHaveLength(2)
+    expect(body.backups).toHaveLength(3)
     expect(body.backups.map((backup) => backup.id).sort()).toEqual([
       "inventory-db-1",
+      "inventory-missing",
       "inventory-volume-1",
     ])
     expect(body.backups).toEqual(
@@ -384,7 +386,19 @@ describe("backup inventory route", () => {
         }),
       ])
     )
-    expect(body.backups.every((backup) => backup.ageSeconds >= 60)).toBe(true)
+    expect(
+      body.backups
+        .filter((backup) => backup.present)
+        .every((backup) => (backup.ageSeconds ?? 0) >= 60)
+    ).toBe(true)
+    expect(body.backups).toContainEqual(
+      expect.objectContaining({
+        id: "inventory-missing",
+        present: false,
+        sizeBytes: null,
+        ageSeconds: null,
+      })
+    )
   })
 
   it("filters inventory queries by the token scopes that were granted", async () => {
@@ -430,6 +444,114 @@ describe("backup inventory route", () => {
         kind: "volume",
       }),
     ])
+  })
+
+  it("keeps healthy inventory rows when another destination probe fails", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ploydok-backup-inventory-"))
+    tempDirs.push(dir)
+    const location = path.join(dir, "available.dump")
+    await writeFile(location, "available backup")
+
+    const { db } = buildDb([
+      [
+        {
+          backup: {
+            id: "inventory-available",
+            database_id: "db-1",
+            config_id: "local-config",
+            destination_kind: "local",
+            location,
+            status: "succeeded",
+            started_at: new Date("2026-10-15T10:00:00.000Z"),
+            finished_at: new Date("2026-10-15T10:01:00.000Z"),
+          },
+          database: { id: "db-1", name: "primary" },
+          config: null,
+          project: { id: "project-1" },
+        },
+        {
+          backup: {
+            id: "inventory-unavailable",
+            database_id: "db-1",
+            config_id: "s3-config",
+            destination_kind: "s3",
+            location: "s3://missing-bucket/backup.dump",
+            status: "succeeded",
+            started_at: new Date("2026-10-15T09:00:00.000Z"),
+            finished_at: new Date("2026-10-15T09:01:00.000Z"),
+          },
+          database: { id: "db-1", name: "primary" },
+          config: null,
+          project: { id: "project-1" },
+        },
+      ],
+      [],
+    ])
+
+    const res = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { backups: Array<{ id: string }> }
+    expect(body.backups.map((backup) => backup.id).sort()).toEqual([
+      "inventory-available",
+      "inventory-unavailable",
+    ])
+    expect(body.backups).toContainEqual(
+      expect.objectContaining({
+        id: "inventory-available",
+        present: true,
+      })
+    )
+    expect(body.backups).toContainEqual(
+      expect.objectContaining({
+        id: "inventory-unavailable",
+        present: null,
+        probeError: "unreachable",
+        sizeBytes: null,
+        ageSeconds: null,
+      })
+    )
+  })
+
+  it("reuses a successful destination probe within the 60-second cache window", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ploydok-backup-inventory-"))
+    tempDirs.push(dir)
+    const location = path.join(dir, "cached.dump")
+    await writeFile(location, "cached backup")
+
+    const row = {
+      backup: {
+        id: "inventory-cache-hit",
+        database_id: "db-1",
+        config_id: "local-config",
+        destination_kind: "local",
+        location,
+        status: "succeeded",
+        started_at: new Date("2026-10-15T10:00:00.000Z"),
+        finished_at: new Date("2026-10-15T10:01:00.000Z"),
+      },
+      database: { id: "db-1", name: "primary" },
+      config: null,
+      project: { id: "project-1" },
+    }
+    const db = {
+      select: mock(() => makeChain([[row], []])),
+    } as unknown as Db
+
+    const first = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+    expect(first.status).toBe(200)
+    expect(
+      ((await first.json()) as { backups: Array<{ present: boolean }> })
+        .backups[0]?.present
+    ).toBe(true)
+
+    await rm(location)
+    const second = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+    expect(second.status).toBe(200)
+    expect(
+      ((await second.json()) as { backups: Array<{ present: boolean }> })
+        .backups[0]?.present
+    ).toBe(true)
   })
 
   test.skipIf(!testPgUrl)(

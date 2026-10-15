@@ -4,11 +4,7 @@ import type { Database, DbKind, DbStatus } from "./databases"
 export type DatabaseKindFilter = "all" | DbKind
 export type DatabaseStatusFilter = "all" | DbStatus | "attention"
 export type DatabaseProtectionFilter =
-  | "all"
-  | "review"
-  | "protected"
-  | "unprotected"
-  | "public"
+  "all" | "review" | "protected" | "unprotected" | "public"
 
 export interface DatabaseListFilters {
   query: string
@@ -45,9 +41,17 @@ export function isDatabaseBackupScheduled(database: Database): boolean {
 }
 
 export function isDatabaseProtected(database: Database): boolean {
+  if (!isDatabaseBackupScheduled(database)) return false
+  if (!database.last_successful_backup_at) return false
+
+  const lastSuccessfulBackup = Date.parse(database.last_successful_backup_at)
+  const maxAgeSeconds = database.backup_max_age_seconds
   return (
-    isDatabaseBackupScheduled(database) &&
-    database.latest_backup_status === "succeeded"
+    Number.isFinite(lastSuccessfulBackup) &&
+    typeof maxAgeSeconds === "number" &&
+    Number.isFinite(maxAgeSeconds) &&
+    maxAgeSeconds >= 0 &&
+    Date.now() - lastSuccessfulBackup <= maxAgeSeconds * 1000
   )
 }
 

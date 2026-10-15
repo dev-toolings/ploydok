@@ -38,8 +38,12 @@ function database(overrides: Partial<Database> = {}): Database {
     created_at: "2026-08-17T08:00:00.000Z",
     linked_apps: [],
     backup_enabled: true,
+    backup_max_age_seconds: 24 * 60 * 60,
     latest_backup_status: "succeeded",
     latest_backup_at: "2026-08-17T09:00:00.000Z",
+    last_successful_backup_at: new Date(
+      Date.now() - 60 * 60 * 1000
+    ).toISOString(),
     ...overrides,
   }
 }
@@ -94,11 +98,14 @@ describe("database operational list", () => {
     expect(isDatabaseProtected(database())).toBe(true)
     expect(
       isDatabaseProtected(database({ latest_backup_status: "failed" }))
-    ).toBe(false)
+    ).toBe(true)
     expect(
       isDatabaseProtected(
         database({ management_mode: "external", backup_enabled: true })
       )
+    ).toBe(false)
+    expect(
+      isDatabaseProtected(database({ backup_max_age_seconds: 30 * 60 }))
     ).toBe(false)
   })
 

@@ -40,6 +40,7 @@ import { encryptSecret } from "../secrets/crypto"
 import { normalizePostgresConnectionString } from "../databases/connection-strings"
 import { createAdminerSession, isAdminerSupportedDatabase } from "../adminer"
 import { requireScope } from "../auth/require-scope"
+import { backupMaxAgeSeconds } from "../backups/freshness"
 
 const log = childLogger("databases.routes")
 
@@ -178,8 +179,10 @@ function listShape(row: DatabaseRow) {
 
 type BackupSummary = {
   backup_enabled: boolean | null
+  backup_schedule_cron: string | null
   latest_backup_status: "running" | "succeeded" | "failed" | null
   latest_backup_at: Date | null
+  last_successful_backup_at: Date | null
   linked_apps: LinkedApp[] | null
 }
 
@@ -194,8 +197,13 @@ function listShapeWithBackupSummary(row: DatabaseRow, summary: BackupSummary) {
   return {
     ...listShape(row),
     backup_enabled: summary.backup_enabled ?? false,
+    backup_max_age_seconds: summary.backup_schedule_cron
+      ? backupMaxAgeSeconds(summary.backup_schedule_cron)
+      : null,
     latest_backup_status: summary.latest_backup_status,
     latest_backup_at: summary.latest_backup_at?.toISOString() ?? null,
+    last_successful_backup_at:
+      summary.last_successful_backup_at?.toISOString() ?? null,
     linked_apps: summary.linked_apps ?? [],
   }
 }
@@ -505,6 +513,18 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
         backup_enabled: sql<boolean>`bool_or(${backup_configs.enabled})`.as(
           "backup_enabled"
         ),
+        backup_config_id: sql<string | null>`(
+          array_agg(
+            ${backup_configs.id}
+            ORDER BY ${backup_configs.created_at} DESC, ${backup_configs.id} DESC
+          ) FILTER (WHERE ${backup_configs.enabled})
+        )[1]`.as("backup_config_id"),
+        backup_schedule_cron: sql<string | null>`(
+          array_agg(
+            ${backup_configs.schedule_cron}
+            ORDER BY ${backup_configs.created_at} DESC, ${backup_configs.id} DESC
+          ) FILTER (WHERE ${backup_configs.enabled})
+        )[1]`.as("backup_schedule_cron"),
       })
       .from(backup_configs)
       .where(eq(backup_configs.database_id, databases.id))
@@ -516,10 +536,32 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
         started_at: backups.started_at,
       })
       .from(backups)
-      .where(eq(backups.database_id, databases.id))
+      .where(
+        and(
+          eq(backups.database_id, databases.id),
+          eq(backups.config_id, backupProtection.backup_config_id)
+        )
+      )
       .orderBy(desc(backups.started_at), desc(backups.id))
       .limit(1)
       .as("latest_backup")
+
+    const lastSuccessfulBackup = db
+      .select({
+        finished_at: backups.finished_at,
+      })
+      .from(backups)
+      .where(
+        and(
+          eq(backups.database_id, databases.id),
+          eq(backups.config_id, backupProtection.backup_config_id),
+          eq(backups.status, "succeeded"),
+          isNotNull(backups.finished_at)
+        )
+      )
+      .orderBy(desc(backups.finished_at), desc(backups.id))
+      .limit(1)
+      .as("last_successful_backup")
 
     const linkedApps = db
       .select({
@@ -553,8 +595,10 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
       .select({
         db: databases,
         backup_enabled: backupProtection.backup_enabled,
+        backup_schedule_cron: backupProtection.backup_schedule_cron,
         latest_backup_status: latestBackup.status,
         latest_backup_at: latestBackup.started_at,
+        last_successful_backup_at: lastSuccessfulBackup.finished_at,
         linked_apps: linkedApps.linked_apps,
       })
       .from(databases)
@@ -569,6 +613,7 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
       )
       .leftJoinLateral(backupProtection, sql`true`)
       .leftJoinLateral(latestBackup, sql`true`)
+      .leftJoinLateral(lastSuccessfulBackup, sql`true`)
       .leftJoinLateral(linkedApps, sql`true`)
 
     if (projectId) {
@@ -581,8 +626,10 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
       rows.map((row) =>
         listShapeWithBackupSummary(row.db, {
           backup_enabled: row.backup_enabled,
+          backup_schedule_cron: row.backup_schedule_cron,
           latest_backup_status: row.latest_backup_status,
           latest_backup_at: row.latest_backup_at,
+          last_successful_backup_at: row.last_successful_backup_at,
           linked_apps: row.linked_apps,
         })
       )

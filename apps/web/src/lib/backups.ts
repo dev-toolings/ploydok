@@ -34,7 +34,8 @@ export interface BackupInventoryItem {
   volumeId: string | null
   destinationKind: "s3" | "local" | null
   location: string
-  present: boolean
+  present: boolean | null
+  probeError?: "unreachable" | null
   sizeBytes: number | null
   ageSeconds: number | null
   artifactModifiedAt: string | null
@@ -148,8 +149,8 @@ export function useTargetBackupInventory(target: BackupTarget) {
       apiFetch<{ backups: Array<BackupInventoryItem> }>(
         `/backups/inventory?${params}`
       ).then((data) => data.backups),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   })
 }
 
