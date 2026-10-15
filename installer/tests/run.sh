@@ -212,6 +212,16 @@ release_upgrade_output="$(
 assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api@$release_digest"
 assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-caddy@$release_digest"
 
+sed -i 's#ghcr.io/dev-toolings/#127.0.0.1:5000/#g' "$release_manifest"
+local_registry_upgrade_output="$(
+  PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
+    bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok \
+      --version=shuttle-test --image-manifest=/var/lib/ploydok/release-images.env \
+      --include-data-plane 2>&1
+)"
+assert_text_contains "$local_registry_upgrade_output" "docker pull 127.0.0.1:5000/ploydok-api@$release_digest"
+assert_text_contains "$local_registry_upgrade_output" "docker pull 127.0.0.1:5000/ploydok-caddy@$release_digest"
+
 printf '%s\n' 'PLOYDOK_API_IMAGE=ghcr.io/dev-toolings/ploydok-api:mutable' >"$release_manifest"
 if PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
   bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok \
