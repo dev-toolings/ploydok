@@ -240,6 +240,8 @@ GitHub Actions does not run on pushes or PRs targeting `develop`; manual CI
 and image publication jobs also skip `develop`. Do not dispatch a prerelease
 workflow from that branch. Release workflows for `main` and `v*` tags remain
 enabled. Develop CI is restored only on explicit request.
+See [the local staging procedure](deploy/README.md) for the Shuttle configuration
+and verification commands.
 
 ### Install a prerelease
 

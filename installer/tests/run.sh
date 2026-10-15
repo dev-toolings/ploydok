@@ -555,6 +555,11 @@ for identity in '' '^https://github\.com/example/fork/\.github/workflows/release
   assert_text_contains "$signature_output" "--certificate-identity-regexp $expected_identity"
 done
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_IMAGE_REGISTRY=ghcr.io/dev-toolings"
+unsigned_output="$(PATH="$TMP/cosign-bin:$PATH" PLOYDOK_INSTALL_DRY_RUN=1 \
+  PLOYDOK_INSTALL_SKIP_COSIGN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" \
+  bash "$ROOT/installer/ploydok-cli" upgrade --version=test-local 2>&1)"
+assert_text_contains "$unsigned_output" "image signature verification explicitly skipped"
+assert_text_not_contains "$unsigned_output" "--certificate-oidc-issuer"
 assert_text_contains "$(bash "$ROOT/installer/install.sh" --help)" "PLOYDOK_COSIGN_IDENTITY_REGEXP"
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK_COSIGN_IDENTITY_REGEXP:-$IDENTITY_REGEX'
 
