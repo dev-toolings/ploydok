@@ -10,6 +10,7 @@ import {
   backups,
   volume_backup_configs,
   volume_backups,
+  audit_log,
   projects,
   memberships,
 } from "@ploydok/db"
@@ -440,7 +441,13 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         })
         .from(volume_backups)
         .innerJoin(apps, eq(volume_backups.app_id, apps.id))
-        .innerJoin(app_volumes, eq(volume_backups.volume_id, app_volumes.id))
+        .innerJoin(
+          app_volumes,
+          and(
+            eq(volume_backups.volume_id, app_volumes.id),
+            eq(app_volumes.app_id, apps.id)
+          )
+        )
         .leftJoin(
           volume_backup_configs,
           eq(volume_backups.config_id, volume_backup_configs.id)
@@ -849,6 +856,38 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         )
       }
 
+      const backupRows = await db
+        .select()
+        .from(backups)
+        .where(eq(backups.id, backupId))
+        .limit(1)
+      const backup = backupRows[0]
+      if (!backup || backup.database_id !== dbId) {
+        try {
+          await db.insert(audit_log).values({
+            user_id: user.id,
+            action: "database.restore.rejected",
+            target_type: "database",
+            target_id: dbId,
+            org_id: dbRow.project_id,
+            metadata: JSON.stringify({
+              backup_id: backupId,
+              reason: "backup_database_mismatch",
+            }),
+            created_at: new Date(),
+          })
+        } catch (err) {
+          log.warn(
+            { err, databaseId: dbId, userId: user.id },
+            "restore refusal audit failed"
+          )
+        }
+        return c.json(
+          { error: { code: "BACKUP_NOT_FOUND", message: "Backup not found" } },
+          404
+        )
+      }
+
       log.warn(
         { databaseId: dbId, backupId, userId: user.id },
         "restore initiated"
@@ -857,6 +896,7 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
       try {
         const result = await runRestore(db, {
           backupId,
+          databaseId: dbId,
           ...(ageIdentity ? { ageIdentity } : {}),
         })
         if (!result.ok) {
@@ -906,6 +946,25 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
 
     const dbRow = backupRows[0]
     if (dbRow) {
+      if (
+        user.token_scopes &&
+        !tokenHasScope(user.token_scopes, "databases:write")
+      ) {
+        log.warn(
+          { backupId, databaseId: dbRow.db.id, userId: user.id },
+          "backup delete denied: token missing database write scope"
+        )
+        return c.json(
+          {
+            error: {
+              code: "FORBIDDEN",
+              message: "Token missing required scope: databases:write",
+            },
+          },
+          403
+        )
+      }
+
       invalidateInventoryProbeCache({
         backupId,
         configId: dbRow.backup.config_id ?? undefined,
@@ -916,7 +975,12 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
           const configRows = await db
             .select()
             .from(backup_configs)
-            .where(eq(backup_configs.id, dbRow.backup.config_id))
+            .where(
+              and(
+                eq(backup_configs.id, dbRow.backup.config_id),
+                eq(backup_configs.database_id, dbRow.db.id)
+              )
+            )
             .limit(1)
           config = configRows[0] ?? null
         }
@@ -933,7 +997,13 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
       .select({ backup: volume_backups, app: apps, volume: app_volumes })
       .from(volume_backups)
       .innerJoin(apps, eq(volume_backups.app_id, apps.id))
-      .innerJoin(app_volumes, eq(volume_backups.volume_id, app_volumes.id))
+      .innerJoin(
+        app_volumes,
+        and(
+          eq(volume_backups.volume_id, app_volumes.id),
+          eq(app_volumes.app_id, apps.id)
+        )
+      )
       .innerJoin(projects, eq(apps.project_id, projects.id))
       .innerJoin(
         memberships,
@@ -955,6 +1025,30 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
       )
     }
 
+    if (
+      user.token_scopes &&
+      !tokenHasScope(user.token_scopes, "apps:write")
+    ) {
+      log.warn(
+        {
+          backupId,
+          appId: volumeRow.app.id,
+          volumeId: volumeRow.volume.id,
+          userId: user.id,
+        },
+        "backup delete denied: token missing app write scope"
+      )
+      return c.json(
+        {
+          error: {
+            code: "FORBIDDEN",
+            message: "Token missing required scope: apps:write",
+          },
+        },
+        403
+      )
+    }
+
     invalidateInventoryProbeCache({
       backupId,
       configId: volumeRow.backup.config_id ?? undefined,
@@ -966,7 +1060,13 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         const configRows = await db
           .select()
           .from(volume_backup_configs)
-          .where(eq(volume_backup_configs.id, volumeRow.backup.config_id))
+          .where(
+            and(
+              eq(volume_backup_configs.id, volumeRow.backup.config_id),
+              eq(volume_backup_configs.app_id, volumeRow.app.id),
+              eq(volume_backup_configs.volume_id, volumeRow.volume.id)
+            )
+          )
           .limit(1)
         config = configRows[0] ?? null
       }

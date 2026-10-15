@@ -11,10 +11,11 @@ import {
   projects,
   users,
   volume_backups,
+  audit_log,
   type Db,
 } from "@ploydok/db"
 import { eq } from "drizzle-orm"
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { nanoid } from "nanoid"
@@ -47,6 +48,16 @@ mock.module("../logger", () => ({
     error: () => {},
   }),
 }))
+
+// Route tests must never construct a real BullMQ queue or connect to Redis.
+mock.module("bullmq", () => ({
+  Queue: class {
+    constructor(..._args: unknown[]) {}
+  },
+}))
+
+const runRestoreMock = mock(async () => ({ ok: true as const }))
+mock.module("../databases/restore", () => ({ runRestore: runRestoreMock }))
 
 const { createBackupsRouter } = await import("./backups")
 
@@ -810,6 +821,127 @@ describe("backup inventory route", () => {
 })
 
 describe("database backup routes", () => {
+  it("refuses a restore backup from another database without invoking restore", async () => {
+    runRestoreMock.mockClear()
+    const { db, inserts, updates, deletes } = buildDb([
+      [{ db: { id: "db-a", name: "primary", project_id: "project-a" } }],
+      [{ id: "backup-b", database_id: "db-b" }],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("POST", "/databases/db-a/restore", {
+        backupId: "backup-b",
+        ageIdentity: "AGE-PRIVATE-KEY-MUST-NOT-BE-AUDITED",
+        confirm: "restore primary",
+      })
+    )
+
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({
+      error: { code: "BACKUP_NOT_FOUND", message: "Backup not found" },
+    })
+    expect(runRestoreMock).not.toHaveBeenCalled()
+    expect(updates).toHaveLength(0)
+    expect(deletes).toHaveLength(0)
+
+    const auditRows = inserts.filter(
+      (entry) => (entry as { table: unknown }).table === audit_log
+    ) as Array<{ values: Record<string, unknown> }>
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]?.values).toMatchObject({
+      user_id: fakeUser.id,
+      action: "database.restore.rejected",
+      target_type: "database",
+      target_id: "db-a",
+      org_id: "project-a",
+    })
+    const metadata = String(auditRows[0]?.values.metadata)
+    expect(metadata).toContain('"backup_id":"backup-b"')
+    expect(metadata).toContain('"reason":"backup_database_mismatch"')
+    expect(metadata).not.toContain("AGE-PRIVATE-KEY-MUST-NOT-BE-AUDITED")
+  })
+
+  it("passes the URL database as the restore target for an owned backup", async () => {
+    runRestoreMock.mockClear()
+    const { db, inserts, updates, deletes } = buildDb([
+      [{ db: { id: "db-a", name: "primary" } }],
+      [{ id: "backup-a", database_id: "db-a" }],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("POST", "/databases/db-a/restore", {
+        backupId: "backup-a",
+        ageIdentity: "AGE-PRIVATE-KEY",
+        confirm: "restore primary",
+      })
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(runRestoreMock).toHaveBeenCalledWith(db, {
+      backupId: "backup-a",
+      databaseId: "db-a",
+      ageIdentity: "AGE-PRIVATE-KEY",
+    })
+    expect(inserts).toHaveLength(0)
+    expect(updates).toHaveLength(0)
+    expect(deletes).toHaveLength(0)
+  })
+
+  it("refuses database backup deletion without the database write scope", async () => {
+    const { db, deletes } = buildDb([
+      [
+        {
+          backup: {
+            id: "database-backup-1",
+            config_id: null,
+            location: "/path/that-must-not-be-deleted.dump",
+          },
+          db: { id: "db-a" },
+        },
+      ],
+    ])
+
+    const res = await wrapRouter(db, {
+      ...fakeUser,
+      token_scopes: ["apps:write"],
+    }).fetch(req("DELETE", "/backups/database-backup-1"))
+
+    expect(res.status).toBe(403)
+    expect((await res.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "FORBIDDEN" },
+    })
+    expect(deletes).toHaveLength(0)
+  })
+
+  it("refuses volume backup deletion without the app write scope", async () => {
+    const { db, deletes } = buildDb([
+      [],
+      [
+        {
+          backup: {
+            id: "volume-backup-1",
+            config_id: null,
+            location: "/path/that-must-not-be-deleted.tar",
+          },
+          app: { id: "app-a" },
+          volume: { id: "volume-a" },
+        },
+      ],
+    ])
+
+    const res = await wrapRouter(db, {
+      ...fakeUser,
+      token_scopes: ["databases:write"],
+    }).fetch(req("DELETE", "/backups/volume-backup-1"))
+
+    expect(res.status).toBe(403)
+    expect((await res.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "FORBIDDEN" },
+    })
+    expect(deletes).toHaveLength(0)
+  })
+
   it("requires database scopes for database backup config reads", async () => {
     const { db } = buildDb([])
 
@@ -853,4 +985,144 @@ describe("database backup routes", () => {
     const body = (await res.json()) as { config: { id: string } }
     expect(body.config.id).toBe("cfg-1")
   })
+
+  test.skipIf(!testPgUrl)(
+    "does not delete a volume backup whose volume belongs to another app",
+    async () => {
+      const db = createDb(testPgUrl!)
+      const dir = await mkdtemp(path.join(tmpdir(), "ploydok-volume-delete-"))
+      tempDirs.push(dir)
+      const suffix = nanoid(8)
+      const now = new Date()
+      const userA = `volume-delete-user-a-${suffix}`
+      const userB = `volume-delete-user-b-${suffix}`
+      const projectA = `volume-delete-project-a-${suffix}`
+      const projectB = `volume-delete-project-b-${suffix}`
+      const appA = `volume-delete-app-a-${suffix}`
+      const appB = `volume-delete-app-b-${suffix}`
+      const volumeB = `volume-delete-volume-b-${suffix}`
+      const backupId = `volume-delete-backup-${suffix}`
+      const location = path.join(dir, "backup.tar")
+      await writeFile(location, "must survive refused deletion")
+
+      try {
+        await db.insert(users).values([
+          {
+            id: userA,
+            email: `${userA}@example.test`,
+            display_name: "Volume delete user A",
+            created_at: now,
+            updated_at: now,
+            recovery_token_hash: null,
+            recovery_expires_at: null,
+          },
+          {
+            id: userB,
+            email: `${userB}@example.test`,
+            display_name: "Volume delete user B",
+            created_at: now,
+            updated_at: now,
+            recovery_token_hash: null,
+            recovery_expires_at: null,
+          },
+        ])
+        await db.insert(projects).values([
+          {
+            id: projectA,
+            owner_id: userA,
+            name: "Volume delete project A",
+            slug: `volume-delete-a-${suffix}`,
+            created_at: now,
+          },
+          {
+            id: projectB,
+            owner_id: userB,
+            name: "Volume delete project B",
+            slug: `volume-delete-b-${suffix}`,
+            created_at: now,
+          },
+        ])
+        await db.insert(memberships).values([
+          {
+            id: `volume-delete-membership-a-${suffix}`,
+            org_id: projectA,
+            user_id: userA,
+            role: "owner",
+            invited_at: now,
+            accepted_at: now,
+          },
+          {
+            id: `volume-delete-membership-b-${suffix}`,
+            org_id: projectB,
+            user_id: userB,
+            role: "owner",
+            invited_at: now,
+            accepted_at: now,
+          },
+        ])
+        await db.insert(apps).values([
+          {
+            id: appA,
+            project_id: projectA,
+            name: "Volume delete app A",
+            slug: `volume-delete-app-a-${suffix}`,
+            created_at: now,
+            updated_at: now,
+          },
+          {
+            id: appB,
+            project_id: projectB,
+            name: "Volume delete app B",
+            slug: `volume-delete-app-b-${suffix}`,
+            created_at: now,
+            updated_at: now,
+          },
+        ])
+        await db.insert(app_volumes).values({
+          id: volumeB,
+          app_id: appB,
+          name: "data",
+          mount_path: "/data",
+          created_at: now,
+        })
+        // The volume backup row is intentionally inconsistent: its app_id is
+        // app A, while its volume_id belongs to app B. Both foreign keys are
+        // valid, but the row must not be treated as app A's backup.
+        await db.insert(volume_backups).values({
+          id: backupId,
+          app_id: appA,
+          volume_id: volumeB,
+          config_id: null,
+          destination_kind: "local",
+          location,
+          status: "succeeded",
+          started_at: now,
+          finished_at: now,
+        })
+
+        const res = await wrapRouter(db, { ...fakeUser, id: userA }).fetch(
+          req("DELETE", `/backups/${backupId}`)
+        )
+
+        expect(res.status).toBe(404)
+        expect(await res.json()).toEqual({
+          error: { code: "NOT_FOUND", message: "Backup not found" },
+        })
+        expect(await readFile(location, "utf8")).toBe(
+          "must survive refused deletion"
+        )
+        const remaining = await db
+          .select({ id: volume_backups.id })
+          .from(volume_backups)
+          .where(eq(volume_backups.id, backupId))
+        expect(remaining).toHaveLength(1)
+      } finally {
+        await db.delete(projects).where(eq(projects.id, projectA))
+        await db.delete(projects).where(eq(projects.id, projectB))
+        await db.delete(users).where(eq(users.id, userA))
+        await db.delete(users).where(eq(users.id, userB))
+        await db.$client.end()
+      }
+    }
+  )
 })
