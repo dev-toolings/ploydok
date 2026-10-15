@@ -13,7 +13,7 @@ on:
         description: "Immutable semver to publish (for example 1.2.3)"
         required: true
       skip_quality_gates:
-        description: "Skip quality gates for develop prereleases only"
+        description: "Skip quality gates for controlled non-main prereleases"
         type: boolean
         default: false
 
@@ -35,6 +35,8 @@ concurrency:
 
 jobs:
   gate-policy:
+    # A skipped policy job prevents every dependent build and publication job.
+    if: github.ref != 'refs/heads/develop'
     name: validate-release-gate-policy
     runs-on: ubuntu-latest
     outputs:

@@ -5,10 +5,14 @@ on:
     branches:
       - main
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   test:
+    # Develop deployments use local Deploy Shuttle until the official release.
+    if: github.ref != 'refs/heads/develop'
     name: Test
     runs-on: ubuntu-latest
 
@@ -57,6 +61,7 @@ jobs:
         run: bunx turbo run typecheck lint test
 
   postgres-integration:
+    if: github.ref != 'refs/heads/develop'
     name: Critical PostgreSQL integration
     runs-on: ubuntu-latest
     services:

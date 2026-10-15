@@ -2,6 +2,8 @@ name: Installer
 
 on:
   pull_request:
+    branches:
+      - main
     paths:
       - "installer/**"
       - "project-docs/operations/install/**"
@@ -21,6 +23,7 @@ on:
 
 jobs:
   dry-run:
+    if: github.ref != 'refs/heads/develop'
     name: Dry-run installer
     runs-on: ubuntu-latest
 

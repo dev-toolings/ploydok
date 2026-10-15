@@ -162,17 +162,11 @@ The perceived wait ends when the next page paints, not when the request resolves
 
 - Never release or push `main` unless Kevin explicitly requests a release.
   `release-images.yml` runs every gate on main pushes and `v*` tags.
-- Develop staging prerelease command:
-
-  ```bash
-  gh workflow run release-images.yml --ref develop \
-    -f version=0.1.0-rc.1 -f skip_quality_gates=true
-  ```
-
-  Omit the skip input for full gates. `gate-policy` requires manual dispatch,
-  a non-main ref and a version containing `-`; use this exception only for
-  develop prereleases. Builds, Trivy, cosign, the immutable image manifest and
-  digest promotion remain mandatory. Dispatch creates no bootstrap release asset.
+- Until the official release, deploy `develop` locally to Proxmox with Deploy
+  Shuttle. CI does not run for pushes or PRs targeting `develop`; manual CI
+  and image publication jobs also skip `refs/heads/develop`. Do not dispatch
+  a GitHub Actions prerelease from `develop`. Keep the release workflows for
+  `main` and `v*` tags intact. Re-enable develop CI only on explicit request.
 - All five images live at `ghcr.io/dev-toolings/ploydok-{api,web,agent,caddy,adminer}`.
   Every image must pass `aquasec/trivy:0.67.2 image --exit-code 1
   --ignore-unfixed --severity CRITICAL`. Do not add vulnerability exclusions.
@@ -228,7 +222,7 @@ The perceived wait ends when the next page paints, not when the request resolves
                    |
 .------------------+-------------------.
 |         develop: integration         |
-|         No automatic push CI         |
+|        Local checks and Shuttle      |
 '--------+--------------------+--------'
          ^                    ^
          | merge --no-ff      | merge --no-ff
@@ -240,9 +234,9 @@ The perceived wait ends when the next page paints, not when the request resolves
 ```
 
 - Never commit on `main`. `main` only receives `develop` when the user asks
-  for a release. Automatic branch-push CI runs on `main` only; PR and manual
-  quality workflows remain available. Release CI also runs on `v*` tags and
-  manual dispatch, including develop prereleases (see Release And Images).
+  for a release. Automatic branch-push CI runs on `main` only; PR checks target
+  `main` only. Manual CI skips `develop` until the official release. Release CI
+  also runs on `v*` tags and non-develop manual dispatch.
 - Start every task from an up-to-date `develop`
   (`git fetch origin && git switch develop && git pull --ff-only`), then
   create a dedicated branch. Do not commit directly on `develop` either.
@@ -255,8 +249,8 @@ The perceived wait ends when the next page paints, not when the request resolves
     `docs`, `refactor`, `test`, `perf`, `ci`.
   - A problem found along the way gets its own `fix/<slug>` branch from
     `develop`, never folded into the current branch.
-- Automatic branch-push CI does not run on `develop`, so local validation is
-  the merge gate. Manual prerelease workflows remain available.
+- CI does not run on `develop`, so local validation is the merge gate. Use
+  Deploy Shuttle for development deployments to Proxmox, not manual prereleases.
   Before merging a branch into `develop`, run the checks for what it touches
   (see Validation Commands and `.claude/rules/testing.md`): API tests one
   file per process (`bun run test` in `apps/api`), `tsc` for api/web,

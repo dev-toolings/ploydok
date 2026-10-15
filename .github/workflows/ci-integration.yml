@@ -5,6 +5,8 @@ on:
     branches:
       - main
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 # Annule les runs précédents sur la même branche pour économiser les minutes CI.
@@ -14,6 +16,7 @@ concurrency:
 
 jobs:
   rust-audit:
+    if: github.ref != 'refs/heads/develop'
     name: Rust Advisory Audit
     runs-on: ubuntu-latest
 
@@ -30,6 +33,7 @@ jobs:
         run: cargo audit --file agent/Cargo.lock --deny warnings
 
   integration:
+    if: github.ref != 'refs/heads/develop'
     name: Integration Tests (DinD)
     runs-on: ubuntu-latest
     env:

@@ -232,21 +232,14 @@ docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD \
   aquasec/trivy:0.67.2 image --exit-code 1 --ignore-unfixed --severity CRITICAL "$IMAGE"
 ```
 
-### Cut a develop prerelease
+### Development deployments
 
-For a controlled staging release with the slower quality gates explicitly
-skipped:
-
-```bash
-gh workflow run release-images.yml --ref develop \
-  -f version=0.1.0-rc.1 -f skip_quality_gates=true
-```
-
-Omit `skip_quality_gates` to run every gate. The `gate-policy` job accepts the
-skip only for `workflow_dispatch` on a non-main ref with a version containing
-`-`; use it for develop prereleases only. Build, Trivy, cosign, the immutable
-manifest and promotion still run. A skipped-gate prerelease is for staging.
-Dispatch does not create a Git tag or publish a signed bootstrap bundle.
+Until the official release, development deployments to Proxmox use Deploy
+Shuttle from the local workstation. Validate changes locally before deployment.
+GitHub Actions does not run on pushes or PRs targeting `develop`; manual CI
+and image publication jobs also skip `develop`. Do not dispatch a prerelease
+workflow from that branch. Release workflows for `main` and `v*` tags remain
+enabled. Develop CI is restored only on explicit request.
 
 ### Install a prerelease
 
