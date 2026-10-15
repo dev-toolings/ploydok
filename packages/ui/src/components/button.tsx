@@ -8,7 +8,7 @@ import { cn } from "@workspace/ui/lib/utils"
 import type { VariantProps } from "class-variance-authority"
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-[10px] border bg-clip-padding text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,background-image] duration-150 ease-out outline-none select-none focus-visible:ring-2 focus-visible:ring-[#3080ff]/20 focus-visible:ring-offset-2 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex cursor-pointer shrink-0 items-center justify-center rounded-[10px] border bg-clip-padding text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,background-image] duration-150 ease-out outline-none select-none focus-visible:ring-2 focus-visible:ring-[#3080ff]/20 focus-visible:ring-offset-2 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
