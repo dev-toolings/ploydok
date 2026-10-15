@@ -506,6 +506,19 @@ EOF
     env_file="$(real_path "$DATA_DIR/.env")"
     [[ -f "$descriptor" ]] || { echo "missing $runtime descriptor: $descriptor" >&2; exit 1; }
     [[ -f "$env_file" ]] || { echo "missing env file: $env_file" >&2; exit 1; }
+    if [[ "$runtime" == "swarm" ]]; then
+      # Swarm does not load env_file for descriptor interpolation. Read the
+      # installer-owned values as data, without evaluating shell expressions.
+      while IFS= read -r entry || [[ -n "$entry" ]]; do
+        case "$entry" in
+          PLOYDOK_RUNTIME_UID=*|PLOYDOK_RUNTIME_GID=*|PLOYDOK_PG_PASSWORD=*|PLOYDOK_REDIS_PASSWORD=*)
+            export "${entry%$'\r'}"
+            ;;
+        esac
+      done <"$env_file"
+      : "${PLOYDOK_RUNTIME_UID:?missing runtime UID}" "${PLOYDOK_RUNTIME_GID:?missing runtime GID}"
+      : "${PLOYDOK_PG_PASSWORD:?missing PostgreSQL password}" "${PLOYDOK_REDIS_PASSWORD:?missing Redis password}"
+    fi
     require_monitoring_assets "$descriptor"
     run chmod 0400 \
       "$(real_path "$DATA_DIR/secrets/metrics-token")" \

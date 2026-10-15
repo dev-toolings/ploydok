@@ -443,7 +443,12 @@ assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'IMAGE_P
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'stop-stack.sh wait'
 assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok-update.service" '/usr/local/lib/ploydok/update-stack.sh'
 
+cat >"$TMP/check-upgrade-env.sh" <<'EOF'
+trap '[[ "$(printenv PLOYDOK_RUNTIME_UID)" == 1234 && "$(printenv PLOYDOK_RUNTIME_GID)" == 1235 && -n "$(printenv PLOYDOK_PG_PASSWORD)" && -n "$(printenv PLOYDOK_REDIS_PASSWORD)" ]]' EXIT
+EOF
+sed -i 's/^PLOYDOK_RUNTIME_UID=.*/PLOYDOK_RUNTIME_UID=1234/; s/^PLOYDOK_RUNTIME_GID=.*/PLOYDOK_RUNTIME_GID=1235/' "$TMP/swarm-root/var/lib/ploydok/.env"
 swarm_upgrade_output="$(
+  BASH_ENV="$TMP/check-upgrade-env.sh" PLOYDOK_RUNTIME_UID=wrong PLOYDOK_RUNTIME_GID=wrong \
   PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
