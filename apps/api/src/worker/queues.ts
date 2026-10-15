@@ -100,6 +100,8 @@ export const logArchiveQueue = new Queue("logs.archive", {
 export const transactionalOutboxQueues = [
   deployQueue,
   serviceInstallQueue,
+  previewDeploy,
+  previewTeardown,
   gcQueue,
   gcImagesQueue,
   gcBuildCacheQueue,

@@ -5,6 +5,7 @@
 // vérité pour les routes applicatives : on re-pousse toutes les routes des
 // apps `running`/`restarting` vers l'Admin API Caddy. Idempotent via
 // `setUpstream` (PATCH si route existe, POST sinon).
+import { swarmComposeServiceName } from "../worker/compose-swarm.js"
 import { and, eq, inArray, isNotNull } from "drizzle-orm"
 import {
   apps as appsTable,
@@ -50,6 +51,11 @@ export interface ServiceForReconcile {
   slug: string
   domain: string | null
   compose_raw: string
+  container_ids: string[] | null
+  swarm_service_names: string[] | null
+  runtime_mode?: "docker" | "swarm" | null
+  entrypoint_service_name?: string | null
+  entrypoint_port?: number | null
 }
 
 export interface DatabaseProxyForReconcile {
@@ -99,6 +105,11 @@ export async function fetchRunningServicesForCaddy(
       slug: servicesTable.slug,
       domain: servicesTable.domain,
       compose_raw: servicesTable.compose_raw,
+      container_ids: servicesTable.container_ids,
+      swarm_service_names: servicesTable.swarm_service_names,
+      runtime_mode: servicesTable.runtime_mode,
+      entrypoint_service_name: servicesTable.entrypoint_service_name,
+      entrypoint_port: servicesTable.entrypoint_port,
     })
     .from(servicesTable)
     .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
@@ -171,19 +182,60 @@ export async function reconcileServiceRoutes(opts: {
       continue
     }
     try {
+      const swarmServiceNames = service.swarm_service_names ?? []
+      const containerIds = service.container_ids ?? []
+      if (swarmServiceNames.length === 0 && containerIds.length === 0) {
+        result.skipped++
+        continue
+      }
+
+      const runtimeMode =
+        service.runtime_mode ??
+        (swarmServiceNames.length > 0 ? "swarm" : "docker")
+      // The declared route is sufficient without parsing encrypted Compose
+      // scalars (a generated port may itself have been vaulted).
+      if (service.entrypoint_service_name != null && service.entrypoint_port != null) {
+        const name = runtimeMode === "swarm"
+          ? swarmComposeServiceName(`svc-${service.id}-${service.slug}`.slice(0, 40), service.entrypoint_service_name)
+          : `ploydok-svc-${service.id}-${service.entrypoint_service_name}`
+        if (runtimeMode === "swarm" && !swarmServiceNames.includes(name)) {
+          throw new Error(`Service ${service.id} declared entrypoint is not running`)
+        }
+        await upsertServiceRoute(opts.caddy, {
+          serviceId: service.id, domain: service.domain, containers: [],
+          entrypoint: { name, port: service.entrypoint_port },
+        })
+        result.synced++
+        continue
+      }
       const containers = composeToContainers({
         compose: service.compose_raw,
-        servicePrefix: `ploydok-svc-${service.slug}`,
-        network: "ploydok-public",
+        runtime: runtimeMode,
+        servicePrefix: `ploydok-svc-${service.id}`,
+        network: "ploydok-service-route",
         labels: {
           "ploydok.kind": "service",
           "ploydok.service_id": service.id,
         },
       })
+      const routeContainers =
+        swarmServiceNames.length === 0
+          ? containers
+          : (() => {
+              if (swarmServiceNames.length !== containers.length) {
+                throw new Error(
+                  `Service ${service.id} has ${swarmServiceNames.length} Swarm service names for ${containers.length} Compose services`
+                )
+              }
+              return containers.map((container, index) => ({
+                ...container,
+                name: swarmServiceNames[index]!,
+              }))
+            })()
       await upsertServiceRoute(opts.caddy, {
         serviceId: service.id,
         domain: service.domain,
-        containers,
+        containers: routeContainers,
       })
       result.synced++
       opts.logger.info(

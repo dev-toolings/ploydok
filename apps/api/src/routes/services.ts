@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
 import type { MiddlewareHandler } from "hono"
+import { audit_log } from "@ploydok/db"
+import { maskServiceSecrets, revealServiceSecrets } from "../services/service-secrets"
 import { createDb } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import {
@@ -59,12 +61,12 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
         )
       }
       const rows = await listServicesForProject(db, projectId)
-      return c.json({ services: rows })
+      return c.json({ services: rows.map(maskServiceSecrets) })
     }
 
     // All services across projects the user owns (accepted owner membership)
     const rows = await listServicesForOwner(db, user.id)
-    return c.json({ services: rows })
+    return c.json({ services: rows.map(maskServiceSecrets) })
   })
 
   // GET /services/:id
@@ -77,7 +79,7 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
         404
       )
     }
-    return c.json({ service: svc })
+    return c.json({ service: maskServiceSecrets(svc) })
   })
 
   // POST /services/from-template
@@ -101,10 +103,14 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
         templateVersion: parsed.data.templateVersion,
         name: parsed.data.name,
         compose: parsed.data.compose,
+        ...(parsed.data.templateToml !== undefined
+          ? { templateToml: parsed.data.templateToml }
+          : {}),
       })
-      return c.json({ service: row }, 201)
+      return c.json({ service: maskServiceSecrets(row) }, 201)
     } catch (err) {
       const code = (err as { code?: string }).code
+      if (code === "VALIDATION_ERROR") return c.json({ error: { code, message: (err as Error).message } }, 400)
       if (code === "NOT_FOUND") {
         return c.json(
           { error: { code: "NOT_FOUND", message: "Project not found" } },
@@ -121,6 +127,20 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
       log.error({ err }, "installFromTemplate failed")
       return c.json({ error: { code: "INTERNAL", message } }, 500)
     }
+  })
+
+  // Explicit owner-only reveal, including PAT write scope. Audit before disclosure.
+  router.post("/:id/secrets/reveal", requireScope("services:write"), ownerOnly, async (c) => {
+    const user = getUser(c)
+    const svc = await getServiceForOwner(db, c.req.param("id")!, user.id)
+    if (!svc) return c.json({ error: { code: "NOT_FOUND", message: "Service not found" } }, 404)
+    const values = await revealServiceSecrets(svc)
+    await db.insert(audit_log).values({
+      user_id: user.id, action: "service.secrets.revealed", target_type: "service",
+      target_id: svc.id, metadata: "{}", created_at: new Date(),
+    })
+    c.header("Cache-Control", "no-store")
+    return c.json({ secrets: values })
   })
 
   // POST /services/:id/start

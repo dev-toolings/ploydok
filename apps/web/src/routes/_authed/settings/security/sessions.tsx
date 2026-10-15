@@ -27,6 +27,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { cn } from "@workspace/ui/lib/utils"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { SessionHistoryPopover } from "../../../../components/settings/SessionHistoryPopover"
 import {
   useRevokeOthers,
@@ -37,6 +38,7 @@ import i18n from "../../../../lib/i18n"
 import type { SessionInfo } from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/settings/security/sessions")({
+  head: createPageHead("sessions"),
   component: SessionsPage,
 })
 

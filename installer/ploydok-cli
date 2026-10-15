@@ -76,7 +76,8 @@ validate_agent_pki_bundle() {
 
 verify_image() {
   local image="$1"
-  local identity_regex='^https://github\.com/MakFly/ploydok/\.github/workflows/release-images\.yml@.*$'
+  local identity_regex='^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$'
+  identity_regex="${PLOYDOK_COSIGN_IDENTITY_REGEXP:-$identity_regex}"
   if command -v cosign >/dev/null 2>&1; then
     run cosign verify \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -224,7 +225,10 @@ require_monitoring_assets() {
 test_alert_receiver() {
   local receiver_file payload api_payload runtime descriptor env_file compose alertmanager_id prometheus_id
   receiver_file="$(real_path "$DATA_DIR/secrets/alert-webhook-url")"
-  [[ -f "$receiver_file" ]] || return 1
+  if [[ ! -f "$receiver_file" ]] || ! grep -q '[^[:space:]]' "$receiver_file"; then
+    echo "[ploydok-cli] WARN: alerting disabled; rerun the installer with --alert-webhook-url or PLOYDOK_ALERT_WEBHOOK_URL to enable alerts" >&2
+    return 0
+  fi
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "[ploydok-cli] dry-run: send explicit test notification to the configured alert receiver"
     return 0
@@ -444,6 +448,8 @@ EOF
     runtime="$(runtime_kind)"
     if [[ "$runtime" == "swarm" ]]; then
       run systemctl disable --now ploydok.service
+      # Also clean a stack deployed while the systemd unit was inactive.
+      run bash "$(real_path /usr/local/lib/ploydok/stop-stack.sh)"
       run systemctl disable --now ploydok-port-isolation.service
       run systemctl disable --now ploydok.target
     else
@@ -613,6 +619,7 @@ EOF
     fi
 
     if [[ "$runtime" == "swarm" ]]; then
+      run bash "$(real_path /usr/local/lib/ploydok/stop-stack.sh)" wait
       if ! run docker stack deploy --resolve-image always --with-registry-auth --prune -c "$descriptor" ploydok; then
         echo "stack deploy failed; restoring previous stack descriptor" >&2
         run cp "$backup_descriptor" "$descriptor"

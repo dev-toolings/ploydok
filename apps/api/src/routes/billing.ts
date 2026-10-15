@@ -52,6 +52,7 @@ export function createBillingRouter(db: Db) {
     try {
       const url = await stripeClient.createCheckoutSession(
         org.id,
+        slug,
         planSlug,
         env.WEB_ORIGIN
       )
@@ -99,6 +100,7 @@ export function createBillingRouter(db: Db) {
     try {
       const url = await stripeClient.createPortalSession(
         sub.stripe_customer_id,
+        slug,
         env.WEB_ORIGIN
       )
       return c.json({ url }, { status: 200 })

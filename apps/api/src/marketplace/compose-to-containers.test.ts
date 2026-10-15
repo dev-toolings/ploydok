@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test"
 import {
   UnsupportedComposeFeatureError,
+  composeRequiresContainerRuntime,
   composeToContainers,
 } from "./compose-to-containers"
 
@@ -178,19 +179,35 @@ services:
     })
   })
 
-  it("port format 127.0.0.1:5432:5432", () => {
+  it("preserves explicit IPv4 and IPv6 host IPs", () => {
     const result = run(`
 services:
-  db:
-    image: postgres:16
+  v4:
+    image: nginx:alpine
+    ports: ["127.0.0.1:8080:80"]
+  v6:
+    image: nginx:alpine
     ports:
-      - "127.0.0.1:5432:5432"
+      - target: 80
+        published: 8081
+        host_ip: ::1
 `)
-    expect(result[0]!.ports[0]).toEqual({
-      containerPort: 5432,
-      hostPort: 5432,
-      proto: "tcp",
+    expect(result[0]!.ports[0]).toMatchObject({
+      containerPort: 80,
+      hostPort: 8080,
+      hostIp: "127.0.0.1",
     })
+    expect(result[1]!.ports[0]).toMatchObject({
+      containerPort: 80,
+      hostPort: 8081,
+      hostIp: "::1",
+    })
+  })
+
+  it("rejects wildcard host IPs and selects Docker only for explicit bindings", () => {
+    expect(() => run('services:\n  db:\n    image: postgres:16\n    ports: ["0.0.0.0:5432:5432"]')).toThrow(/wildcard host IP/)
+    expect(composeRequiresContainerRuntime('services:\n  db:\n    image: postgres:16\n    ports: ["127.0.0.1:5432:5432"]')).toBe(true)
+    expect(composeRequiresContainerRuntime('services:\n  db:\n    image: postgres:16\n    ports: ["5432:5432"]')).toBe(false)
   })
 
   it("healthcheck with 30s/1m intervals", () => {
@@ -220,7 +237,7 @@ services:
     image: alpine
     command: sh -c "echo hello"
 `)
-    expect(result[0]!.command).toEqual(["sh", "-c", '"echo', 'hello"'])
+    expect(result[0]!.command).toEqual(["sh", "-c", "echo hello"])
   })
 
   it("command array is preserved", () => {
@@ -298,18 +315,8 @@ services:
     ).toThrow(/"image" is required/)
   })
 
-  it("depends_on as map (condition form)", () => {
-    const result = run(`
-services:
-  app:
-    image: myapp
-    depends_on:
-      db:
-        condition: service_healthy
-  db:
-    image: postgres:16
-`)
-    expect(result[1]!.dependsOn).toEqual(["db"])
+  it("rejects readiness dependency conditions", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    depends_on:\n      db:\n        condition: service_healthy\n  db:\n    image: postgres:16')).toThrow(/service_healthy/)
   })
 
   it("networks override → UnsupportedComposeFeatureError", () => {
@@ -347,4 +354,80 @@ services:
 `)
     ).toThrow(UnsupportedComposeFeatureError)
   })
+
+  it("privileged → UnsupportedComposeFeatureError", () => {
+    expect(() =>
+      run(`
+services:
+  app:
+    image: alpine
+    privileged: true
+`)
+    ).toThrow(/privileged/)
+  })
+
+  it("network_mode host → UnsupportedComposeFeatureError", () => {
+    expect(() =>
+      run(`
+services:
+  app:
+    image: alpine
+    network_mode: host
+`)
+    ).toThrow(/network_mode/)
+  })
+
+  it("keeps the compose service name", () => {
+    const result = run(`
+services:
+  api-gateway:
+    image: alpine
+`)
+    expect(result[0]!.composeName).toBe("api-gateway")
+  })
 })
+
+describe("volume source containment", () => {
+  it.each(["..", "../files/config.yaml", "../../..", "a/../../b", ".", "./data/.."])(
+    "rejects a relative source outside the service directory: %s", source => {
+      expect(() => run(`services:
+  app:
+    image: alpine
+    volumes:
+      - "${source}:/config:ro"
+`))
+        .toThrow(`Service "app": volume source "${source}" escapes the service volume directory`);
+    }
+  );
+  it("rejects a traversing long-syntax bind source", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    volumes:\n      - type: bind\n        source: ../files/config.yaml\n        target: /config\n'))
+      .toThrow('Service "app": volume source "../files/config.yaml" escapes the service volume directory');
+  });
+  it.each(["/var/lib/ploydok/volumes/../x", "/var/lib/ploydok/volumes/a/../../x", "/var/lib/ploydok/volumes"])(
+    "rejects an absolute source outside the normalized volumes root: %s", source => {
+      expect(() => run(`services:
+  app:
+    image: alpine
+    volumes: ["${source}:/config"]
+`))
+        .toThrow(`Service "app": volume source "${source}" escapes the volumes root`);
+    }
+  );
+  it("rejects a directory whose prefix merely resembles the volumes root", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    volumes: ["/var/lib/ploydok/volumes-other/data:/data"]'))
+      .toThrow(UnsupportedComposeFeatureError);
+  });
+  it.each([
+    ["./data", `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    ["data/sub", `/var/lib/ploydok/volumes/${PREFIX}/data/sub`],
+    ["a/../data", `/var/lib/ploydok/volumes/${PREFIX}/data`],
+    ["/var/lib/ploydok/volumes/a/../data", "/var/lib/ploydok/volumes/data"],
+  ])("keeps and normalizes contained paths: %s", (source, expected) => {
+    const [container] = run(`services:
+  app:
+    image: alpine
+    volumes: ["${source}:/data:ro"]
+`);
+    expect(container!.volumes[0]).toEqual({ hostPath: expected, containerPath: "/data", readOnly: true });
+  });
+});

@@ -25,6 +25,7 @@ import { Switch } from "@workspace/ui/components/switch"
 import { QRCodeSVG } from "qrcode.react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
+import { createPageHead } from "../../../../lib/page-metadata"
 import {
   useDeleteTotp,
   useEnrollTotp,
@@ -35,6 +36,7 @@ import {
 import type { TotpEnrollResponse } from "../../../../lib/totp"
 
 export const Route = createFileRoute("/_authed/settings/security/totp")({
+  head: createPageHead("totp"),
   component: TotpPage,
 })
 

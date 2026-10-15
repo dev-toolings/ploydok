@@ -10,7 +10,7 @@ HTTPS_PORT="8443"
 INSTALL_DIR="/opt/ploydok"
 DATA_DIR="/var/lib/ploydok"
 INSTALL_OWNER="${PLOYDOK_INSTALL_OWNER:-${SUDO_USER:-root}}"
-IMAGE_REGISTRY="${PLOYDOK_IMAGE_REGISTRY:-ghcr.io/makfly}"
+IMAGE_REGISTRY="${PLOYDOK_IMAGE_REGISTRY:-ghcr.io/dev-toolings}"
 PUBLIC_SCHEME="${PLOYDOK_PUBLIC_SCHEME:-}"
 PUBLIC_HOST="${PLOYDOK_PUBLIC_HOST:-}"
 PUBLIC_PORT="${PLOYDOK_PUBLIC_PORT:-}"
@@ -48,16 +48,20 @@ Options:
   --public-scheme=http|https
   --public-port=<port>
   --domain-base=<default-app-domain-suffix>
-  --alert-webhook-url=<https-url> (required alert receiver for production)
+  --alert-webhook-url=<https-url> (optional HTTPS alert receiver; alerts are disabled when omitted)
   --skip-docker-install
   --manage-firewall
   --yes
-  --unattended
+  --unattended                 (implies --yes; defaults to coexist unless --mode is given)
   --version=<tag>
   --allow-edge                  (development only; permits the mutable edge channel)
   --image-registry=<registry>
   --runtime=swarm|compose      (default: swarm for production; compose is local/test only)
   --help
+
+Environment for forks:
+  PLOYDOK_IMAGE_REGISTRY=ghcr.io/dev-toolings
+  PLOYDOK_COSIGN_IDENTITY_REGEXP=<trusted-release-workflow-regexp>
 
 Environment for tests:
   PLOYDOK_INSTALL_DRY_RUN=1
@@ -82,7 +86,7 @@ for arg in "$@"; do
     --skip-docker-install) SKIP_DOCKER_INSTALL=1 ;;
     --manage-firewall) MANAGE_FIREWALL=1 ;;
     --yes) YES=1 ;;
-    --unattended) UNATTENDED=1; YES=1; MODE="coexist" ;;
+    --unattended) UNATTENDED=1; YES=1 ;;
     --version=*) VERSION="${arg#*=}" ;;
     --allow-edge)
       [[ -z "$VERSION" ]] && VERSION="edge"
@@ -94,6 +98,10 @@ for arg in "$@"; do
     *) echo "Unknown option: $arg" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+if [[ "$UNATTENDED" == "1" && -z "$MODE" ]]; then
+  MODE="coexist"
+fi
 
 case "$MODE" in
   ""|takeover|coexist|bootstrap-http|abort) ;;
@@ -120,10 +128,29 @@ real_path() {
 }
 
 validate_alerting() {
+  if [[ -z "$ALERT_WEBHOOK_URL" ]]; then
+    warn "alerting disabled: rerun with --alert-webhook-url=<https-url> or PLOYDOK_ALERT_WEBHOOK_URL to enable alerts (saved in $DATA_DIR/secrets/alert-webhook-url)"
+    return 0
+  fi
   [[ "$ALERT_WEBHOOK_URL" =~ ^https://[^[:space:]]+$ ]] ||
     die "--alert-webhook-url (or PLOYDOK_ALERT_WEBHOOK_URL) must be an HTTPS Alertmanager-compatible receiver" 2
   [[ "$ALERT_WEBHOOK_URL" != *$'\n'* && "$ALERT_WEBHOOK_URL" != *$'\r'* ]] ||
     die "alert webhook URL contains an invalid newline" 2
+}
+
+render_alertmanager() {
+  if [[ -n "$ALERT_WEBHOOK_URL" ]]; then
+    render_template alertmanager.yml
+  else
+    cat <<'YAML'
+# ploydok-monitoring-schema: 1
+# Alerting disabled; monitoring remains available.
+route:
+  receiver: disabled
+receivers:
+  - name: disabled
+YAML
+  fi
 }
 
 load_existing_alerting() {
@@ -258,12 +285,11 @@ resolve_public_endpoint() {
     PUBLIC_PORT="$HTTP_PORT"
   fi
 
+  # Default matches Coolify, Dokploy and OpenShip: /setup is a registration
+  # form until the first admin exists. Set PLOYDOK_SETUP_TOKEN_REQUIRED=1 to
+  # keep the one-shot token lock.
   if [[ -z "$SETUP_TOKEN_REQUIRED" ]]; then
-    if [[ "$MODE" == "bootstrap-http" ]]; then
-      SETUP_TOKEN_REQUIRED="0"
-    else
-      SETUP_TOKEN_REQUIRED="1"
-    fi
+    SETUP_TOKEN_REQUIRED="0"
   fi
 
   DOMAIN_BASE="$(derive_domain_base "$PUBLIC_HOST")"
@@ -731,7 +757,7 @@ prepare_runtime_transition() {
 }
 
 # Initialise un Swarm single-node si la machine n'en fait pas déjà partie.
-# Idempotent — si Swarm est déjà actif, on ne touche à rien (un opérateur a
+# Idempotent: si Swarm est déjà actif, on ne touche à rien (un opérateur a
 # pu joindre la machine à un cluster multi-node existant).
 ensure_swarm() {
   [[ "$RUNTIME" == "swarm" ]] || return 0
@@ -779,11 +805,12 @@ install_cli() {
 # Vérifie la signature keyless OIDC des images publiées par
 # .github/workflows/release-images.yml. Identité attendue :
 #   issuer   : https://token.actions.githubusercontent.com
-#   identity : https://github.com/MakFly/ploydok/.github/workflows/release-images.yml@<ref>
+#   identity : https://github.com/dev-toolings/ploydok/.github/workflows/release-images.yml@<ref>
 # Bypass (CI / dry-run / image registry custom non signé) : PLOYDOK_INSTALL_SKIP_COSIGN=1.
 verify_or_pull_images() {
   local components=(api web agent adminer caddy)
-  local cosign_identity_regex='^https://github\.com/MakFly/ploydok/\.github/workflows/release-images\.yml@.*$'
+  local cosign_identity_regex='^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$'
+  cosign_identity_regex="${PLOYDOK_COSIGN_IDENTITY_REGEXP:-$cosign_identity_regex}"
   local component image resolved
   for component in "${components[@]}"; do
     image="$IMAGE_REGISTRY/ploydok-${component}:$VERSION"
@@ -820,6 +847,7 @@ write_templates() {
     render_template Caddyfile | write_file "$INSTALL_DIR/Caddyfile" 0644 "$INSTALL_OWNER:$INSTALL_OWNER"
     render_template CaddyAdminProxyfile | write_file "$INSTALL_DIR/CaddyAdminProxyfile" 0644 "$INSTALL_OWNER:$INSTALL_OWNER"
     render_template ploydok-port-isolation.sh | write_file "/usr/local/lib/ploydok/port-isolation.sh" 0755
+    render_template ploydok-stop-stack.sh | write_file "/usr/local/lib/ploydok/stop-stack.sh" 0755
     render_template ploydok-update-stack.sh | write_file "/usr/local/lib/ploydok/update-stack.sh" 0755
     render_template ploydok-port-isolation.service | write_file "/etc/systemd/system/ploydok-port-isolation.service" 0644
     render_template ploydok.service | write_file "/etc/systemd/system/ploydok.service" 0644
@@ -834,7 +862,7 @@ write_templates() {
   render_template buildkitd.toml | write_file "$DATA_DIR/config/buildkitd.toml" 0644 ploydok:ploydok
   render_template prometheus.yml | write_file "$DATA_DIR/config/prometheus.yml" 0644 ploydok:ploydok
   render_template ploydok-alerts.yml | write_file "$DATA_DIR/config/ploydok-alerts.yml" 0644 ploydok:ploydok
-  render_template alertmanager.yml | write_file "$DATA_DIR/config/alertmanager.yml" 0644 ploydok:ploydok
+  render_alertmanager | write_file "$DATA_DIR/config/alertmanager.yml" 0644 ploydok:ploydok
   render_template ploydok.target | write_file "/etc/systemd/system/ploydok.target" 0644
   if [[ "$MODE" == "coexist" ]]; then
     render_template nginx-ploydok.conf | write_file "/etc/nginx/snippets/ploydok.conf" 0644
@@ -876,14 +904,17 @@ start_services() {
   run systemctl daemon-reload
   if [[ "$RUNTIME" == "swarm" ]]; then
     run systemctl enable ploydok.target ploydok-port-isolation.service ploydok.service
-    run systemctl restart ploydok-port-isolation.service
+    # Restarting a required unit would stop ploydok.service too.
+    run systemctl reload-or-restart ploydok-port-isolation.service
   else
     run systemctl enable ploydok.target ploydok.service
   fi
-  # `restart` (not `start`) so a fresh install re-runs ExecStart even if the
-  # oneshot/RemainAfterExit service was left in `active (exited)` by a prior
-  # run — `systemctl start` is a no-op on an already-active oneshot.
-  run systemctl restart ploydok.service
+  if [[ "$RUNTIME" == "swarm" ]]; then
+    # Active oneshot units redeploy through ExecReload; inactive units start.
+    run systemctl reload-or-restart ploydok.service
+  else
+    run systemctl restart ploydok.service
+  fi
   if [[ "$RUNTIME" == "swarm" ]]; then
     run docker service update --force ploydok_prometheus
     run docker service update --force ploydok_alertmanager
@@ -1030,6 +1061,7 @@ wait_monitoring_pipeline_swarm() {
 }
 
 test_alert_receiver() {
+  [[ -n "$ALERT_WEBHOOK_URL" ]] || return 0
   local payload api_payload alertmanager_id prometheus_id compose
   if [[ "$DRY_RUN" == "1" ]]; then
     log "dry-run: send explicit test notification to the configured alert receiver"
@@ -1132,7 +1164,11 @@ main() {
   db_migrate
   wait_health
   test_alert_receiver
-  log "Ploydok installed. Open ${PUBLIC_ORIGIN}/setup"
+  if [[ "$SETUP_TOKEN_REQUIRED" == "1" ]]; then
+    log "Ploydok installed. First admin is locked: open the URL printed in the API logs, or set PLOYDOK_SETUP_TOKEN."
+  else
+    log "Ploydok installed. Open ${PUBLIC_ORIGIN}/setup and create the first admin. The first person to submit the form owns the instance."
+  fi
 }
 
 main "$@"

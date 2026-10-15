@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
+import { createPageHead } from "../../lib/page-metadata"
 import { ShellPage } from "../../components/layout/AppShell";
 import { apiBaseUrl } from "../../lib/api/base";
-import { useTranslation } from "react-i18next";
 import { useGitHubAppConfig, useInstallations } from "../../lib/github";
 
 export const Route = createFileRoute("/_authed/guide")({
+  head: createPageHead("guide"),
   component: GuidePage,
 });
 

@@ -111,6 +111,7 @@ export const apps = pgTable("apps", {
     .default("swarm"),
   container_id: text("container_id"),
   swarm_service_name: text("swarm_service_name"),
+  swarm_service_names: text("swarm_service_names").array(),
   replicas: integer("replicas").notNull().default(1),
   update_order: text("update_order", {
     enum: ["start-first", "stop-first"],

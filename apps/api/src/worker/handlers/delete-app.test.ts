@@ -20,6 +20,17 @@ mock.module("../../caddy/attachment.js", () => ({
   detachCaddyFromProjectNetwork: async () => {},
 }))
 
+const stopSwarmAppMock = mock(async () => {})
+const stopAppMock = mock(async () => {})
+
+mock.module("../swarm-runner.js", () => ({
+  stopSwarmApp: stopSwarmAppMock,
+}))
+
+mock.module("../runner.js", () => ({
+  stopApp: stopAppMock,
+}))
+
 function createMockDb(options?: {
   failDelete?: boolean
   appProjectId?: string
@@ -336,5 +347,34 @@ describe("handleDeleteApp", () => {
         call.table === app_delete_jobs && "status" in (call.values as any)
     )
     expect((finalUpdate?.values as any).error_message).toContain("purge failed")
+  })
+
+  it("stops the Swarm service before leftover docker containers", async () => {
+    stopSwarmAppMock.mockClear()
+    stopAppMock.mockClear()
+    const { handleDeleteApp } = await import("./delete-app")
+    const { db } = createMockDb()
+    const claimed = {
+      app_id: "app-swarm",
+      requested_by_user_id: "user-1",
+      source: "api",
+      options: {
+        deleteImages: false,
+        dockerCleanup: true,
+        deleteBuildArtifacts: false,
+        deleteCaddyRoutes: false,
+      },
+    }
+
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue(claimed)
+
+    await handleDeleteApp(db, {
+      id: "job-swarm-cleanup",
+      payload: { jobId: "app-delete-row" },
+    })
+
+    expect(stopSwarmAppMock).toHaveBeenCalledTimes(1)
+    expect(stopAppMock).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(stopSwarmAppMock.mock.calls)).toContain("app-swarm")
   })
 })

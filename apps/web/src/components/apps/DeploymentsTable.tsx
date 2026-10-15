@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useTranslation } from "react-i18next"
-import type { TFunction } from "i18next"
 import { RiLoader4Line, RiMoreLine } from "@remixicon/react"
-import i18n from "../../lib/i18n"
 import { DataTable } from "@workspace/ui/components/data-table"
 import {
   DropdownMenu,
@@ -23,6 +21,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@workspace/ui/components/alert-dialog"
+import i18n from "../../lib/i18n"
+import type { TFunction } from "i18next"
 import type { ColumnDef } from "@workspace/ui/components/data-table"
 import type { Build, BuildStatus } from "@ploydok/shared"
 

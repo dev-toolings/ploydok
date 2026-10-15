@@ -9,12 +9,14 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${PLOYDOK_INSTALL_DIR}
 EnvironmentFile=${PLOYDOK_DATA_DIR}/.env
-# `docker stack deploy` is idempotent: re-running it after the systemd unit
-# is restarted reconciles the stack to the current docker-stack.yml without
-# tearing existing services down. The first invocation provisions the stack;
-# subsequent ones (e.g. after a reboot) are essentially no-ops.
+# Reload reconciles the stack without removing services or networks.
+# Explicit stop waits for Swarm removal before a subsequent start can deploy.
+ExecStartPre=/usr/local/lib/ploydok/stop-stack.sh wait
 ExecStart=/usr/bin/docker stack deploy --resolve-image always --with-registry-auth --prune -c ${PLOYDOK_INSTALL_DIR}/docker-stack.yml ploydok
-ExecStop=/usr/bin/docker stack rm ploydok
+ExecReload=/usr/local/lib/ploydok/stop-stack.sh wait
+ExecReload=/usr/bin/docker stack deploy --resolve-image always --with-registry-auth --prune -c ${PLOYDOK_INSTALL_DIR}/docker-stack.yml ploydok
+ExecStop=/usr/local/lib/ploydok/stop-stack.sh
+TimeoutStopSec=150
 TimeoutStartSec=0
 
 [Install]

@@ -10,8 +10,8 @@
  *  - Generic error branches: 401, 403, 404, 5xx, unknown
  */
 import { describe, expect, it } from "bun:test"
-import { titleForStatus } from "./ApiErrorState"
 import i18n from "../../lib/i18n"
+import { titleForStatus } from "./ApiErrorState"
 
 // ---------------------------------------------------------------------------
 // Branch decision: should we render the SECOND_FACTOR_REQUIRED CTA?

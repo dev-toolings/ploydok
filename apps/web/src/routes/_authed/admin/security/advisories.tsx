@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { createPageHead } from "../../../../lib/page-metadata"
 import {
   useAcknowledgeAdvisory,
   useAdminAdvisories,
@@ -14,6 +15,7 @@ import {
 import type { AdvisoryRow } from "../../../../lib/advisories"
 
 export const Route = createFileRoute("/_authed/admin/security/advisories")({
+  head: createPageHead("advisories"),
   component: AdminAdvisoriesPage,
 })
 

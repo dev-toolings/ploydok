@@ -2,13 +2,11 @@
 //
 // Project-level runtime helpers.
 //
-// Each project owns its own Docker bridge network (`ploydok-proj-<id>`).
-// App containers are attached to THAT network ONLY. Caddy is dynamically
-// attached to every project-network on first deploy (see `caddy/attachment.ts`)
-// so external traffic can still reach upstreams by `container_id:port` while
-// apps from different projects share NO network and cannot discover each other
-// by name — strict zero-trust by default. The pentest
-// `e2e/isolation/cross-project-blocked.spec.ts` validates the invariant.
+// Each project owns isolated data-plane networks:
+//   - bridge `ploydok-proj-<id>` for leftover docker runtimes
+//   - overlay `ploydok-swarm-proj-<id>` for Swarm services
+// Caddy joins those networks on deploy (see `caddy/attachment.ts`) so ingress
+// can reach upstreams without putting two projects on the same network.
 
 import { and, eq, isNotNull } from "drizzle-orm";
 import { apps, databases, projects } from "@ploydok/db";
@@ -90,7 +88,10 @@ export async function ensureProjectSwarmNetwork(
   agent?: Agent,
 ): Promise<string> {
   const rows = await db
-    .select({ network_name: projects.network_name })
+    .select({
+      network_name: projects.network_name,
+      swarm_network_name: projects.swarm_network_name,
+    })
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
@@ -117,6 +118,13 @@ export async function ensureProjectSwarmNetwork(
     } else {
       throw err;
     }
+  }
+
+  if (row.swarm_network_name !== name) {
+    await db
+      .update(projects)
+      .set({ swarm_network_name: name })
+      .where(eq(projects.id, projectId));
   }
 
   return name;

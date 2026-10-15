@@ -9,6 +9,23 @@ import { childLogger } from "../logger"
 
 const log = childLogger("billing.stripe")
 
+export function billingSettingsUrl(
+  webOrigin: string,
+  orgSlug: string,
+  query?: Record<string, string>
+): string {
+  const url = new URL(
+    `/orgs/${encodeURIComponent(orgSlug)}/settings/billing`,
+    webOrigin
+  )
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      url.searchParams.set(key, value)
+    }
+  }
+  return url.toString()
+}
+
 export class StripeClient {
   private client: Stripe | null = null
 
@@ -24,6 +41,7 @@ export class StripeClient {
 
   async createCheckoutSession(
     orgId: string,
+    orgSlug: string,
     planSlug: string,
     webOrigin: string
   ): Promise<string> {
@@ -40,12 +58,6 @@ export class StripeClient {
       throw new Error(`Missing Stripe price ID for plan ${planSlug}`)
     }
 
-    const successUrl = new URL("/orgs/~/settings/billing", webOrigin)
-    successUrl.searchParams.set("success", "1")
-
-    const cancelUrl = new URL("/orgs/~/settings/billing", webOrigin)
-    cancelUrl.searchParams.set("canceled", "1")
-
     const session = await this.client.checkout.sessions.create({
       mode: "subscription",
       line_items: [
@@ -54,8 +66,8 @@ export class StripeClient {
           quantity: 1,
         },
       ],
-      success_url: successUrl.toString(),
-      cancel_url: cancelUrl.toString(),
+      success_url: billingSettingsUrl(webOrigin, orgSlug, { success: "1" }),
+      cancel_url: billingSettingsUrl(webOrigin, orgSlug, { canceled: "1" }),
       metadata: {
         org_id: orgId,
         plan_slug: planSlug,
@@ -71,17 +83,16 @@ export class StripeClient {
 
   async createPortalSession(
     stripeCustomerId: string,
+    orgSlug: string,
     webOrigin: string
   ): Promise<string> {
     if (!this.client) {
       throw new Error("Stripe not configured")
     }
 
-    const returnUrl = new URL("/orgs/~/settings/billing", webOrigin)
-
     const session = await this.client.billingPortal.sessions.create({
       customer: stripeCustomerId,
-      return_url: returnUrl.toString(),
+      return_url: billingSettingsUrl(webOrigin, orgSlug),
     })
 
     return session.url

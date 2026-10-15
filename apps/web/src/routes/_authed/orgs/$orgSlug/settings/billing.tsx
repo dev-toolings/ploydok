@@ -4,16 +4,18 @@ import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { createFileRoute, useSearch } from "@tanstack/react-router"
 import { Suspense } from "react"
+import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import { ShellPage } from "../../../../../components/layout/AppShell"
 import {
   useBillingPortal,
   useCheckoutSession,
   useCurrentPlan,
 } from "../../../../../lib/billing"
-import { useTranslation } from "react-i18next"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/settings/billing")(
   {
+  head: createPageHead("billing"),
     component: BillingPage,
     validateSearch: (search: Record<string, unknown>) => ({
       success: search.success === "1" || search.success === 1,

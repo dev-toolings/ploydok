@@ -10,14 +10,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@workspace/ui/components/select"
+import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
 import { useCurrentOrganization } from "../../../../lib/organizations"
 import { useAuditEvents } from "../../../../lib/audit"
-import { useTranslation } from "react-i18next"
 import i18n from "../../../../lib/i18n"
 import type { AuditEvent } from "@ploydok/shared"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/audit")({
+  head: createPageHead("audit"),
   component: AuditPage,
 })
 

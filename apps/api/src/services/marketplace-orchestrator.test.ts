@@ -14,9 +14,12 @@ const mockInsertService = mock(
     template_id: values["template_id"],
     template_version: values["template_version"],
     status: "pending",
+    runtime_mode: values["runtime_mode"],
     compose_raw: values["compose_raw"],
     generated_env: values["generated_env"],
     domain: values["domain"],
+    entrypoint_service_name: values["entrypoint_service_name"],
+    entrypoint_port: values["entrypoint_port"],
     container_ids: [],
     created_at: new Date(),
     updated_at: new Date(),
@@ -25,6 +28,7 @@ const mockInsertService = mock(
 
 const mockUpdateServiceStatus = mock(async () => {})
 const mockUpdateServiceContainers = mock(async () => {})
+const mockUpdateServiceSwarmNames = mock(async () => {})
 const mockMarkServiceDeleting = mock(async () => {})
 const mockUniqueServiceSlug = mock(async () => "my-pb")
 const mockGetServiceForUser = mock(async () => null as unknown)
@@ -43,6 +47,7 @@ mock.module("@ploydok/db/queries", () => ({
   getServiceById: mock(async () => null),
   updateServiceStatus: mockUpdateServiceStatus,
   updateServiceContainers: mockUpdateServiceContainers,
+  updateServiceSwarmNames: mockUpdateServiceSwarmNames,
   markServiceDeleting: mockMarkServiceDeleting,
   uniqueServiceSlug: mockUniqueServiceSlug,
   getServiceForUser: mockGetServiceForUser,
@@ -55,6 +60,23 @@ mock.module("@ploydok/db", () => ({
   services: {},
   projects: {},
   createDb: mock(() => ({})),
+}))
+
+mock.module("./projects.js", () => ({
+  ensureProjectNetwork: mock(async () => "ploydok-proj-proj-1"),
+  ensureProjectSwarmNetwork: mock(async () => "ploydok-swarm-proj-proj-1"),
+}))
+
+mock.module("../caddy/attachment.js", () => ({
+  ensureCaddyOnProjectNetwork: mock(async () => {}),
+}))
+
+mock.module("../debug/singletons.js", () => ({
+  getSharedCaddy: mock(() => ({
+    upsertRoute: mock(async () => {}),
+    removeRoute: mock(async () => {}),
+  })),
+  getSharedAgent: mock(() => ({})),
 }))
 
 mock.module("../logger", () => ({
@@ -77,6 +99,7 @@ mock.module("../worker/queue-enqueue", () => ({
 // ---------------------------------------------------------------------------
 
 import {
+  planServiceStack,
   installFromTemplate,
   startService,
   stopService,
@@ -93,16 +116,28 @@ function makeAgent(
 ): OrchestratorDeps["agent"] {
   return {
     imagePull: mock(async function* () {}),
-    listContainers: mock(async () => ({ containers: [] })),
     containerCreate: mock(async () => ({ containerId: "ctr-1" })),
     containerStart: mock(async () => ({})),
     containerStop: mock(async () => ({})),
     containerRemove: mock(async () => ({})),
+    listContainers: mock(async () => ({ containers: [] })),
     ...overrides,
   }
 }
 
 type CaddyDeps = NonNullable<OrchestratorDeps["caddy"]>
+
+function makeSwarm() {
+  return {
+    swarmEnsureSingleNode: mock(async () => ({})),
+    serviceCreate: mock(
+      async (req: { spec: Record<string, unknown> }) => ({
+        serviceId: String(req.spec["name"] ?? "svc"),
+      })
+    ),
+    serviceRemove: mock(async () => ({})),
+  }
+}
 
 function makeCaddy(overrides: Partial<CaddyDeps> = {}): CaddyDeps {
   return {
@@ -148,7 +183,7 @@ describe("installFromTemplate", () => {
 
     await expect(
       installFromTemplate(
-        { agent: makeAgent(), db, caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db, caddy: makeCaddy() },
         "user-1",
         {
           projectId: "proj-missing",
@@ -175,7 +210,7 @@ describe("installFromTemplate", () => {
 
     await expect(
       installFromTemplate(
-        { agent: makeAgent(), db, caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db, caddy: makeCaddy() },
         "user-1",
         {
           projectId: "proj-1",
@@ -200,7 +235,7 @@ describe("installFromTemplate", () => {
     } as unknown as OrchestratorDeps["db"]
 
     const row = await installFromTemplate(
-      { agent: makeAgent(), db, caddy: makeCaddy() },
+      { agent: makeAgent(), swarm: makeSwarm(), db, caddy: makeCaddy() },
       "user-1",
       {
         projectId: "proj-1",
@@ -229,14 +264,14 @@ describe("installFromTemplate", () => {
 
     const caddy = makeCaddy()
 
-    await installFromTemplate({ agent: makeAgent(), db, caddy }, "user-1", {
+    await installFromTemplate({ agent: makeAgent(), swarm: makeSwarm(), db, caddy }, "user-1", {
       projectId: "proj-1",
       templateId: "pocketbase",
       templateVersion: "0.22.0",
       name: "My PB",
-      // compose with ${domain} DSL + a port so the entrypoint heuristic succeeds
+      // compose with ${domain} DSL + a port so the legacy route can resolve it
       compose:
-        'services:\n  app:\n    image: pocketbase:latest\n    ports:\n      - "8080:8080"\n    environment:\n      DOMAIN: ${domain}\n',
+        'services:\n  app:\n    image: pocketbase:latest\n    expose: [8080]\n    environment:\n      DOMAIN: ${domain}\n',
     })
 
 
@@ -257,7 +292,7 @@ describe("installFromTemplate", () => {
     const caddy = makeCaddy()
 
     // compose without x-ploydok-domain → domain will be null
-    await installFromTemplate({ agent: makeAgent(), db, caddy }, "user-1", {
+    await installFromTemplate({ agent: makeAgent(), swarm: makeSwarm(), db, caddy }, "user-1", {
       projectId: "proj-1",
       templateId: "pocketbase",
       templateVersion: "0.22.0",
@@ -279,7 +314,7 @@ describe("startService", () => {
     mockGetServiceForUser.mockResolvedValueOnce(null)
     await expect(
       startService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -296,7 +331,7 @@ describe("startService", () => {
     })
     await expect(
       startService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -339,7 +374,7 @@ describe("stopService", () => {
     })
     await expect(
       stopService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -382,7 +417,7 @@ describe("deleteService", () => {
     mockGetServiceForUser.mockResolvedValueOnce(null)
     await expect(
       deleteService(
-        { agent: makeAgent(), db: makeDb(), caddy: makeCaddy() },
+        { agent: makeAgent(), swarm: makeSwarm(), db: makeDb(), caddy: makeCaddy() },
         "user-1",
         "svc-1"
       )
@@ -480,3 +515,50 @@ describe("deleteService", () => {
     expect(callOrder).toEqual(["removeRoute", "dbDelete"])
   })
 })
+
+describe("marketplace project isolation", () => {
+  it("plans only its own project network, with a reachable ingress upstream", () => {
+    const compose_raw = 'services:\n  web:\n    image: nginx:alpine\n    expose: [80]\n';
+    const plans = ["one", "two"].map(id => planServiceStack(
+      { id, slug: "demo", compose_raw }, `ploydok-swarm-proj-${id}`, "owner"
+    ));
+    for (const [index, plan] of plans.entries()) {
+      expect(plan.services.every(s => s.networks.length === 1)).toBe(true);
+      expect(plan.services[0]!.networks).toEqual([`ploydok-swarm-proj-${["one", "two"][index]}`]);
+      expect(plan.entrypoint).toEqual({ name: plan.services[0]!.name, port: 80 });
+    }
+    expect(plans[0]!.services[0]!.networks).not.toEqual(plans[1]!.services[0]!.networks);
+  });
+});
+
+it("selects Docker mode for an explicit host IP before durable acceptance", async () => {
+  const db = makeDb();
+  (db.select as any).mockImplementation(() => ({
+    from: () => ({ where: () => ({ limit: async () => [{ id: "proj-1" }] }) }),
+  }));
+  const agent = makeAgent();
+  const row = await installFromTemplate({ db, agent }, "user-1", {
+    projectId: "proj-1", name: "Bad", templateId: "fixture", templateVersion: "1",
+    compose: 'services:\n  app:\n    image: nginx\n    ports: ["127.0.0.1:8080:80"]',
+  });
+  expect(row.runtime_mode).toBe("docker");
+  expect(mockInsertService.mock.calls.at(-1)?.[1]).toMatchObject({
+    runtime_mode: "docker",
+  });
+  expect((agent.containerCreate as any).mock.calls).toHaveLength(0);
+});
+
+it("persists the template declared entrypoint instead of the first exposed service", async () => {
+  const db = {
+    select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "proj-1" }] }) }) }),
+    transaction: async (fn: (tx: unknown) => unknown) => fn(db),
+  } as unknown as OrchestratorDeps["db"];
+  const row = await installFromTemplate({ db, agent: makeAgent() }, "user-1", {
+    projectId: "proj-1", templateId: "n8n", templateVersion: "1", name: "N8N",
+    compose: 'services:\n  sidecar:\n    image: nginx\n    expose: [80]\n  n8n:\n    image: n8nio/n8n\n',
+    templateToml: '[variables]\nmain_domain = "\${domain}"\n[[config.domains]]\nserviceName = "n8n"\nport = 5678\nhost = "\${main_domain}"',
+  });
+  expect(row.entrypoint_service_name).toBe("n8n");
+  expect(row.entrypoint_port).toBe(5678);
+  expect(row.domain).toMatch(/^my-pb-/);
+});

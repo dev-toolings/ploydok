@@ -2,13 +2,6 @@
 import * as React from "react"
 import { Button } from "@workspace/ui/components/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -16,6 +9,13 @@ import {
   SelectValue,
 } from "@workspace/ui/components/select"
 import { useTranslation } from "react-i18next"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
 import { useInviteMember } from "../../lib/memberships"
 
 interface InviteDialogProps {

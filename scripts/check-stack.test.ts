@@ -36,8 +36,8 @@ describe("parseEnvFile", () => {
 })
 
 describe("setupTokenRequired", () => {
-  test("defaults to true when the key is absent", () => {
-    expect(setupTokenRequired(undefined)).toBe(true)
+  test("defaults to false when the key is absent", () => {
+    expect(setupTokenRequired(undefined)).toBe(false)
   })
 
   test("mirrors the Zod coercion of apps/api/src/env.ts", () => {
@@ -63,8 +63,8 @@ describe("checkSetupToken", () => {
     expect(checkSetupToken(true, "a".repeat(64)).level).toBe("ok")
   })
 
-  test("warns instead of failing when the gate is disabled", () => {
-    expect(checkSetupToken(false, undefined).level).toBe("warn")
+  test("accepts an open setup when the gate is disabled", () => {
+    expect(checkSetupToken(false, undefined).level).toBe("ok")
   })
 })
 

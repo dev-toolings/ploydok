@@ -457,6 +457,20 @@ fn percent_encode_query(value: &str) -> String {
         .collect()
 }
 
+fn reject_unsupported_swarm_topology(info: &SwarmInfoResponse) -> Result<(), Status> {
+    if info.local_node_state == "active" && info.control_available && info.nodes != 1 {
+        let detected = if info.nodes == 0 {
+            "an unverifiable topology".to_string()
+        } else {
+            info.nodes.to_string()
+        };
+        return Err(Status::failed_precondition(format!(
+            "Ploydok currently supports exactly one Swarm node; detected {detected}"
+        )));
+    }
+    Ok(())
+}
+
 fn swarm_info_response(info: bollard::models::SystemInfo) -> SwarmInfoResponse {
     let swarm = info.swarm;
     SwarmInfoResponse {
@@ -620,7 +634,14 @@ impl Agent for AgentService {
                 let proto = if p.proto.is_empty() { "tcp" } else { &p.proto };
                 let key = format!("{}/{}", p.container_port, proto);
                 let binding = PortBinding {
-                    host_ip: Some("0.0.0.0".into()),
+                    // Empty host_ip is the legacy contract for existing API
+                    // callers. Marketplace Docker services always send an
+                    // explicit literal IP for published ports.
+                    host_ip: Some(if p.host_ip.is_empty() {
+                        "0.0.0.0".to_string()
+                    } else {
+                        p.host_ip.clone()
+                    }),
                     host_port: Some(p.host_port.to_string()),
                 };
                 (key, Some(vec![binding]))
@@ -2271,6 +2292,7 @@ impl Agent for AgentService {
                 .map_err(|e| bollard_err("docker_info", e))?,
         );
         if before.local_node_state == "active" && before.control_available {
+            reject_unsupported_swarm_topology(&before)?;
             return Ok(Response::new(SwarmEnsureSingleNodeResponse {
                 info: Some(before),
                 initialized: false,
@@ -2296,6 +2318,7 @@ impl Agent for AgentService {
                 .await
                 .map_err(|e| bollard_err("docker_info", e))?,
         );
+        reject_unsupported_swarm_topology(&after)?;
         Ok(Response::new(SwarmEnsureSingleNodeResponse {
             info: Some(after),
             initialized: true,
@@ -3076,5 +3099,47 @@ mod sec02_tests {
             ..Default::default()
         };
         assert!(!is_ploydok_registry_container(&unrelated));
+    }
+}
+
+#[cfg(test)]
+mod swarm_topology_tests {
+    use super::{reject_unsupported_swarm_topology, SwarmInfoResponse};
+
+    fn swarm_info(state: &str, control: bool, nodes: i64) -> SwarmInfoResponse {
+        SwarmInfoResponse {
+            local_node_state: state.to_string(),
+            control_available: control,
+            node_id: String::new(),
+            node_addr: String::new(),
+            nodes,
+            managers: 0,
+            error: String::new(),
+        }
+    }
+
+    #[test]
+    fn swarm_ensure_accepts_inactive_daemon() {
+        assert!(reject_unsupported_swarm_topology(&swarm_info("inactive", false, 0)).is_ok());
+    }
+
+    #[test]
+    fn swarm_ensure_accepts_single_node() {
+        assert!(reject_unsupported_swarm_topology(&swarm_info("active", true, 1)).is_ok());
+    }
+
+    #[test]
+    fn swarm_ensure_rejects_multi_node() {
+        let error = reject_unsupported_swarm_topology(&swarm_info("active", true, 3))
+            .expect_err("multi-node must fail closed");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("exactly one Swarm node"));
+    }
+
+    #[test]
+    fn swarm_ensure_rejects_active_unverified_node_count() {
+        let error = reject_unsupported_swarm_topology(&swarm_info("active", true, 0))
+            .expect_err("unverifiable topology must fail closed");
+        assert!(error.message().contains("unverifiable topology"));
     }
 }

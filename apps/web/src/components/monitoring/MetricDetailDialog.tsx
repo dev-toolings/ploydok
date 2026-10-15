@@ -30,6 +30,8 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@workspace/ui/components/chart"
+import { cn } from "@workspace/ui/lib/utils"
+import { useTranslation } from "react-i18next"
 import {
   Dialog,
   DialogContent,
@@ -37,8 +39,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { cn } from "@workspace/ui/lib/utils"
-import { useTranslation } from "react-i18next"
 import i18n from "../../lib/i18n"
 import type { ChartConfig } from "@workspace/ui/components/chart"
 

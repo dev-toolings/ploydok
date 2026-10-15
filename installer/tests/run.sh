@@ -100,7 +100,7 @@ assert_contains "$TMP/root/var/lib/ploydok/.env" "WEB_ORIGIN=https://ploydok.tes
 assert_contains "$TMP/root/var/lib/ploydok/.env" "GITHUB_APP_CALLBACK_URL=https://ploydok.test/github/app/callback"
 assert_contains "$TMP/root/var/lib/ploydok/.env" "GITLAB_OAUTH_CALLBACK_URL=https://ploydok.test/gitlab/callback"
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_DOMAIN_BASE=apps.ploydok.test"
-assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_SETUP_TOKEN_REQUIRED=1"
+assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_SETUP_TOKEN_REQUIRED=0"
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_COOKIE_SECURE=auto"
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_TRUST_PROXY_HEADERS=true"
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_REGISTRY_URL=127.0.0.1:5000"
@@ -121,7 +121,7 @@ assert_contains "$TMP/root/var/lib/ploydok/config/prometheus.yml" "# ploydok-mon
 assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "# ploydok-monitoring-schema: 1"
 assert_contains "$TMP/root/var/lib/ploydok/config/alertmanager.yml" "# ploydok-monitoring-schema: 1"
 assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "alert: ControlPlaneNotReady"
-assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "runbook_url: https://github.com/MakFly/ploydok/blob/main/OPERATIONS.md"
+assert_contains "$TMP/root/var/lib/ploydok/config/ploydok-alerts.yml" "runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md"
 assert_contains "$TMP/root/var/lib/ploydok/config/alertmanager.yml" "url_file: /run/ploydok-secrets/alert-webhook-url"
 assert_contains "$TMP/root/var/lib/ploydok/secrets/alert-webhook-url" "https://alerts.example.test/ploydok"
 assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "prom/prometheus:v3.13.1@sha256:"
@@ -176,10 +176,10 @@ upgrade_output="$(
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
 assert_text_contains "$upgrade_output" "update $TMP/root/opt/ploydok/docker-compose.yml api/web/agent/adminer images to test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-api:test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-web:test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-agent:test2"
-assert_text_contains "$upgrade_output" "docker pull ghcr.io/makfly/ploydok-adminer:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-web:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-agent:test2"
+assert_text_contains "$upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-adminer:test2"
 assert_text_contains "$upgrade_output" "up -d --no-deps api web agent adminer"
 assert_text_contains "$upgrade_output" "run --rm --no-deps api bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$upgrade_output" "chmod 0400"
@@ -197,11 +197,11 @@ assert_text_contains "$pki_rotation_output" "force-recreate agent then API"
 release_digest="sha256:$(printf 'a%.0s' {1..64})"
 release_manifest="$TMP/root/var/lib/ploydok/release-images.env"
 cat >"$release_manifest" <<EOF
-PLOYDOK_API_IMAGE=ghcr.io/makfly/ploydok-api@$release_digest
-PLOYDOK_WEB_IMAGE=ghcr.io/makfly/ploydok-web@$release_digest
-PLOYDOK_AGENT_IMAGE=ghcr.io/makfly/ploydok-agent@$release_digest
-PLOYDOK_ADMINER_IMAGE=ghcr.io/makfly/ploydok-adminer@$release_digest
-PLOYDOK_CADDY_IMAGE=ghcr.io/makfly/ploydok-caddy@$release_digest
+PLOYDOK_API_IMAGE=ghcr.io/dev-toolings/ploydok-api@$release_digest
+PLOYDOK_WEB_IMAGE=ghcr.io/dev-toolings/ploydok-web@$release_digest
+PLOYDOK_AGENT_IMAGE=ghcr.io/dev-toolings/ploydok-agent@$release_digest
+PLOYDOK_ADMINER_IMAGE=ghcr.io/dev-toolings/ploydok-adminer@$release_digest
+PLOYDOK_CADDY_IMAGE=ghcr.io/dev-toolings/ploydok-caddy@$release_digest
 EOF
 release_upgrade_output="$(
   PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
@@ -209,10 +209,10 @@ release_upgrade_output="$(
       --version=candidate-test --image-manifest=/var/lib/ploydok/release-images.env \
       --include-data-plane 2>&1
 )"
-assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/makfly/ploydok-api@$release_digest"
-assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/makfly/ploydok-caddy@$release_digest"
+assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api@$release_digest"
+assert_text_contains "$release_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-caddy@$release_digest"
 
-printf '%s\n' 'PLOYDOK_API_IMAGE=ghcr.io/makfly/ploydok-api:mutable' >"$release_manifest"
+printf '%s\n' 'PLOYDOK_API_IMAGE=ghcr.io/dev-toolings/ploydok-api:mutable' >"$release_manifest"
 if PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
   bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok \
     --version=invalid --image-manifest=/var/lib/ploydok/release-images.env >/dev/null 2>&1; then
@@ -226,7 +226,7 @@ upgrade_data_plane_output="$(
 )"
 assert_text_contains "$upgrade_data_plane_output" "ploydok-caddy:test3"
 assert_text_contains "$upgrade_data_plane_output" "update $TMP/root/opt/ploydok/docker-compose.yml api/web/agent/adminer/caddy images to test3"
-assert_text_contains "$upgrade_data_plane_output" "docker pull ghcr.io/makfly/ploydok-caddy:test3"
+assert_text_contains "$upgrade_data_plane_output" "docker pull ghcr.io/dev-toolings/ploydok-caddy:test3"
 assert_text_contains "$upgrade_data_plane_output" "up -d --no-deps api web agent adminer caddy"
 
 backup_output="$(
@@ -278,6 +278,28 @@ bash "$ROOT/installer/install.sh" \
 assert_contains "$TMP/takeover-root/opt/ploydok/docker-compose.yml" '"80:80"'
 assert_contains "$TMP/takeover-root/opt/ploydok/docker-compose.yml" '"443:443"'
 
+# Unattended defaults never override an explicit mode, in either argument order.
+for scenario in mode-first unattended-first unattended-only; do
+  case "$scenario" in
+    mode-first) mode_args=(--mode=takeover --unattended); expected_mode=takeover ;;
+    unattended-first) mode_args=(--unattended --mode=takeover); expected_mode=takeover ;;
+    unattended-only) mode_args=(--unattended); expected_mode=coexist ;;
+  esac
+  unattended_output="$(
+    PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/$scenario-root" \
+      bash "$ROOT/installer/install.sh" "${mode_args[@]}" \
+        --public-host=ploydok.test --skip-docker-install --version=test 2>&1
+  )"
+  assert_text_contains "$unattended_output" "installing Ploydok test in mode=$expected_mode"
+  if [[ "$expected_mode" == takeover ]]; then
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 80"
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 443"
+  else
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 8080"
+    assert_contains "$TMP/$scenario-root/opt/ploydok/docker-stack.yml" "published: 8443"
+  fi
+done
+
 PLOYDOK_INSTALL_DRY_RUN=1 \
 PLOYDOK_INSTALL_ROOT="$TMP/bootstrap-root" \
 bash "$ROOT/installer/install.sh" \
@@ -319,6 +341,12 @@ assert_file "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh"
 assert_file "$TMP/swarm-root/etc/systemd/system/ploydok-port-isolation.service"
 assert_not_exists "$TMP/swarm-root/opt/ploydok/docker-compose.yml"
 assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "docker stack deploy"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecReload=/usr/bin/docker stack deploy"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecStop=/usr/local/lib/ploydok/stop-stack.sh"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecStartPre=/usr/local/lib/ploydok/stop-stack.sh wait"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok.service" "ExecReload=/usr/local/lib/ploydok/stop-stack.sh wait"
+assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok-port-isolation.service" "ExecReload=/usr/local/lib/ploydok/port-isolation.sh start"
+assert_file "$TMP/swarm-root/usr/local/lib/ploydok/stop-stack.sh"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "published: 80"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "published: 443"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "/var/lib/ploydok/keys:/var/lib/ploydok/keys"
@@ -351,6 +379,10 @@ assert_text_contains "$registry_block" "- ploydok-build"
 assert_text_contains "$buildkit_block" "- ploydok-build"
 ! grep -Fxq -- "      - ploydok" <<<"$buildkit_block" || { echo "buildkitd must not join the general ploydok network" >&2; exit 1; }
 assert_text_not_contains "$web_block" "- ploydok-build"
+assert_text_contains "$web_block" '"bun"'
+assert_text_contains "$web_block" "fetch('http://127.0.0.1:3000/',{redirect:'manual'})"
+assert_text_contains "$web_block" 'r.status>=200&&r.status<400'
+assert_text_not_contains "$web_block" '"wget"'
 assert_text_not_contains "$agent_block" "- ploydok-build"
 assert_text_not_contains "$api_block" "/var/run/docker.sock"
 assert_text_contains "$agent_block" "/var/run/docker.sock"
@@ -398,6 +430,7 @@ assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/port-isolation.sh" 'apply
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'cosign verify'
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK_ENABLE_AUTO_UPDATES'
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'IMAGE_PREFIX'
+assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'stop-stack.sh wait'
 assert_contains "$TMP/swarm-root/etc/systemd/system/ploydok-update.service" '/usr/local/lib/ploydok/update-stack.sh'
 
 swarm_upgrade_output="$(
@@ -405,16 +438,27 @@ swarm_upgrade_output="$(
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
 assert_text_contains "$swarm_upgrade_output" "update $TMP/swarm-root/opt/ploydok/docker-stack.yml api/web/agent/adminer images to test2"
-assert_text_contains "$swarm_upgrade_output" "docker pull ghcr.io/makfly/ploydok-api:test2"
-assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/makfly/ploydok-api:test2"
+assert_text_contains "$swarm_upgrade_output" "docker pull ghcr.io/dev-toolings/ploydok-api:test2"
+assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/dev-toolings/ploydok-api:test2"
 assert_text_contains "$swarm_upgrade_output" "bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$swarm_upgrade_output" "docker stack deploy --resolve-image always"
+assert_text_not_contains "$swarm_upgrade_output" "docker stack rm"
+reinstall_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
+  PLOYDOK_PUBLIC_HOST=ploydok.test bash "$ROOT/installer/install.sh" \
+  --mode=takeover --skip-docker-install --yes --version=test2 2>&1)"
+assert_text_contains "$reinstall_output" "systemctl reload-or-restart ploydok-port-isolation.service"
+assert_text_contains "$reinstall_output" "systemctl reload-or-restart ploydok.service"
+assert_text_not_contains "$reinstall_output" "systemctl restart ploydok.service"
+assert_text_not_contains "$reinstall_output" "systemctl stop ploydok.service"
+assert_text_not_contains "$reinstall_output" "docker stack rm"
+
 
 swarm_uninstall_output="$(
   PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
     bash "$ROOT/installer/ploydok-cli" uninstall --data-dir=/var/lib/ploydok --yes 2>&1
 )"
 assert_text_contains "$swarm_uninstall_output" "systemctl disable --now ploydok.service"
+assert_text_contains "$swarm_uninstall_output" "/usr/local/lib/ploydok/stop-stack.sh"
 assert_text_contains "$swarm_uninstall_output" "systemctl disable --now ploydok-port-isolation.service"
 assert_text_not_contains "$swarm_uninstall_output" "docker compose"
 
@@ -457,27 +501,66 @@ set -e
 [[ "$abort_status" -eq 2 ]] || { echo "abort mode returned $abort_status, expected 2" >&2; exit 1; }
 assert_not_exists "$TMP/abort-root/opt/ploydok/docker-compose.yml"
 
-set +e
-env -u PLOYDOK_ALERT_WEBHOOK_URL \
-  PLOYDOK_INSTALL_DRY_RUN=1 \
-  PLOYDOK_INSTALL_ROOT="$TMP/no-alert-root" \
-  bash "$ROOT/installer/install.sh" \
-    --mode=coexist \
-    --runtime=compose \
-    --public-host=ploydok.test \
-    --skip-docker-install \
-    --yes \
-    --version=test >/dev/null 2>&1
-missing_alert_status=$?
-set -e
-[[ "$missing_alert_status" -eq 2 ]] || {
-  echo "missing alert receiver returned $missing_alert_status, expected 2" >&2
-  exit 1
-}
-assert_not_exists "$TMP/no-alert-root/opt/ploydok/docker-compose.yml"
+for runtime in compose swarm; do
+  no_alert_output="$(
+    env -u PLOYDOK_ALERT_WEBHOOK_URL PLOYDOK_INSTALL_DRY_RUN=1 \
+      PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+      bash "$ROOT/installer/install.sh" --mode=coexist --runtime="$runtime" \
+        --public-host=ploydok.test --skip-docker-install --yes --version=test 2>&1
+  )"
+  assert_text_contains "$no_alert_output" "WARN: alerting disabled"
+  assert_text_contains "$no_alert_output" "--alert-webhook-url"
+  assert_contains "$TMP/no-alert-$runtime-root/var/lib/ploydok/config/alertmanager.yml" "receiver: disabled"
+  assert_text_not_contains "$(cat "$TMP/no-alert-$runtime-root/var/lib/ploydok/config/alertmanager.yml")" "url_file:"
+  upgrade_no_alert_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+    bash "$ROOT/installer/ploydok-cli" upgrade --version=test2 2>&1)"
+  assert_text_contains "$upgrade_no_alert_output" "WARN: alerting disabled"
+  PLOYDOK_ALERT_WEBHOOK_URL=https://alerts.example.test/enabled PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+    bash "$ROOT/installer/install.sh" --mode=coexist --runtime="$runtime" \
+      --public-host=ploydok.test --skip-docker-install --yes --version=test >/dev/null 2>&1
+  assert_contains "$TMP/no-alert-$runtime-root/var/lib/ploydok/config/alertmanager.yml" "url_file:"
+  preserved_output="$(env -u PLOYDOK_ALERT_WEBHOOK_URL PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/no-alert-$runtime-root" \
+    bash "$ROOT/installer/install.sh" --mode=coexist --runtime="$runtime" \
+      --public-host=ploydok.test --skip-docker-install --yes --version=test 2>&1)"
+  assert_text_not_contains "$preserved_output" "alerting disabled"
+  assert_contains "$TMP/no-alert-$runtime-root/var/lib/ploydok/secrets/alert-webhook-url" "https://alerts.example.test/enabled"
+done
+
+for receiver in 'http://alerts.test' $'https://alerts.test\ninvalid'; do
+  set +e
+  invalid_alert_output="$(PLOYDOK_ALERT_WEBHOOK_URL="$receiver" PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/invalid-alert-root" \
+    bash "$ROOT/installer/install.sh" --mode=coexist --runtime=compose \
+      --public-host=ploydok.test --skip-docker-install --yes --version=test 2>&1)"
+  invalid_alert_status=$?
+  set -e
+  [[ "$invalid_alert_status" -eq 2 ]] || { echo "invalid alert receiver accepted" >&2; exit 1; }
+  assert_text_contains "$invalid_alert_output" "must be an HTTPS Alertmanager-compatible receiver"
+  assert_not_exists "$TMP/invalid-alert-root/opt/ploydok/docker-compose.yml"
+done
+
+mkdir -p "$TMP/cosign-bin"
+cat >"$TMP/cosign-bin/cosign" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod 0755 "$TMP/cosign-bin/cosign"
+for identity in '' '^https://github\.com/example/fork/\.github/workflows/release-images\.yml@.*$'; do
+  signature_output="$(PATH="$TMP/cosign-bin:$PATH" PLOYDOK_INSTALL_DRY_RUN=1 \
+    PLOYDOK_INSTALL_ROOT="$TMP/root" PLOYDOK_COSIGN_IDENTITY_REGEXP="$identity" \
+    bash "$ROOT/installer/ploydok-cli" upgrade --version=test-signature 2>&1)"
+  expected_identity="${identity:-^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@.*$}"
+  assert_text_contains "$signature_output" "--certificate-identity-regexp $expected_identity"
+done
+assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_IMAGE_REGISTRY=ghcr.io/dev-toolings"
+assert_text_contains "$(bash "$ROOT/installer/install.sh" --help)" "PLOYDOK_COSIGN_IDENTITY_REGEXP"
+assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK_COSIGN_IDENTITY_REGEXP:-$IDENTITY_REGEX'
 
 bash "$ROOT/installer/tests/bootstrap.sh"
 bash "$ROOT/installer/tests/disaster-recovery.sh"
 bash "$ROOT/installer/tests/release-images.sh"
+bash "$ROOT/installer/tests/stack-stop.sh"
 
 echo "installer tests OK"

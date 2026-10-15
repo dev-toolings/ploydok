@@ -376,7 +376,7 @@ export function classifyStack(probes: ProbeResults): StackClassification {
     }
   }
 
-  // 2. Compose detected (Ploydok doesn't yet run compose natively — warn).
+  // 2. Compose detected — Swarm services from `image:`; `build:` is rejected.
   const compose = composeSignal(probes)
   if (compose) {
     return {
@@ -385,9 +385,7 @@ export function classifyStack(probes: ProbeResults): StackClassification {
       confidence: "high",
       signals: [compose],
       recommendedBuild: "compose",
-      warnings: [
-        "Le déploiement Compose natif n'est pas encore disponible dans Ploydok ; choisis explicitement une autre méthode de build.",
-      ],
+      warnings: ["compose_images_only"],
       suggestedEnvVars: {},
       requiresExplicitBuildChoice: true,
     }

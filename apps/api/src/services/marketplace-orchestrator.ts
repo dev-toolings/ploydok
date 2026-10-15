@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { protectServiceSecrets, resolveServiceCompose } from "./service-secrets"
 import { nanoid } from "nanoid"
 import { eq } from "drizzle-orm"
 import { services, projects } from "@ploydok/db"
@@ -6,6 +7,7 @@ import {
   insertService,
   updateServiceStatus,
   updateServiceContainers,
+  updateServiceSwarmNames,
   markServiceDeleting,
   uniqueServiceSlug,
   getServiceForUser,
@@ -21,43 +23,35 @@ import {
   retryClaimedCreationSaga,
 } from "@ploydok/db/queries"
 import type { ServiceRow, Db } from "@ploydok/db"
-import { resolveTemplate } from "@ploydok/shared"
 import { childLogger } from "../logger"
 import { enqueueWithDbRow } from "../worker/queue-enqueue"
 import { serviceInstallQueue } from "../worker/queues"
-import { isNotFound, toAgentError } from "../agent"
+import { isAlreadyExists, isNotFound, toAgentError } from "../agent"
 import type { Agent } from "../agent"
 import type { CaddyClient } from "../caddy/client.js"
-import { getSharedCaddy } from "../debug/singletons.js"
+import { getSharedCaddy, getSharedAgent } from "../debug/singletons.js"
+import { createAgentClient } from "../agent/client.js"
 import {
-  upsertServiceRoute,
   removeServiceRoute,
   ServiceHasNoEntrypointError,
+  upsertServiceRoute,
 } from "../caddy/service-routes.js"
-
+import { ensureCaddyOnProjectNetwork } from "../caddy/attachment.js"
+import { ensureProjectNetwork, ensureProjectSwarmNetwork } from "./projects.js"
 import {
   composeToContainers,
   type ComposeContainer,
-} from "../marketplace/compose-to-containers"
-
-function topoOrder(containers: ComposeContainer[]): string[] {
-  const names = new Set(containers.map((c) => c.name))
-  const visited = new Set<string>()
-  const order: string[] = []
-
-  function visit(name: string) {
-    if (visited.has(name)) return
-    visited.add(name)
-    const spec = containers.find((c) => c.name === name)
-    for (const dep of spec?.dependsOn ?? []) {
-      if (names.has(dep)) visit(dep)
-    }
-    order.push(name)
-  }
-
-  for (const c of containers) visit(c.name)
-  return order
-}
+} from "../marketplace/compose-to-containers.js"
+import { prepareTemplateInstall } from "../marketplace/template-toml.js"
+import {
+  deployPlannedComposeStack,
+  planComposeSwarmDeploy,
+  plannedServiceToSpec,
+  removeComposeSwarmServices,
+  swarmAgentFromGrpc,
+  type ComposeSwarmAgent,
+  type PlannedComposeStack,
+} from "../worker/compose-swarm.js"
 
 const log = childLogger("marketplace-orchestrator")
 
@@ -73,6 +67,7 @@ export interface OrchestratorDeps {
   >
   db: Db
   caddy?: Pick<CaddyClient, "upsertRoute" | "removeRoute">
+  swarm?: ComposeSwarmAgent
 }
 
 function slugify(name: string): string {
@@ -81,6 +76,79 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 32)
+}
+
+/**
+ * Slugs are only unique per project, so the Swarm name carries the service id:
+ * a create that reports AlreadyExists can then only be this service's replay.
+ */
+export function planServiceStack(
+  service: Pick<ServiceRow, "id" | "slug" | "compose_raw">,
+  network: string,
+  ownerId: string
+): PlannedComposeStack {
+  return planComposeSwarmDeploy({
+    compose: service.compose_raw,
+    kindToken: `svc-${service.id}-${service.slug}`.slice(0, 40),
+    network,
+    labels: {
+      "ploydok.kind": "service",
+      "ploydok.service_id": service.id,
+      "ploydok.app_id": service.id,
+      "ploydok.owner_id": ownerId,
+    },
+  })
+}
+
+export function planServiceContainers(
+  service: Pick<ServiceRow, "id" | "compose_raw">,
+  network: string,
+  ownerId: string
+): ComposeContainer[] {
+  return composeToContainers({
+    compose: service.compose_raw,
+    runtime: "docker",
+    servicePrefix: `ploydok-svc-${service.id}`,
+    network,
+    labels: {
+      "ploydok.kind": "service",
+      "ploydok.service_id": service.id,
+      "ploydok.app_id": service.id,
+      "ploydok.owner_id": ownerId,
+      "ploydok.runtime": "docker",
+    },
+  })
+}
+
+function serviceRuntimeMode(
+  service: Pick<ServiceRow, "runtime_mode" | "container_ids" | "swarm_service_names">
+): "docker" | "swarm" {
+  // The fallback keeps rows written before the runtime_mode migration
+  // operable while all new rows use the persisted column.
+  return (
+    service.runtime_mode ??
+    (service.swarm_service_names?.length ? "swarm" : "docker")
+  )
+}
+
+function agentPortsForContainer(container: ComposeContainer) {
+  return container.ports
+    .filter((port) => port.hostIp)
+    .map((port) => ({ ...port, hostIp: port.hostIp! }))
+}
+
+function declaredRouteTarget(
+  serviceId: string,
+  serviceName: string | null | undefined,
+  port: number | null | undefined,
+  containers: Array<Pick<ComposeContainer, "name" | "composeName">>
+): { name: string; port: number } | undefined {
+  if (serviceName == null || port == null) return undefined
+  const container = containers.find((candidate) => candidate.composeName === serviceName)
+  if (!container) {
+    throw new ServiceHasNoEntrypointError(serviceId)
+  }
+  return { name: container.name, port }
 }
 
 export async function installFromTemplate(
@@ -92,6 +160,7 @@ export async function installFromTemplate(
     templateVersion: string
     name: string
     compose: string
+    templateToml?: string
   }
 ): Promise<ServiceRow> {
   const { db } = deps
@@ -112,20 +181,22 @@ export async function installFromTemplate(
   const baseSlug = slugify(input.name) || "service"
   const slug = await uniqueServiceSlug(db, input.projectId, baseSlug)
 
-  const { composeResolved, generatedVars, domain } = resolveTemplate(
-    input.compose,
-    {
-      projectSlug: slug,
-    }
-  )
-
-  // Validate before accepting the durable intention. The resolved input remains
-  // on the service row; the outbox contains only its identifier.
-  serviceContainers({
-    id: serviceId,
-    slug,
-    compose_raw: composeResolved,
-  } as ServiceRow)
+  const prepared = prepareTemplateInstall({
+    compose: input.compose,
+    ...(input.templateToml !== undefined
+      ? { templateToml: input.templateToml }
+      : {}),
+    projectSlug: slug,
+    serviceId,
+  })
+  const {
+    composeResolved,
+    generatedVars,
+    domain,
+    declaredEntrypoint,
+    runtimeMode,
+  } = prepared
+  const protectedValues = await protectServiceSecrets(composeResolved, generatedVars)
   const accepted = await enqueueWithDbRow({
     db,
     queue: serviceInstallQueue,
@@ -139,9 +210,11 @@ export async function installFromTemplate(
         template_id: input.templateId,
         template_version: input.templateVersion,
         status: "pending",
-        compose_raw: composeResolved,
-        generated_env: generatedVars,
+        runtime_mode: runtimeMode,
+        ...protectedValues,
         domain,
+        entrypoint_service_name: declaredEntrypoint?.serviceName ?? null,
+        entrypoint_port: declaredEntrypoint?.port ?? null,
         container_ids: [],
       })
       await createCreationSaga(tx, {
@@ -158,22 +231,14 @@ export async function installFromTemplate(
   return accepted.row
 }
 
-function serviceContainers(service: Pick<ServiceRow, "id" | "compose_raw">): ComposeContainer[] {
-  return composeToContainers({
-    compose: service.compose_raw,
-    servicePrefix: `ploydok-svc-${service.id}`,
-    network: "ploydok-public",
-    labels: { "ploydok.kind": "service", "ploydok.service_id": service.id },
-  })
-}
-
 /** Shared by the outbox worker and the existing resource creation reconciler. */
 export async function resumeServiceCreation(
   deps: OrchestratorDeps,
   serviceId: string
 ): Promise<boolean> {
-  const { db, agent } = deps
+  const { db } = deps
   const caddy = deps.caddy ?? getSharedCaddy()
+  const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
   const claim = await claimCreationSaga(db, "service", serviceId)
   if (!claim) return false
   const token = claim.token
@@ -185,23 +250,34 @@ export async function resumeServiceCreation(
   }
   try {
     const service = await getServiceById(db, serviceId)
-    const snapshot = await agent.listContainers({ kindFilter: "service" })
-    const discovered = snapshot.containers.filter(
-      (c) => c.serviceId === serviceId
+    const runtimeMode = service ? serviceRuntimeMode(service) : "swarm"
+    const discovered =
+      service && runtimeMode === "docker"
+        ? (await deps.agent.listContainers({ kindFilter: "service" })).containers
+        : []
+    const discoveredForService = discovered.filter(
+      (container) => container.serviceId === serviceId
     )
     const containerIds = [
       ...new Set([
         ...(service?.container_ids ?? []),
         ...(claim.saga.owned_resources.containerIds ?? []),
-        ...discovered.map((c) => c.id),
+        ...discoveredForService.map((container) => container.id),
       ]),
     ]
+    const swarmNames = [
+      ...new Set([
+        ...(service?.swarm_service_names ?? []),
+        ...(claim.saga.owned_resources.swarmServiceNames ?? []),
+      ]),
+    ]
+    const ownerId = claim.saga.requested_by_user_id
     compensating ||=
       !service ||
       service.status === "deleting" ||
-      !claim.saga.requested_by_user_id ||
+      !ownerId ||
       claim.saga.attempt_count >= claim.saga.max_attempts
-    if (compensating) {
+    if (compensating || !service || !ownerId) {
       if (
         !(await beginClaimedCreationSagaCompensation(
           db,
@@ -216,7 +292,7 @@ export async function resumeServiceCreation(
       for (const containerId of [...containerIds].reverse()) {
         await fence()
         try {
-          await agent.containerRemove({
+          await deps.agent.containerRemove({
             containerId,
             force: true,
             removeVolumes: false,
@@ -225,11 +301,23 @@ export async function resumeServiceCreation(
           if (!isNotFound(toAgentError(error))) throw error
         }
       }
+      for (const serviceName of [...swarmNames].reverse()) {
+        await fence()
+        try {
+          await swarm.serviceRemove({ serviceName })
+        } catch (error) {
+          if (!isNotFound(toAgentError(error))) throw error
+        }
+      }
       await db.transaction(async (tx) => {
         if (!(await fenceCreationSaga(tx, "service", serviceId, token)))
           throw new Error("service compensation lease lost")
         if (service) {
-          await updateServiceContainers(tx as unknown as Db, serviceId, [])
+          if (runtimeMode === "docker") {
+            await updateServiceContainers(tx as unknown as Db, serviceId, [])
+          } else {
+            await updateServiceSwarmNames(tx as unknown as Db, serviceId, [])
+          }
           await updateServiceStatus(tx as unknown as Db, serviceId, "failed")
         }
         if (
@@ -245,9 +333,113 @@ export async function resumeServiceCreation(
       })
       return true
     }
-    const containers = serviceContainers(service!)
-    async function recordContainer(containerId: string, name: string) {
-      if (!containerIds.includes(containerId)) containerIds.push(containerId)
+
+    await fence()
+    const compose = await resolveServiceCompose(service)
+    if (runtimeMode === "docker") {
+      const network = await ensureProjectNetwork(db, service.project_id)
+      if (service.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+      const containers = planServiceContainers(
+        { id: service.id, compose_raw: compose },
+        network,
+        ownerId
+      )
+      async function recordContainer(containerId: string, name: string) {
+        if (!containerIds.includes(containerId)) containerIds.push(containerId)
+        await db.transaction(async (tx) => {
+          if (
+            !(await recordClaimedCreationSagaStep(
+              tx,
+              "service",
+              serviceId,
+              token,
+              `container:${name}`,
+              { containerIds }
+            ))
+          ) {
+            throw new Error(
+              "service creation saga lease lost while recording container"
+            )
+          }
+          await updateServiceContainers(tx as unknown as Db, serviceId, [
+            ...containerIds,
+          ])
+        })
+      }
+
+      for (const spec of containers) {
+        await fence()
+        const existing = discoveredForService.find(
+          (container) => container.name.replace(/^\//, "") === spec.name
+        )
+        let containerId = existing?.id
+        if (!containerId) {
+          for await (const _progress of deps.agent.imagePull({
+            image: spec.image,
+            registryAuth: undefined,
+          })) {
+            await fence()
+          }
+          await fence()
+          const created = await deps.agent.containerCreate({
+            name: spec.name,
+            image: spec.image,
+            env: spec.env,
+            labels: spec.labels,
+            network: spec.networks[0] ?? "",
+            networks: spec.networks,
+            ports: agentPortsForContainer(spec),
+            volumes: spec.volumes,
+            command: spec.command,
+            restartPolicy: spec.restartPolicy,
+            resourceLimits: undefined,
+            user: spec.user ?? "",
+            healthcheck: spec.healthcheck
+              ? {
+                  test: spec.healthcheck.test,
+                  intervalSeconds: spec.healthcheck.intervalSeconds ?? 0,
+                  timeoutSeconds: spec.healthcheck.timeoutSeconds ?? 0,
+                  retries: spec.healthcheck.retries ?? 0,
+                  startPeriodSeconds: spec.healthcheck.startPeriodSeconds ?? 0,
+                }
+              : undefined,
+          })
+          containerId = created.containerId
+        }
+        if (!containerId) throw new Error(`container ${spec.name} has no id`)
+        await recordContainer(containerId, spec.name)
+        await fence()
+        await deps.agent.containerStart({ containerId })
+      }
+      if (service.domain && containers.length) {
+        await fence()
+        try {
+          await upsertServiceRoute(caddy, {
+            serviceId,
+            domain: service.domain,
+            containers,
+            ...(() => {
+              const entrypoint = declaredRouteTarget(
+                serviceId,
+                service.entrypoint_service_name,
+                service.entrypoint_port,
+                containers
+              )
+              return entrypoint ? { entrypoint } : {}
+            })(),
+          })
+        } catch (error) {
+          if (service.entrypoint_service_name != null || !(error instanceof ServiceHasNoEntrypointError)) throw error
+        }
+      }
+      log.info({ serviceId, serviceCount: containers.length }, "service deployed")
+    } else {
+      const network = await ensureProjectSwarmNetwork(db, service.project_id)
+      if (service.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+      const plan = planServiceStack({ ...service, compose_raw: compose }, network, ownerId)
+      const planned = plan.services.map((s) => s.name)
+      // Every name is recorded before the first Swarm side effect, so a crash
+      // between two creations still hands compensation the complete list.
       await db.transaction(async (tx) => {
         if (
           !(await recordClaimedCreationSagaStep(
@@ -255,70 +447,43 @@ export async function resumeServiceCreation(
             "service",
             serviceId,
             token,
-            `container:${name}`,
-            { containerIds }
+            "swarm_planned",
+            { swarmServiceNames: planned }
           ))
         )
-          throw new Error(
-            "service creation saga lease lost while recording container"
-          )
-        await updateServiceContainers(tx as unknown as Db, serviceId, [
-          ...containerIds,
-        ])
+          throw new Error("service creation saga lease lost while planning")
+        await updateServiceSwarmNames(tx as unknown as Db, serviceId, planned)
       })
-    }
-    for (const name of topoOrder(containers)) {
-      const spec = containers.find((c) => c.name === name)!
       await fence()
-      const existing = discovered.find((c) => c.name === name)
-      let containerId = existing?.id
-      if (!containerId) {
-        for await (const _progress of agent.imagePull({
-          image: spec.image,
-          registryAuth: undefined,
-        }))
-          await fence()
+      await swarm.swarmEnsureSingleNode({})
+      for (const spec of plan.services) {
         await fence()
-        const created = await agent.containerCreate({
-          name: spec.name,
-          image: spec.image,
-          env: spec.env,
-          labels: spec.labels,
-          network: spec.networks[0] ?? "",
-          networks: spec.networks,
-          ports: spec.ports,
-          volumes: spec.volumes,
-          command: spec.command,
-          restartPolicy: spec.restartPolicy,
-          resourceLimits: undefined,
-          user: "",
-          healthcheck: spec.healthcheck
-            ? {
-                test: spec.healthcheck.test,
-                intervalSeconds: spec.healthcheck.intervalSeconds ?? 0,
-                timeoutSeconds: spec.healthcheck.timeoutSeconds ?? 0,
-                retries: spec.healthcheck.retries ?? 0,
-                startPeriodSeconds: spec.healthcheck.startPeriodSeconds ?? 0,
-              }
-            : undefined,
-        })
-        containerId = created.containerId
+        try {
+          await swarm.serviceCreate({ spec: plannedServiceToSpec(spec) })
+        } catch (error) {
+          if (!isAlreadyExists(toAgentError(error))) throw error
+        }
       }
-      await recordContainer(containerId, name)
-      await fence()
-      await agent.containerStart({ containerId })
-    }
-    if (service!.domain && containers.length) {
-      await fence()
-      try {
-        await upsertServiceRoute(caddy, {
-          serviceId,
-          domain: service!.domain,
-          containers,
+      const routeEntrypoint = service.entrypoint_service_name != null
+        ? (() => {
+            const target = plan.services.find(
+              (candidate) => candidate.composeName === service.entrypoint_service_name
+            )
+            if (!target || service.entrypoint_port == null) {
+              throw new ServiceHasNoEntrypointError(serviceId)
+            }
+            return { name: target.name, port: service.entrypoint_port }
+          })()
+        : plan.entrypoint
+      if (service.domain && routeEntrypoint) {
+        await fence()
+        await caddy.upsertRoute({
+          host: service.domain,
+          upstream: `${routeEntrypoint.name}:${routeEntrypoint.port}`,
+          appId: serviceId,
         })
-      } catch (error) {
-        if (!(error instanceof ServiceHasNoEntrypointError)) throw error
       }
+      log.info({ serviceId, serviceCount: planned.length }, "service deployed")
     }
     await db.transaction(async (tx) => {
       if (!(await fenceCreationSaga(tx, "service", serviceId, token)))
@@ -360,6 +525,20 @@ export async function startService(
     )
   }
 
+  if (serviceRuntimeMode(svc) === "swarm") {
+    if ((svc.swarm_service_names ?? []).length > 0) {
+      await updateServiceStatus(db, serviceId, "running")
+      return
+    }
+    const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+    const network = await ensureProjectSwarmNetwork(db, svc.project_id)
+    if (svc.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+    const plan = planServiceStack({ ...svc, compose_raw: await resolveServiceCompose(svc) }, network, userId)
+    const names = await deployPlannedComposeStack(swarm, plan)
+    await updateServiceSwarmNames(db, serviceId, names)
+    await updateServiceStatus(db, serviceId, "running")
+    return
+  }
   for (const containerId of svc.container_ids ?? []) {
     await agent.containerStart({ containerId })
   }
@@ -383,6 +562,14 @@ export async function stopService(
     )
   }
 
+  if (serviceRuntimeMode(svc) === "swarm") {
+    const swarmNames = svc.swarm_service_names ?? []
+    const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+    await removeComposeSwarmServices(swarm, swarmNames)
+    await updateServiceSwarmNames(db, serviceId, [])
+    await updateServiceStatus(db, serviceId, "stopped")
+    return
+  }
   for (const containerId of [...(svc.container_ids ?? [])].reverse()) {
     await agent.containerStop({ containerId, timeoutSeconds: 10 })
   }
@@ -403,7 +590,13 @@ export async function deleteService(
 
   await markServiceDeleting(db, serviceId)
 
-  for (const containerId of svc.container_ids ?? []) {
+  if (serviceRuntimeMode(svc) === "swarm") {
+    const swarmNames = svc.swarm_service_names ?? []
+    const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
+    await removeComposeSwarmServices(swarm, swarmNames)
+  }
+
+  for (const containerId of serviceRuntimeMode(svc) === "docker" ? svc.container_ids ?? [] : []) {
     try {
       await agent.containerStop({ containerId, timeoutSeconds: 10 })
     } catch (err) {

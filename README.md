@@ -1,8 +1,8 @@
 # Ploydok - Self-Hosted PaaS for Docker, Git Deploys, Databases and Blue/Green Rollouts
 
-[![CI](https://github.com/MakFly/ploydok/actions/workflows/ci.yml/badge.svg)](https://github.com/MakFly/ploydok/actions/workflows/ci.yml)
-[![Integration](https://github.com/MakFly/ploydok/actions/workflows/ci-integration.yml/badge.svg)](https://github.com/MakFly/ploydok/actions/workflows/ci-integration.yml)
-[![Release images](https://github.com/MakFly/ploydok/actions/workflows/release-images.yml/badge.svg)](https://github.com/MakFly/ploydok/actions/workflows/release-images.yml)
+[![CI](https://github.com/dev-toolings/ploydok/actions/workflows/ci.yml/badge.svg)](https://github.com/dev-toolings/ploydok/actions/workflows/ci.yml)
+[![Integration](https://github.com/dev-toolings/ploydok/actions/workflows/ci-integration.yml/badge.svg)](https://github.com/dev-toolings/ploydok/actions/workflows/ci-integration.yml)
+[![Release images](https://github.com/dev-toolings/ploydok/actions/workflows/release-images.yml/badge.svg)](https://github.com/dev-toolings/ploydok/actions/workflows/release-images.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
 [![Runtime: Docker Swarm](https://img.shields.io/badge/runtime-Docker%20Swarm-2496ED.svg)](https://docs.docker.com/engine/swarm/)
 [![Stack: Bun Hono React](https://img.shields.io/badge/stack-Bun%20%2B%20Hono%20%2B%20React-black.svg)](./package.json)
@@ -26,15 +26,18 @@ runtime health, recover safely, and keep the host clean over time.
 ## Table of Contents
 
 - [Why Ploydok](#why-ploydok)
+- [Feature maturity](#feature-maturity)
 - [Features](#features)
 - [Supported Stacks](#supported-stacks)
+- [Releases](#releases)
 - [Install on a VPS](#install-on-a-vps)
-- [Zero-Downtime Updates](#zero-downtime-updates)
+- [Upgrade workflow (pre-release)](#upgrade-workflow-pre-release)
 - [Local Development](#local-development)
 - [Architecture](#architecture)
 - [Security Model](#security-model)
 - [SEO Keywords](#seo-keywords)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Why Ploydok
 
@@ -117,6 +120,24 @@ or repaired early.
 - Adminer integration for database inspection.
 - Runtime monitoring for app and database containers.
 
+### Marketplace Templates
+
+Marketplace installation resolves `template.toml` variables and environment
+values, applies the first declared domain, and preserves its service/port as
+the routing entrypoint. The **2026-10-14 snapshot** had **215/568 templates**
+passing install-time validation (DSL resolution, runtime selection and Compose
+planning). Deployment still depends on each template's runtime requirements.
+
+Measure a cached catalog snapshot with:
+
+```bash
+bun run apps/api/scripts/marketplace-catalog-report.ts --json /tmp/marketplace-report.json
+```
+
+Add `--refresh` to fetch a new snapshot. Known limits are tracked in
+**DEV-355 through DEV-359**: mount support, multiple domains, configurable
+domain base, `depends_on: condition: service_healthy`, and unsupported fields.
+
 ### Observability
 
 - Workspace dashboard with application status, service health and deploy history.
@@ -132,8 +153,8 @@ or repaired early.
 - WebAuthn passkeys on trusted HTTPS origins.
 - HttpOnly access and refresh cookies.
 - mTLS between API and agent in production TCP mode.
-- Image signature verification in installer flows; immutable bootstrap and
-  digest promotion remain release blockers.
+- Workflow-signed images, immutable digest manifests and promotion without
+  rebuilding; signed bootstrap bundles for Git tags.
 - Host CLI for upgrade and uninstall. Fresh-host recovery is not yet certified.
 
 ## Supported Stacks
@@ -151,16 +172,165 @@ containerized workload and has extra guardrails for popular stacks.
 | JVM                       | Spring Boot through Dockerfile or build tooling        |
 | Custom                    | Any app with a Dockerfile or compatible Nixpacks build |
 
+## Releases
+
+The [release-images workflow](./.github/workflows/release-images.yml) builds
+`linux/amd64` and `linux/arm64` images at
+`ghcr.io/dev-toolings/ploydok-{api,web,agent,caddy,adminer}`.
+
+| Channel            | Trigger                      | Published image tags                | Gates                                         |
+| ------------------ | ---------------------------- | ----------------------------------- | --------------------------------------------- |
+| Stable             | Push `vX.Y.Z` Git tag        | `X.Y.Z`, `latest`                   | All gates                                     |
+| Edge               | Push to `main`               | `edge`, `main-<short-sha>`          | All gates                                     |
+| Develop prerelease | Manual dispatch on `develop` | Explicit version, e.g. `0.1.0-rc.1` | All gates by default; explicit skip available |
+
+A main push or Git tag always runs the repository quality, Rust security/test,
+installer, PostgreSQL/API integration, browser and accessibility gates.
+Stable releases and changes to `main` require Kevin's explicit release request.
+
+Every release also builds the images, rejects fixable CRITICAL vulnerabilities
+with Trivy, signs the exact digests with keyless cosign, assembles the immutable
+`release-images.env` workflow artifact, and promotes those digests without
+rebuilding. Reusing a version tag with a different digest is refused; `edge`
+and `latest` are the mutable channel aliases.
+
+```text
+.------------------------------------.
+|  Select ref, version, gate policy  |
+'------------------+-----------------'
+                   |
+                   v
+.------------------+-----------------.
+|   Quality and integration gates    |
+|  Explicit prerelease skip allowed  |
+'------------------+-----------------'
+                   |
+                   v
+.------------------+-----------------.
+|    Build, Trivy, sign, manifest    |
+'------------------+-----------------'
+                   |
+                   v
+.------------------+-----------------.
+| Browser gates unless skip selected |
+'------------------+-----------------'
+                   |
+                   v
+.------------------+-----------------.
+| Promote exact signed image digests |
+'------------------------------------'
+```
+
+The agent's Rust compilation runs natively on `$BUILDPLATFORM` and
+cross-compiles to each target with cargo-chef dependency caching. Do not
+reintroduce an emulated Rust compiler. The API runtime installs production
+workspace dependencies and excludes esbuild. API, web and agent runtime stages
+upgrade OS packages. The image gate remains:
+
+```bash
+docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+  aquasec/trivy:0.67.2 image --exit-code 1 --ignore-unfixed --severity CRITICAL "$IMAGE"
+```
+
+### Cut a develop prerelease
+
+For a controlled staging release with the slower quality gates explicitly
+skipped:
+
+```bash
+gh workflow run release-images.yml --ref develop \
+  -f version=0.1.0-rc.1 -f skip_quality_gates=true
+```
+
+Omit `skip_quality_gates` to run every gate. The `gate-policy` job accepts the
+skip only for `workflow_dispatch` on a non-main ref with a version containing
+`-`; use it for develop prereleases only. Build, Trivy, cosign, the immutable
+manifest and promotion still run. A skipped-gate prerelease is for staging.
+Dispatch does not create a Git tag or publish a signed bootstrap bundle.
+
+### Install a prerelease
+
+The GHCR packages are private. On a host with Docker installed, authenticate
+in the root Docker credential context used by the installer. Use a token
+restricted to `read:packages` for a GitHub account granted access to the
+packages; never use a broad personal token:
+
+```bash
+read -r -p "GitHub username: " ghcr_user
+read -r -s -p "GHCR read:packages token: " ghcr_token
+printf '\n'
+printf '%s' "$ghcr_token" | sudo docker login ghcr.io \
+  -u "$ghcr_user" --password-stdin
+unset ghcr_token
+```
+
+Use a reviewed checkout at the exact commit recorded by the successful
+workflow run. From that checkout on the staging host:
+
+```bash
+version=0.1.0-rc.1
+release_commit="REPLACE_WITH_THE_40_CHARACTER_WORKFLOW_COMMIT"
+sudo env PLOYDOK_REF="$release_commit" \
+  PLOYDOK_EXPECTED_COMMIT="$release_commit" PLOYDOK_VERSION="$version" \
+  bash installer/bootstrap.sh --version="$version" \
+  --image-registry=ghcr.io/dev-toolings --mode=coexist --yes
+```
+
+`PLOYDOK_VERSION` is required by the bootstrap when the source ref is a commit;
+`--version` selects the installer image tag. Keep cosign verification enabled
+for workflow-built prereleases. Choose an [install mode](#install-modes) that
+matches the host; `coexist` leaves the existing edge proxy in control.
+
+### Local pipeline fallback
+
+When local release image builds are explicitly authorized, use the
+[local release pipeline](./scripts/release-local/README.md):
+
+```bash
+scripts/release-local/release.sh --version 0.1.0-rc.local --platform linux/amd64
+```
+
+It builds all five images by default, scans each selected platform, and pushes
+only with `--push` after every scan passes. Use repeated `--image api`,
+`--image web` or another component name to select images. The platform default
+matches CI (`linux/amd64,linux/arm64`). Publishing also requires skopeo and a
+caller-managed registry login with package-write permission. Version tags are
+immutable; versions without `-` require `--allow-stable`. A verification run
+without `--push` discards its artifacts. To make images available to a staging
+host, authenticate the publisher with package-write access and rerun the same
+command with `--push`.
+
+Exit traps remove temporary images, exported archives, the dedicated build
+cache and Trivy cache, including on failure, and report disk usage before and
+after. Shared Docker services, images and builders are preserved; shared helper
+images can remain. Do not bypass cleanup or prune another project's cache.
+
+Local images have no signature from the GitHub workflow identity. Install them
+only in staging, using the same explicit `--version` and registry login as
+above, with `PLOYDOK_INSTALL_SKIP_COSIGN=1` added to the `sudo env` command.
+
 ## Install on a VPS
 
 Production releases publish a signed bootstrap bundle after every image and
-quality gate succeeds. Replace `1.2.3` below with an existing release:
+quality gate succeeds. Authenticate to the private registry as described
+in [Install a prerelease](#install-a-prerelease) before installing any channel.
+Replace `1.2.3` below with an existing release:
+
+Fork release verification uses `PLOYDOK_IMAGE_REGISTRY` to select the image
+registry and `PLOYDOK_COSIGN_IDENTITY_REGEXP` to select the trusted GitHub release
+workflow identity. Set both when installing a fork and pass the identity override
+again when rerunning the installer or invoking `ploydok-cli`. Adjust the
+bootstrap asset download URL and `verify-blob` identity for the fork as well.
+For automatic stack
+updates, set the identity override in the update service environment. The default
+identity trusts
+`https://github.com/dev-toolings/ploydok/.github/workflows/release-images.yml`.
 
 ```bash
 version=1.2.3
 alert_webhook_url="https://alerts.example.com/ploydok"
 asset="ploydok-bootstrap-${version}.tar.gz"
-base="https://github.com/MakFly/ploydok/releases/download/v${version}"
+base="https://github.com/dev-toolings/ploydok/releases/download/v${version}"
 curl -fSLO "${base}/${asset}"
 curl -fSLO "${base}/${asset}.sha256"
 curl -fSLO "${base}/${asset}.sigstore.json"
@@ -168,7 +338,7 @@ sha256sum -c "${asset}.sha256"
 cosign verify-blob \
   --bundle "${asset}.sigstore.json" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/MakFly/ploydok/\.github/workflows/release-images\.yml@refs/tags/v.*$' \
+  --certificate-identity-regexp '^https://github\.com/dev-toolings/ploydok/\.github/workflows/release-images\.yml@refs/tags/v.*$' \
   "${asset}"
 tmp_dir="$(mktemp -d)"
 tar -C "$tmp_dir" -xzf "$asset"
@@ -190,9 +360,12 @@ sudo env PLOYDOK_REF="v${version}" PLOYDOK_EXPECTED_COMMIT="$commit" \
   bash "$tmp_dir/bootstrap.sh" --mode=coexist --yes
 ```
 
-The webhook must be an HTTPS endpoint that accepts the standard Alertmanager
-webhook payload. The installer refuses a production setup without an explicit
-receiver, because silent alerts do not satisfy the production gate.
+Alerting is recommended for production and optional to install. Provide
+`--alert-webhook-url=<https-url>` or `PLOYDOK_ALERT_WEBHOOK_URL` to enable it;
+the receiver must use HTTPS and accept the standard Alertmanager webhook
+payload. When omitted on a fresh install, the installer logs a WARN and
+disables alerting. An existing receiver is retained when rerunning installation.
+Omit `PLOYDOK_ALERT_WEBHOOK_URL` from the examples above if alerts are not needed.
 
 The installer deploys the control plane as a single-node Docker
 Swarm stack by default. Docker Compose remains available only for explicit
@@ -206,9 +379,9 @@ The installer:
 - writes runtime descriptors under `/opt/ploydok`;
 - stores mutable data under `/var/lib/ploydok`;
 - generates platform secrets and mTLS material;
-- configures authenticated Prometheus collection and Alertmanager paging;
-- verifies the authenticated API scrape, Prometheus-to-Alertmanager discovery
-  and receiver reachability from Alertmanager's egress network;
+- configures authenticated Prometheus collection and optional Alertmanager paging;
+- verifies the authenticated API scrape and Prometheus-to-Alertmanager discovery;
+- verifies receiver reachability when an alert webhook is configured;
 - pulls and verifies platform images;
 - renders Docker Compose and systemd units;
 - starts the platform and waits for health checks;
@@ -227,12 +400,12 @@ of RAM or 20 GB of free disk space.
 For a useful single-node installation, size the host for both the Ploydok
 control plane and the workloads it will run:
 
-| Usage                                | CPU    | RAM   | Fast local storage |
-| ------------------------------------ | ------ | ----- | ------------------ |
-| Evaluation only                      | 2 vCPU | 2 GB  | 20 GB              |
-| Small installation, light workloads  | 2 vCPU | 4 GB  | 40-60 GB           |
-| Recommended starting point           | 4 vCPU | 8 GB  | 100 GB NVMe        |
-| Several applications or frequent builds | 8 vCPU | 16 GB | 200 GB+ NVMe    |
+| Usage                                   | CPU    | RAM   | Fast local storage |
+| --------------------------------------- | ------ | ----- | ------------------ |
+| Evaluation only                         | 2 vCPU | 2 GB  | 20 GB              |
+| Small installation, light workloads     | 2 vCPU | 4 GB  | 40-60 GB           |
+| Recommended starting point              | 4 vCPU | 8 GB  | 100 GB NVMe        |
+| Several applications or frequent builds | 8 vCPU | 16 GB | 200 GB+ NVMe       |
 
 The recommended starting point leaves headroom for BuildKit image builds,
 Docker image and registry growth, Prometheus retention, and temporary overlap
@@ -240,6 +413,12 @@ during start-first or blue/green deployments. Application containers and
 managed databases consume resources in addition to the control plane. A 4 GB
 swap file can absorb short peaks on an 8 GB host, but it is not a substitute
 for RAM under sustained load.
+
+The x86-64 CPU must expose AVX2 (x86-64-v3) to the guest: the API and web
+images run on Bun. On Proxmox, set the VM CPU type to `host` (or
+`x86-64-v3`); the default `kvm64` hides AVX2 and the Bun processes grow until
+the kernel OOM killer stops them. Check with
+`grep -o -w avx2 /proc/cpuinfo | head -1`.
 
 ### Install Modes
 
@@ -249,6 +428,9 @@ for RAM under sustained load.
 | `coexist`        | Another edge proxy keeps TLS and forwards to Ploydok on local ports.            |
 | `bootstrap-http` | Temporary first setup over HTTP from a controlled VPS security group.           |
 | `abort`          | Preflight only. Prints what would happen and exits.                             |
+
+`--unattended` implies `--yes` and defaults to `coexist` when no `--mode` is
+given. An explicit `--mode` takes precedence regardless of argument order.
 
 Useful flags:
 
@@ -264,6 +446,7 @@ Useful flags:
 --data-dir=/var/lib/ploydok
 --version=<tag>
 --image-registry=<registry>
+--alert-webhook-url=<https-url>
 ```
 
 For production, use a real HTTPS domain. Browser passkeys require a secure
@@ -344,17 +527,19 @@ make check           # probe the whole stack and print the /setup URL
 
 `make check` connects to Postgres and Redis, calls the Caddy admin and registry
 APIs, stats the agent socket, compares applied migrations against the journal,
-and — while no admin account exists — prints the first-boot wizard URL:
+and, while no admin account exists, prints the first-boot wizard URL:
 
 ```
 http://localhost:5173/setup
 ```
 
-Outside production that URL needs no token: the page asks the API for a setup
-session and the token is handed over in an `HttpOnly` cookie. In production the
-token stays mandatory in the query string, and `make check` prints it from
-`PLOYDOK_SETUP_TOKEN` (generated by `make secrets-init`) instead of the
-30-minute one the API logs when the variable is unset.
+That URL needs no token. The first person to submit the form becomes the
+admin, then registration closes. Set `PLOYDOK_SETUP_TOKEN_REQUIRED=1` to lock
+the form behind a one-shot token. In that mode, outside production the page
+asks the API for a setup session and the token is handed over in an `HttpOnly`
+cookie. In production `make check` prints the token from `PLOYDOK_SETUP_TOKEN`
+(generated by `make secrets-init`) instead of the 30-minute one the API logs
+when the variable is unset.
 
 Run the development servers on an already-installed checkout:
 
@@ -402,29 +587,46 @@ cargo build --release
 
 ```text
 ploydok/
-├── apps/
-│   ├── web/              # React 19, TanStack Start, TanStack Router
-│   └── api/              # Bun, Hono, queues, auth, providers
-├── packages/
-│   ├── db/               # Drizzle schema and migrations
-│   ├── shared/           # shared Zod schemas and domain types
-│   ├── ui/               # shared UI components
-│   └── agent-proto/      # gRPC contract and generated client types
-├── agent/                # Rust agent and host CLI
-├── installer/            # VPS installer, systemd and host templates
-├── infra/                # local Postgres, Redis, Caddy, registry, BuildKit
-└── scripts/              # validation and maintenance scripts
++-- apps/
+|   +-- web/              # React 19, TanStack Start, TanStack Router
+|   '-- api/              # Bun, Hono, queues, auth, providers
++-- packages/
+|   +-- db/               # Drizzle schema and migrations
+|   +-- shared/           # shared Zod schemas and domain types
+|   +-- ui/               # shared UI components
+|   '-- agent-proto/      # gRPC contract and generated client types
++-- agent/                # Rust agent and host CLI
++-- installer/            # VPS installer, systemd and host templates
++-- infra/                # local Postgres, Redis, Caddy, registry, BuildKit
+'-- scripts/              # validation and maintenance scripts
 ```
 
 Runtime overview:
 
 ```text
-Browser
-  -> Ploydok web
-  -> Ploydok API
-  -> Rust agent over mTLS
-  -> Docker / Docker Swarm
-  -> App containers, database containers and Caddy routes
+.-----------------------------------.
+|      Browser and Ploydok web      |
+'-----------------+-----------------'
+                  |
+                  v
+.-----------------+-----------------.
+|            Ploydok API            |
+'-----------------+-----------------'
+                  |
+                  v
+.-----------------+-----------------.
+|        Rust agent over mTLS       |
+'-----------------+-----------------'
+                  |
+                  v
+.-----------------+-----------------.
+|       Docker / Docker Swarm       |
+'-----------------+-----------------'
+                  |
+                  v
+.-----------------+-----------------.
+|  Apps, databases and Caddy routes |
+'-----------------------------------'
 ```
 
 ## Security Model

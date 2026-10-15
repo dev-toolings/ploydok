@@ -1,0 +1,210 @@
+{
+  "product": {
+    "title": "Ploydok",
+    "description": "Gérez vos applications, bases de données et déploiements."
+  },
+  "account": {
+    "title": "Compte",
+    "description": "Accédez à votre compte Ploydok."
+  },
+  "login": {
+    "title": "Connexion",
+    "description": "Connectez-vous à votre compte Ploydok."
+  },
+  "setup": {
+    "title": "Configuration initiale",
+    "description": "Configurez votre instance Ploydok et votre compte administrateur."
+  },
+  "invitation": {
+    "title": "Accepter une invitation",
+    "description": "Rejoignez une organisation grâce à votre invitation."
+  },
+  "onboarding": {
+    "title": "Premiers pas",
+    "description": "Configurez votre espace de travail et vos fournisseurs de déploiement."
+  },
+  "dashboard": {
+    "title": "Tableau de bord",
+    "description": "Consultez les ressources et l’activité de votre espace de travail."
+  },
+  "monitoring": {
+    "title": "Supervision",
+    "description": "Surveillez les ressources et l’état des services."
+  },
+  "disk": {
+    "title": "Utilisation du disque",
+    "description": "Consultez l’utilisation du disque et le stockage disponible."
+  },
+  "advisories": {
+    "title": "Alertes de sécurité",
+    "description": "Consultez les alertes de sécurité concernant votre instance."
+  },
+  "guide": {
+    "title": "Guide",
+    "description": "Découvrez comment déployer et gérer vos ressources."
+  },
+  "changelog": {
+    "title": "Journal des modifications",
+    "description": "Découvrez les dernières modifications de Ploydok."
+  },
+  "settings": {
+    "title": "Paramètres du compte",
+    "description": "Gérez les préférences de votre compte."
+  },
+  "security": {
+    "title": "Sécurité du compte",
+    "description": "Gérez l’authentification et la sécurité de votre compte."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Configurez vos préférences et canaux de notification."
+  },
+  "registry": {
+    "title": "Registres de conteneurs",
+    "description": "Gérez les connexions aux registres de conteneurs."
+  },
+  "gitProviders": {
+    "title": "Fournisseurs Git",
+    "description": "Gérez les connexions à vos fournisseurs Git."
+  },
+  "gitProvider": {
+    "title": "Paramètres du fournisseur Git",
+    "description": "Configurez votre connexion Git et vos dépôts."
+  },
+  "passkey": {
+    "title": "Clés d’accès",
+    "description": "Gérez les clés d’accès de votre compte."
+  },
+  "totp": {
+    "title": "Authentification à deux facteurs",
+    "description": "Configurez l’authentification à deux facteurs avec une application."
+  },
+  "posture": {
+    "title": "État de sécurité",
+    "description": "Consultez l’état de sécurité de votre compte."
+  },
+  "sessions": {
+    "title": "Sessions actives",
+    "description": "Consultez et gérez vos sessions actives."
+  },
+  "organization": {
+    "title": "Organisation",
+    "description": "Gérez votre organisation et ses ressources."
+  },
+  "branding": {
+    "title": "Identité visuelle",
+    "description": "Personnalisez le nom, les couleurs et l’icône de votre organisation."
+  },
+  "tags": {
+    "title": "Étiquettes",
+    "description": "Organisez vos ressources à l’aide d’étiquettes."
+  },
+  "sharedEnv": {
+    "title": "Environnement partagé",
+    "description": "Gérez les variables d’environnement partagées."
+  },
+  "organizationSettings": {
+    "title": "Paramètres de l’organisation",
+    "description": "Configurez les préférences de votre organisation."
+  },
+  "deployments": {
+    "title": "Déploiements",
+    "description": "Consultez l’historique et la progression des déploiements."
+  },
+  "marketplace": {
+    "title": "Marketplace",
+    "description": "Parcourez les modèles pour déployer des services."
+  },
+  "services": {
+    "title": "Services",
+    "description": "Consultez et gérez vos services Compose."
+  },
+  "service": {
+    "title": "Détails du service",
+    "description": "Consultez et configurez votre service."
+  },
+  "members": {
+    "title": "Membres",
+    "description": "Gérez les membres et les permissions de l’organisation."
+  },
+  "audit": {
+    "title": "Journal d’audit",
+    "description": "Consultez les actions effectuées dans votre organisation."
+  },
+  "webhooks": {
+    "title": "Webhooks d’événements",
+    "description": "Configurez les webhooks des événements de l’organisation."
+  },
+  "databases": {
+    "title": "Bases de données",
+    "description": "Consultez et gérez vos bases de données."
+  },
+  "database": {
+    "title": "Détails de la base de données",
+    "description": "Consultez et configurez votre base de données."
+  },
+  "scheduledJobs": {
+    "title": "Tâches planifiées",
+    "description": "Gérez les tâches planifiées de vos ressources."
+  },
+  "billing": {
+    "title": "Facturation",
+    "description": "Gérez l’offre et la facturation de votre organisation."
+  },
+  "sso": {
+    "title": "Authentification unique",
+    "description": "Configurez l’authentification unique de votre organisation."
+  },
+  "general": {
+    "title": "Paramètres généraux",
+    "description": "Gérez les paramètres généraux de votre organisation."
+  },
+  "applications": {
+    "title": "Applications",
+    "description": "Consultez et gérez vos applications."
+  },
+  "application": {
+    "title": "Détails de l’application",
+    "description": "Consultez et configurez votre application."
+  },
+  "storage": {
+    "title": "Stockage de l’application",
+    "description": "Gérez le stockage persistant de votre application."
+  },
+  "logs": {
+    "title": "Journaux de l’application",
+    "description": "Consultez les journaux de compilation et d’exécution de votre application."
+  },
+  "domains": {
+    "title": "Domaines de l’application",
+    "description": "Configurez les domaines et le routage de votre application."
+  },
+  "env": {
+    "title": "Variables d’environnement",
+    "description": "Gérez les variables d’environnement de votre application."
+  },
+  "applicationSecurity": {
+    "title": "Sécurité de l’application",
+    "description": "Consultez les paramètres de sécurité de votre application."
+  },
+  "advanced": {
+    "title": "Paramètres avancés",
+    "description": "Configurez les options avancées de votre application."
+  },
+  "previews": {
+    "title": "Déploiements de prévisualisation",
+    "description": "Gérez les déploiements de prévisualisation de votre application."
+  },
+  "shell": {
+    "title": "Terminal de l’application",
+    "description": "Ouvrez un terminal dans votre application."
+  },
+  "applicationSettings": {
+    "title": "Paramètres de l’application",
+    "description": "Configurez la source et les paramètres de déploiement de votre application."
+  },
+  "mock": {
+    "title": "Aperçu OpenShip",
+    "description": "Explorez l’aperçu de l’interface OpenShip."
+  }
+}

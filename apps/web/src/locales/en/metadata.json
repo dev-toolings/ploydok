@@ -1,0 +1,210 @@
+{
+  "product": {
+    "title": "Ploydok",
+    "description": "Manage your applications, databases and deployments."
+  },
+  "account": {
+    "title": "Account",
+    "description": "Access your Ploydok account."
+  },
+  "login": {
+    "title": "Sign in",
+    "description": "Sign in to your Ploydok account."
+  },
+  "setup": {
+    "title": "Initial setup",
+    "description": "Set up your Ploydok instance and administrator account."
+  },
+  "invitation": {
+    "title": "Accept invitation",
+    "description": "Join an organization using your invitation."
+  },
+  "onboarding": {
+    "title": "Getting started",
+    "description": "Configure your workspace and deployment providers."
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "description": "View your workspace resources and activity."
+  },
+  "monitoring": {
+    "title": "Monitoring",
+    "description": "Monitor resource usage and service health."
+  },
+  "disk": {
+    "title": "Disk usage",
+    "description": "Inspect disk usage and available storage."
+  },
+  "advisories": {
+    "title": "Security advisories",
+    "description": "Review security advisories affecting your instance."
+  },
+  "guide": {
+    "title": "Guide",
+    "description": "Learn how to deploy and manage your resources."
+  },
+  "changelog": {
+    "title": "Changelog",
+    "description": "Discover the latest Ploydok changes."
+  },
+  "settings": {
+    "title": "Account settings",
+    "description": "Manage your account preferences."
+  },
+  "security": {
+    "title": "Account security",
+    "description": "Manage authentication and account security."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Configure notification preferences and channels."
+  },
+  "registry": {
+    "title": "Container registries",
+    "description": "Manage container registry connections."
+  },
+  "gitProviders": {
+    "title": "Git providers",
+    "description": "Manage connections to your Git providers."
+  },
+  "gitProvider": {
+    "title": "Git provider settings",
+    "description": "Configure your Git provider connection and repositories."
+  },
+  "passkey": {
+    "title": "Passkeys",
+    "description": "Manage passkeys for your account."
+  },
+  "totp": {
+    "title": "Two-factor authentication",
+    "description": "Configure authenticator-based two-factor authentication."
+  },
+  "posture": {
+    "title": "Security posture",
+    "description": "Review your account security posture."
+  },
+  "sessions": {
+    "title": "Active sessions",
+    "description": "Review and manage your active sessions."
+  },
+  "organization": {
+    "title": "Organization",
+    "description": "Manage your organization and its resources."
+  },
+  "branding": {
+    "title": "Branding",
+    "description": "Customize your organization name, colors and icon."
+  },
+  "tags": {
+    "title": "Tags",
+    "description": "Organize resources with tags."
+  },
+  "sharedEnv": {
+    "title": "Shared environment",
+    "description": "Manage shared environment variables."
+  },
+  "organizationSettings": {
+    "title": "Organization settings",
+    "description": "Configure your organization preferences."
+  },
+  "deployments": {
+    "title": "Deployments",
+    "description": "View deployment history and progress."
+  },
+  "marketplace": {
+    "title": "Marketplace",
+    "description": "Browse templates for deploying services."
+  },
+  "services": {
+    "title": "Services",
+    "description": "View and manage your Compose services."
+  },
+  "service": {
+    "title": "Service details",
+    "description": "Inspect and configure your service."
+  },
+  "members": {
+    "title": "Members",
+    "description": "Manage organization members and permissions."
+  },
+  "audit": {
+    "title": "Audit log",
+    "description": "Review actions performed in your organization."
+  },
+  "webhooks": {
+    "title": "Event webhooks",
+    "description": "Configure webhooks for organization events."
+  },
+  "databases": {
+    "title": "Databases",
+    "description": "View and manage your databases."
+  },
+  "database": {
+    "title": "Database details",
+    "description": "Inspect and configure your database."
+  },
+  "scheduledJobs": {
+    "title": "Scheduled jobs",
+    "description": "Manage scheduled tasks for your resources."
+  },
+  "billing": {
+    "title": "Billing",
+    "description": "Manage your organization plan and billing."
+  },
+  "sso": {
+    "title": "Single sign-on",
+    "description": "Configure single sign-on for your organization."
+  },
+  "general": {
+    "title": "General settings",
+    "description": "Manage general organization settings."
+  },
+  "applications": {
+    "title": "Applications",
+    "description": "View and manage your applications."
+  },
+  "application": {
+    "title": "Application details",
+    "description": "Inspect and configure your application."
+  },
+  "storage": {
+    "title": "Application storage",
+    "description": "Manage persistent storage for your application."
+  },
+  "logs": {
+    "title": "Application logs",
+    "description": "Inspect your application build and runtime logs."
+  },
+  "domains": {
+    "title": "Application domains",
+    "description": "Configure domains and routing for your application."
+  },
+  "env": {
+    "title": "Environment variables",
+    "description": "Manage your application environment variables."
+  },
+  "applicationSecurity": {
+    "title": "Application security",
+    "description": "Review security settings for your application."
+  },
+  "advanced": {
+    "title": "Advanced settings",
+    "description": "Configure advanced application options."
+  },
+  "previews": {
+    "title": "Preview deployments",
+    "description": "Manage preview deployments for your application."
+  },
+  "shell": {
+    "title": "Application terminal",
+    "description": "Open a terminal in your application."
+  },
+  "applicationSettings": {
+    "title": "Application settings",
+    "description": "Configure your application source and deployment settings."
+  },
+  "mock": {
+    "title": "OpenShip preview",
+    "description": "Explore the OpenShip interface preview."
+  }
+}

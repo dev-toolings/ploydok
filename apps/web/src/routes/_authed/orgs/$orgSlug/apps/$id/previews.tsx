@@ -11,12 +11,14 @@ import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { createPageHead } from "../../../../../../lib/page-metadata"
 import { apiFetch } from "../../../../../../lib/api/client"
 import { ApiError } from "../../../../../../lib/api/errors"
 
 export const Route = createFileRoute(
   "/_authed/orgs/$orgSlug/apps/$id/previews"
 )({
+  head: createPageHead("previews"),
   component: PreviewsPage,
 })
 

@@ -3,6 +3,8 @@ import * as React from "react"
 import { createFileRoute, useRouter, useSearch } from "@tanstack/react-router"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
+import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../lib/page-metadata"
 import { apiFetch } from "../../../lib/api"
 import { useLogout } from "../../../lib/auth"
 import {
@@ -13,10 +15,10 @@ import {
   validateInvitationPasswords,
 } from "../../../lib/memberships"
 import { InvitationTokenLifecycle } from "../../../components/invitations/InvitationTokenLifecycle"
-import { useTranslation } from "react-i18next"
 import type { Me } from "@ploydok/shared"
 
 export const Route = createFileRoute("/_public/invitations/accept")({
+  head: createPageHead("invitation"),
   validateSearch: (search: Record<string, unknown>) => {
     return {
       token: (search.token as string) || "",

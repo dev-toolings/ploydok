@@ -847,10 +847,14 @@ function RuntimeSelectField({
   options?: Array<FieldOption>
 }): React.JSX.Element {
   const { t } = useTranslation("apps")
-  const resolvedOptions = options ?? [
-    { value: "swarm", label: t("build.swarm") },
-    { value: "docker", label: t("build.dockerLegacy") },
-  ]
+  const resolvedOptions =
+    options ??
+    (value === "docker"
+      ? [
+          { value: "swarm", label: t("build.swarm") },
+          { value: "docker", label: t("build.dockerLegacy") },
+        ]
+      : [{ value: "swarm", label: t("build.swarm") }])
   const selected = resolvedOptions.find((option) => option.value === value)
   return (
     <div className="flex flex-col gap-1.5">

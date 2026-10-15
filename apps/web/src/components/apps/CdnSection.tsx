@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useTranslation } from "react-i18next"
-import i18n from "../../lib/i18n"
 import {
   RiCloseLine,
   RiCloudLine,
@@ -34,6 +33,7 @@ import {
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Switch } from "@workspace/ui/components/switch"
 import { Textarea } from "@workspace/ui/components/textarea"
+import i18n from "../../lib/i18n"
 import {
   useAppCdn,
   useAppCloudflareCdn,

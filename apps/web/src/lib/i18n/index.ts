@@ -5,6 +5,7 @@ import { initReactI18next } from "react-i18next"
 
 import { detectClientLocale } from "./detect"
 import { loadResources } from "./load-resources"
+import { DEFAULT_LOCALE, LOCALES } from "./locales"
 
 /**
  * App-wide i18next instance. Every namespace is one `locales/<lng>/<ns>.json`,
@@ -22,7 +23,9 @@ export function setupI18n(): typeof i18n {
     i18n.use(initReactI18next).init({
       resources,
       lng: detectClientLocale(),
-      fallbackLng: "en",
+      fallbackLng: DEFAULT_LOCALE,
+      supportedLngs: [...LOCALES],
+      load: "languageOnly",
       defaultNS: "common",
       ns: namespaces,
       interpolation: { escapeValue: false },

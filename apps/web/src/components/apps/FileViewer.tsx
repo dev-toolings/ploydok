@@ -2,6 +2,7 @@
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { RiAlertLine, RiFileLine, RiLoader4Line } from "@remixicon/react"
+import { Badge } from "@workspace/ui/components/badge"
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Badge } from "@workspace/ui/components/badge"
 import {
   decodeFileContent,
   formatBytes,

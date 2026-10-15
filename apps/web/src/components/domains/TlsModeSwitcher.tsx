@@ -2,13 +2,13 @@
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { Label } from "@workspace/ui/components/label"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Label } from "@workspace/ui/components/label"
 import type { Dns01Provider, TlsMode } from "../../lib/domains"
 
 const DNS01_PROVIDERS: Array<{ value: Dns01Provider; label: string }> = [

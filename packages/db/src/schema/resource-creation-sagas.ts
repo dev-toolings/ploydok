@@ -29,6 +29,7 @@ const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
 
 export interface CreationSagaOwnedResources {
   containerIds?: string[]
+  swarmServiceNames?: string[]
   containerId?: string
   containerName?: string
   networkName?: string

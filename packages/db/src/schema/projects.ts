@@ -9,8 +9,10 @@ export const projects = pgTable('projects', {
     .references(() => users.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
-  // Per-project Docker network (lazily created by ensureProjectNetwork).
+  // Per-project Docker bridge network (lazily created by ensureProjectNetwork).
   network_name: text('network_name'),
+  // Per-project Swarm overlay (lazily created by ensureProjectSwarmNetwork).
+  swarm_network_name: text('swarm_network_name'),
   is_default: boolean('is_default').notNull().default(false),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
 });

@@ -5,6 +5,7 @@ import { Button } from "@workspace/ui/components/button"
 import { RiAddLine } from "@remixicon/react"
 import { Badge } from "@workspace/ui/components/badge"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { ShellPage, ShellPanel } from "../../../../components/layout/AppShell"
 import { MembersTable } from "../../../../components/members/MembersTable"
 import { InviteDialog } from "../../../../components/members/InviteDialog"
@@ -13,6 +14,7 @@ import i18n from "../../../../lib/i18n"
 import type { Invitation, Member } from "../../../../lib/memberships"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/members")({
+  head: createPageHead("members"),
   component: MembersPage,
 })
 

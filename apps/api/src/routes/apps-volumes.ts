@@ -42,12 +42,13 @@ function volumeConflictMessage(err: Error): string {
   return "app volume conflicts with an existing volume"
 }
 
-function appHasLiveRuntime(app: {
+export function appHasLiveRuntime(app: {
   status: string | null
   container_id: string | null
+  swarm_service_name?: string | null
 }): boolean {
   return (
-    Boolean(app.container_id) &&
+    Boolean(app.container_id || app.swarm_service_name) &&
     ["pending", "building", "running", "serving", "restarting"].includes(
       app.status ?? ""
     )

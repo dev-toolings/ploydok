@@ -10,6 +10,8 @@ import {
 } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
+import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import {
   Dialog,
   DialogContent,
@@ -27,10 +29,10 @@ import {
   useMarketplaceTemplateFiles,
 } from "../../../../lib/marketplace"
 import { InstallDialog } from "../../../../components/services/InstallDialog"
-import { useTranslation } from "react-i18next"
 import type { MarketplaceTemplate } from "../../../../lib/marketplace"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/marketplace")({
+  head: createPageHead("marketplace"),
   component: MarketplacePage,
 })
 
@@ -314,6 +316,7 @@ function TemplateDialog({
       templateVersion: template.version,
       name: template.name,
       compose: data.dockerCompose,
+      templateToml: data.templateToml,
     })
     setConfirmOpen(false)
     onClose()

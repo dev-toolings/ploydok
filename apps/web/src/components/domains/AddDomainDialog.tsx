@@ -2,6 +2,8 @@
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
+import { Label } from "@workspace/ui/components/label"
 import {
   Dialog,
   DialogContent,
@@ -9,8 +11,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../i18n/dialog"
-import { Input } from "@workspace/ui/components/input"
-import { Label } from "@workspace/ui/components/label"
 import type { CreateDomainParams, Dns01Provider, TlsMode } from "../../lib/domains"
 
 const DNS_LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"

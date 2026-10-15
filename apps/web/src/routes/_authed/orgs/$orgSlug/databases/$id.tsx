@@ -23,6 +23,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@workspace/ui/components/tabs"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import { ShellPage } from "../../../../../components/layout/AppShell"
 import {
   useDatabase,
@@ -53,6 +54,7 @@ import type { ContainerSnapshot } from "@ploydok/shared"
 import type { DbExposureMode } from "../../../../../lib/databases"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/databases/$id")({
+  head: createPageHead("database"),
   component: DatabaseDetailPage,
 })
 

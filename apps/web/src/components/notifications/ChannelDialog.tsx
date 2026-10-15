@@ -2,14 +2,6 @@
 import * as React from "react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../i18n/dialog"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import {
@@ -28,6 +20,14 @@ import {
   SelectValue,
 } from "@workspace/ui/components/select"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../i18n/dialog"
+import {
   ALL_EVENTS,
   EVENT_LABELS,
   FUNCTIONAL_KINDS,
@@ -41,8 +41,7 @@ import { SlackForm } from "./SlackForm"
 import { TelegramForm } from "./TelegramForm"
 import { WhatsAppForm } from "./WhatsAppForm"
 import { EmailForm } from "./EmailForm"
-import type {
-  ChannelEvent,
+import type { ChannelEvent,
   NotificationChannel,
   NotificationKind,
 } from "../../lib/notification-channels"
@@ -53,7 +52,6 @@ const ALL_KINDS: ReadonlyArray<NotificationKind> = [
   "slack",
   "email",
   "telegram",
-  "whatsapp",
 ]
 
 interface ChannelDialogProps {

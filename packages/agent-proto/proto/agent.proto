@@ -25,6 +25,9 @@ message PortMapping {
   uint32 host_port = 2;
   // "tcp" or "udp" — defaults to "tcp" if empty
   string proto = 3;
+  // Literal host IP to bind. Empty preserves legacy behavior for callers
+  // that predate explicit host binding support.
+  string host_ip = 4;
 }
 
 // CPU / memory / pids limits. Zero values mean "no limit".

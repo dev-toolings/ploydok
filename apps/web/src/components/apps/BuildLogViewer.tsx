@@ -9,10 +9,12 @@ import {
   filterBySearch,
   useLogStream,
 } from "../../lib/hooks/use-log-stream"
-import type { LogSource } from "../../lib/hooks/use-log-stream"
 import { LogFilters, useLogFilters } from "./LogFilters"
 import { LogLine } from "./LogLine"
-import type { LogLine as LogLineData } from "../../lib/hooks/use-log-stream"
+import type {
+  LogLine as LogLineData,
+  LogSource,
+} from "../../lib/hooks/use-log-stream"
 import type { LogFiltersState } from "./LogFilters"
 
 // ---------------------------------------------------------------------------

@@ -102,7 +102,7 @@ const getSsrRequest = createIsomorphicFn()
   })
 
 const getSsrCookies = createIsomorphicFn()
-  .client(() => ({}) as Record<string, string>)
+  .client(() => ({}))
   .server(async (): Promise<Record<string, string>> => {
     try {
       const { getCookies } = await import("@tanstack/react-start/server")

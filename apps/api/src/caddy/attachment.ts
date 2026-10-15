@@ -2,27 +2,93 @@
 //
 // Caddy ↔ project-network attachment.
 //
-// Zero-trust by default: app containers only live on their project-network
-// (`ploydok-proj-<id>`). Caddy is attached dynamically to each project-network
-// that has at least one app so it can reach upstreams by container_id while
-// remaining the single external ingress. Containers of different projects
-// therefore share NO network and cannot reach each other.
+// Workloads live on a per-project network (bridge for legacy docker apps,
+// attachable overlay for Swarm). Caddy joins those networks so it can reach
+// upstreams by container id or Swarm DNS while remaining the only ingress.
+// Projects never share a data-plane network.
 
 import { and, eq, inArray, isNotNull } from "drizzle-orm"
-import { apps as appsTable, projects as projectsTable } from "@ploydok/db"
+import { apps as appsTable, projects as projectsTable, services as servicesTable } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { Agent } from "../agent"
 import { isAlreadyExists, isNotFound, toAgentError } from "../agent/index.js"
 import { childLogger } from "../logger"
+import { projectNetworkName } from "../services/projects.js"
+
+function overlayNameForProject(projectId: string): string {
+  return `ploydok-swarm-proj-${projectId.toLowerCase()}`
+}
 
 const log = childLogger("caddy-attach")
 
-/**
- * Name of the Caddy container spawned by `infra/docker-compose.yml`. The
- * compose `container_name` is set to `ploydok-caddy`, but docker-compose also
- * accepts the default `<project>-<service>-1` pattern. We match both.
- */
-const CADDY_CONTAINER_NAMES = ["ploydok-caddy", "ploydok-caddy-1"] as const
+const CADDY_COMPOSE_NAMES = new Set(["ploydok-caddy", "ploydok-caddy-1"])
+
+export type CaddyContainerLite = {
+  id: string
+  name: string
+  kind?: string
+  status?: string
+}
+
+export type RunningAppNetworkRow = {
+  runtime_mode: string | null
+  status: string | null
+  project_id: string
+  network_name: string | null
+  swarm_network_name: string | null
+}
+
+function normalizeContainerName(name: string): string {
+  return name.replace(/^\//, "")
+}
+
+export function isCaddyIngressContainer(
+  container: CaddyContainerLite
+): boolean {
+  const name = normalizeContainerName(container.name)
+  if (/caddy[-_]admin/i.test(name)) return false
+  if (CADDY_COMPOSE_NAMES.has(name)) return true
+  if (/^ploydok[_-]caddy\.\d+\./.test(name)) return true
+  return (
+    container.kind === "infra" &&
+    /(?:^|[-_])caddy(?:$|[.\-_])/i.test(name)
+  )
+}
+
+function caddyStatusRank(status: string | undefined): number {
+  const normalized = (status ?? "").toLowerCase()
+  if (normalized === "running" || normalized.includes("healthy")) return 3
+  if (normalized === "starting") return 2
+  if (normalized === "unhealthy") return 1
+  return 0
+}
+
+export function pickCaddyIngressContainer(
+  containers: CaddyContainerLite[]
+): CaddyContainerLite | null {
+  const matches = containers.filter(isCaddyIngressContainer)
+  if (matches.length === 0) return null
+  return [...matches].sort(
+    (left, right) => caddyStatusRank(right.status) - caddyStatusRank(left.status)
+  )[0] ?? null
+}
+
+export function networksToAttachForRunningApps(
+  rows: RunningAppNetworkRow[]
+): string[] {
+  const networks = new Set<string>()
+  for (const row of rows) {
+    if (!["running", "restarting"].includes(row.status ?? "")) continue
+    if (row.runtime_mode === "swarm") {
+      networks.add(
+        row.swarm_network_name ?? overlayNameForProject(row.project_id)
+      )
+      continue
+    }
+    if (row.network_name) networks.add(row.network_name)
+  }
+  return [...networks]
+}
 
 /**
  * Lazy cache for the Caddy container id. Docker does not re-allocate an id
@@ -39,17 +105,17 @@ export function resetCaddyIdCache(): void {
 async function resolveCaddyContainerId(agent: Agent): Promise<string> {
   if (cachedCaddyId) return cachedCaddyId
   const { containers } = await agent.listContainers({ kindFilter: "" })
-  for (const candidate of CADDY_CONTAINER_NAMES) {
-    const match = containers.find((c) => c.name === candidate || c.name === `/${candidate}`)
-    if (match) {
-      cachedCaddyId = match.id
-      log.debug({ caddyId: match.id, name: match.name }, "resolved caddy container")
-      return match.id
-    }
+  const match = pickCaddyIngressContainer(containers)
+  if (match) {
+    cachedCaddyId = match.id
+    log.debug(
+      { caddyId: match.id, name: match.name },
+      "resolved caddy container"
+    )
+    return match.id
   }
   throw new Error(
-    `caddy container not found (expected one of ${CADDY_CONTAINER_NAMES.join(", ")}). ` +
-      `Is 'make infra-up' running?`,
+    "caddy container not found (expected compose name ploydok-caddy[-1] or Swarm task ploydok_caddy.*). Is ingress running?"
   )
 }
 
@@ -125,32 +191,49 @@ export async function detachCaddyFromProjectNetwork(
 }
 
 /**
- * Boot-time reconciliation: ensure Caddy is attached to every project-network
- * that hosts at least one `running` or `restarting` app. Called from
- * `bootInfra` after the caddy route reconciliation so live apps remain
- * reachable across API/Caddy restarts without waiting for the next deploy.
+ * Boot-time reconciliation: attach Caddy to every live project network.
+ * Swarm apps use the overlay; leftover docker apps keep the bridge.
  */
 export async function reconcileCaddyAttachments(
   agent: Agent,
-  db: Db,
+  db: Db
 ): Promise<{ attached: number; skipped: number; failed: number }> {
   const rows = await db
-    .selectDistinct({ network_name: projectsTable.network_name })
-    .from(projectsTable)
-    .innerJoin(appsTable, eq(appsTable.project_id, projectsTable.id))
-    .where(
-      and(
-        isNotNull(projectsTable.network_name),
-        inArray(appsTable.status, ["running", "restarting"]),
-      ),
-    )
+    .select({
+      runtime_mode: appsTable.runtime_mode,
+      status: appsTable.status,
+      project_id: projectsTable.id,
+      network_name: projectsTable.network_name,
+      swarm_network_name: projectsTable.swarm_network_name,
+    })
+    .from(appsTable)
+    .innerJoin(projectsTable, eq(appsTable.project_id, projectsTable.id))
+    .where(inArray(appsTable.status, ["running", "restarting"]))
+
+
+  const publicServices = await db.select({
+    project_id: projectsTable.id,
+    runtime_mode: servicesTable.runtime_mode,
+    network_name: projectsTable.network_name,
+    swarm_network_name: projectsTable.swarm_network_name,
+  }).from(servicesTable)
+    .innerJoin(projectsTable, eq(servicesTable.project_id, projectsTable.id))
+    .where(and(eq(servicesTable.status, "running"), isNotNull(servicesTable.domain)))
+  const networks = [...new Set([
+    ...networksToAttachForRunningApps(rows),
+    ...publicServices.map(row =>
+      row.runtime_mode === "docker"
+        ? row.network_name ?? projectNetworkName(row.project_id)
+        : row.swarm_network_name ?? overlayNameForProject(row.project_id)
+    ),
+  ])]
   const result = { attached: 0, skipped: 0, failed: 0 }
-  for (const row of rows) {
-    const name = row.network_name
-    if (!name) {
-      result.skipped++
-      continue
-    }
+  if (networks.length === 0) {
+    result.skipped++
+    log.info(result, "caddy attachments reconciled")
+    return result
+  }
+  for (const name of networks) {
     try {
       await ensureCaddyOnProjectNetwork(agent, name)
       result.attached++

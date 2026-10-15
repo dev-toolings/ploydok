@@ -21,7 +21,7 @@ type BuildStatus =
   | "succeeded_with_warning"
   | "failed"
   | "cancelled"
-type BuildMethod = "docker" | "nixpacks" | "railpack" | "static"
+type BuildMethod = "docker" | "nixpacks" | "railpack" | "static" | "compose"
 
 interface InsertBuildInput {
   id: string

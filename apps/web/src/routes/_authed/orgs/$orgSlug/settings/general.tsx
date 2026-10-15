@@ -21,15 +21,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@workspace/ui/components/alert-dialog"
+import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../../lib/page-metadata"
 import {
   useCurrentOrganization,
   useDeleteOrganization,
   useOrganizations,
 } from "../../../../../lib/organizations"
-import { useTranslation } from "react-i18next"
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/settings/general")(
   {
+  head: createPageHead("general"),
     component: GeneralSettingsPage,
   }
 )

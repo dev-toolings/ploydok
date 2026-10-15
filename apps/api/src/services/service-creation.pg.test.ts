@@ -18,19 +18,25 @@ mock.module("../worker/queues", () => ({
     },
   },
 }))
+mock.module("./projects.js", () => ({
+  ensureProjectNetwork: async () => "ploydok-proj-fixture",
+  ensureProjectSwarmNetwork: async () => "ploydok-swarm-fixture",
+}))
+mock.module("../caddy/attachment.js", () => ({
+  ensureCaddyOnProjectNetwork: async () => {},
+}))
 const { installFromTemplate, resumeServiceCreation } =
   await import("./marketplace-orchestrator")
 import type { OrchestratorDeps } from "./marketplace-orchestrator"
 
-type Point =
-  "pull" | "create" | "persist" | "start" | "route" | "complete" | null
+type Point = "persist" | "create" | "route" | "complete" | null
 const input = {
   projectId: "fixture-project",
   templateId: "fixture",
   templateVersion: "1",
   name: "Fixture",
   compose:
-    "services:\n  first:\n    image: alpine:3.20\n    ports: ['8080:80']\n    environment:\n      DOMAIN: ${domain}\n  second:\n    image: alpine:3.20\n    depends_on: [first]\n",
+    "services:\n  first:\n    image: alpine:3.20\n    expose: [80]\n    environment:\n      DOMAIN: ${domain}\n      PASSWORD: ${password}\n  second:\n    image: alpine:3.20\n",
 }
 
 async function isolated(run: (db: Db) => Promise<void>) {
@@ -63,12 +69,77 @@ async function isolated(run: (db: Db) => Promise<void>) {
   }
 }
 
+function grpcError(code: number, details: string) {
+  return Object.assign(new Error(details), { code, details, metadata: {} })
+}
+
 function runtime(point: Point = null) {
   let pending = point
-  const containers = new Map<
-    string,
-    { id: string; name: string; serviceId: string; kind: string }
-  >()
+  const swarmServices = new Map<string, Record<string, string>>()
+  let creates = 0
+  let transactions = 0
+  const fail = (at: Point) => {
+    if (pending === at) {
+      pending = null
+      throw new Error(`interrupted at ${at}`)
+    }
+  }
+  const swarm = {
+    swarmEnsureSingleNode: async () => ({}),
+    serviceCreate: async (req: { spec: Record<string, unknown> }) => {
+      const name = String(req.spec["name"])
+      if (swarmServices.has(name)) throw grpcError(6, `${name} already exists`)
+      creates++
+      swarmServices.set(name, req.spec["labels"] as Record<string, string>)
+      // The second response is lost after Docker performed the mutation.
+      if (creates === 2) fail("create")
+      return { serviceId: name }
+    },
+    serviceRemove: mock(async (req: { serviceName: string }) => {
+      if (!swarmServices.delete(req.serviceName))
+        throw grpcError(5, `service ${req.serviceName} not found`)
+      return {}
+    }),
+  }
+  const agent = {} as OrchestratorDeps["agent"]
+  const caddy = {
+    upsertRoute: async () => {
+      fail("route")
+    },
+    removeRoute: async () => {},
+  }
+  const wrap = (db: Db) =>
+    new Proxy(db, {
+      get(target, prop) {
+        if (prop === "transaction")
+          return (callback: (tx: unknown) => Promise<unknown>) =>
+            target.transaction(async (tx) => {
+              transactions++
+              const result = await callback(tx)
+              if (transactions === 1) fail("persist")
+              if (transactions === 2) fail("complete")
+              return result
+            })
+        const value = Reflect.get(target, prop)
+        return typeof value === "function" ? value.bind(target) : value
+      },
+    })
+  return {
+    agent,
+    swarm,
+    caddy,
+    swarmServices,
+    wrap,
+    get creates() {
+      return creates
+    },
+  }
+}
+
+function dockerRuntime(point: Point = null) {
+  let pending = point
+  const containers = new Map<string, { id: string; name: string; serviceId: string; labels: Record<string, string> }>()
+  const createdRequests: Array<Record<string, unknown>> = []
   let creates = 0
   let transactions = 0
   const fail = (at: Point) => {
@@ -78,34 +149,28 @@ function runtime(point: Point = null) {
     }
   }
   const agent = {
-    imagePull: async function* () {
-      fail("pull")
-    },
-    listContainers: async () => ({ containers: [...containers.values()] }),
-    containerCreate: async (req: {
-      name: string
-      labels: Record<string, string>
-    }) => {
-      const id = `container-${++creates}`
+    imagePull: async function* () {},
+    containerCreate: async (req: Record<string, unknown>) => {
+      const labels = req.labels as Record<string, string>
+      const id = `ctr-${creates + 1}`
+      creates++
+      createdRequests.push(req)
       containers.set(id, {
         id,
-        name: req.name,
-        serviceId: req.labels["ploydok.service_id"]!,
-        kind: "service",
+        name: String(req.name),
+        serviceId: labels["ploydok.service_id"]!,
+        labels,
       })
-      // The second response is lost after Docker performed the mutation.
       if (creates === 2) fail("create")
       return { containerId: id }
     },
-    containerStart: async () => {
-      fail("start")
-      return {}
-    },
+    containerStart: async () => ({}),
     containerStop: async () => ({}),
-    containerRemove: mock(async (req: { containerId: string }) => {
-      containers.delete(req.containerId)
+    containerRemove: mock(async ({ containerId }: { containerId: string }) => {
+      containers.delete(containerId)
       return {}
     }),
+    listContainers: async () => ({ containers: [...containers.values()] }),
   } as unknown as OrchestratorDeps["agent"]
   const caddy = {
     upsertRoute: async () => {
@@ -122,7 +187,7 @@ function runtime(point: Point = null) {
               transactions++
               const result = await callback(tx)
               if (transactions === 1) fail("persist")
-              if (transactions === 3) fail("complete")
+              if (transactions === 2) fail("complete")
               return result
             })
         const value = Reflect.get(target, prop)
@@ -133,6 +198,7 @@ function runtime(point: Point = null) {
     agent,
     caddy,
     containers,
+    createdRequests,
     wrap,
     get creates() {
       return creates
@@ -146,7 +212,7 @@ test.skipIf(!process.env.DATABASE_URL)(
     await isolated(async (db) => {
       const r = runtime()
       const row = await installFromTemplate(
-        { db, agent: r.agent, caddy: r.caddy },
+        { db, agent: r.agent, swarm: r.swarm, caddy: r.caddy },
         "fixture-user",
         input
       )
@@ -158,59 +224,72 @@ test.skipIf(!process.env.DATABASE_URL)(
       expect(intent?.payload).toEqual({ serviceId: row.id })
       expect(intent?.dispatched_at).toBeNull()
       expect(r.creates).toBe(0)
+      const { revealServiceSecrets } = await import("./service-secrets")
+      const secret = (await revealServiceSecrets(row)).password!
+      const [stored] = await db.select().from(services)
+      expect(JSON.stringify(stored)).not.toContain(secret)
+      expect(stored?.compose_raw).toContain("__PLOYDOK_SECRET_")
     })
   }
 )
 
 test
   .skipIf(!process.env.DATABASE_URL)
-  .each(["pull", "create", "persist", "start", "route", "complete"] as const)(
-  "reconciles interruption at %s using labels without duplicating containers",
+  .each(["persist", "create", "route", "complete"] as const)(
+  "resumes Docker services at %s without duplicate containers and preserves the host IP",
   async (point) => {
     await isolated(async (db) => {
-      const initial = runtime()
+      const r = dockerRuntime(point)
       const row = await installFromTemplate(
-        { db, agent: initial.agent, caddy: initial.caddy },
+        { db, agent: r.agent, caddy: r.caddy },
         "fixture-user",
-        input
+        {
+          ...input,
+          compose:
+            "services:\n  first:\n    image: alpine:3.20\n    user: \"1000\"\n    ports: [\"127.0.0.1:8080:80\"]\n    environment:\n      DOMAIN: ${domain}\n  second:\n    image: alpine:3.20\n",
+        }
       )
-      const r = runtime(point)
+      expect(row.runtime_mode).toBe("docker")
+      const deps = { agent: r.agent, caddy: r.caddy }
       await expect(
-        resumeServiceCreation(
-          { db: r.wrap(db), agent: r.agent, caddy: r.caddy },
-          row.id
-        )
+        resumeServiceCreation({ db: r.wrap(db), ...deps }, row.id)
       ).rejects.toThrow(`interrupted at ${point}`)
-      const [partial] = await db.select().from(services)
-      if (point === "start") expect(partial?.container_ids).toHaveLength(1)
-      if (point === "create") expect(partial?.container_ids).toHaveLength(1)
       await db
         .update(resource_creation_sagas)
         .set({ next_retry_at: new Date(0) })
-      await resumeServiceCreation(
-        { db, agent: r.agent, caddy: r.caddy },
-        row.id
-      )
+      await resumeServiceCreation({ db, ...deps }, row.id)
+
       const [finished] = await db.select().from(services)
       const [saga] = await db.select().from(resource_creation_sagas)
+      expect(finished?.runtime_mode).toBe("docker")
       expect(finished?.status).toBe("running")
       expect(finished?.container_ids).toHaveLength(2)
       expect(saga?.state).toBe("complete")
       expect(r.creates).toBe(2)
       expect(r.containers.size).toBe(2)
+      expect(r.createdRequests[0]?.["user"]).toBe("1000")
+      expect(
+        (r.createdRequests[0]?.["ports"] as Array<Record<string, unknown>>)[0]?.[
+          "hostIp"
+        ]
+      ).toBe("127.0.0.1")
     })
   }
 )
 
 test.skipIf(!process.env.DATABASE_URL)(
-  "compensation removes resources found by label and retries an interrupted cleanup",
+  "compensation removes Docker containers and retries interrupted cleanup",
   async () => {
     await isolated(async (db) => {
-      const r = runtime("create")
+      const r = dockerRuntime("create")
       const row = await installFromTemplate(
         { db, agent: r.agent, caddy: r.caddy },
         "fixture-user",
-        input
+        {
+          ...input,
+          compose:
+            "services:\n  first:\n    image: alpine:3.20\n    ports: [\"127.0.0.1:8080:80\"]\n  second:\n    image: alpine:3.20\n",
+        }
       )
       await expect(
         resumeServiceCreation({ db, agent: r.agent, caddy: r.caddy }, row.id)
@@ -218,29 +297,102 @@ test.skipIf(!process.env.DATABASE_URL)(
       await db
         .update(resource_creation_sagas)
         .set({ state: "compensating", next_retry_at: new Date(0) })
-      const remove = r.agent.containerRemove as ReturnType<typeof mock>
-      remove.mockRejectedValueOnce(new Error("agent unavailable"))
+      ;(r.agent.containerRemove as ReturnType<typeof mock>).mockRejectedValueOnce(
+        new Error("agent unavailable")
+      )
       await expect(
         resumeServiceCreation({ db, agent: r.agent, caddy: r.caddy }, row.id)
       ).rejects.toThrow("agent unavailable")
-      const [pending] = await db.select().from(resource_creation_sagas)
-      expect(pending?.state).toBe("compensating")
       await db
         .update(resource_creation_sagas)
         .set({ next_retry_at: new Date(0) })
-      await resumeServiceCreation(
-        { db, agent: r.agent, caddy: r.caddy },
-        row.id
-      )
+      await resumeServiceCreation({ db, agent: r.agent, caddy: r.caddy }, row.id)
+
       const [saga] = await db.select().from(resource_creation_sagas)
       const [service] = await db
         .select()
         .from(services)
         .where(eq(services.id, row.id))
       expect(saga?.state).toBe("compensated")
+      expect(service?.runtime_mode).toBe("docker")
       expect(service?.container_ids).toEqual([])
       expect(service?.status).toBe("failed")
       expect(r.containers.size).toBe(0)
+    })
+  }
+)
+
+test
+  .skipIf(!process.env.DATABASE_URL)
+  .each(["persist", "create", "route", "complete"] as const)(
+  "resumes an interruption at %s without duplicating Swarm services",
+  async (point) => {
+    await isolated(async (db) => {
+      const initial = runtime()
+      const row = await installFromTemplate(
+        { db, agent: initial.agent, swarm: initial.swarm, caddy: initial.caddy },
+        "fixture-user",
+        input
+      )
+      const r = runtime(point)
+      const deps = { agent: r.agent, swarm: r.swarm, caddy: r.caddy }
+      await expect(
+        resumeServiceCreation({ db: r.wrap(db), ...deps }, row.id)
+      ).rejects.toThrow(`interrupted at ${point}`)
+      const [partial] = await db.select().from(services)
+      if (point !== "persist")
+        expect(partial?.swarm_service_names).toHaveLength(2)
+      await db
+        .update(resource_creation_sagas)
+        .set({ next_retry_at: new Date(0) })
+      await resumeServiceCreation({ db, ...deps }, row.id)
+      const [finished] = await db.select().from(services)
+      const [saga] = await db.select().from(resource_creation_sagas)
+      expect(finished?.status).toBe("running")
+      expect(finished?.swarm_service_names).toHaveLength(2)
+      expect(saga?.state).toBe("complete")
+      expect(r.creates).toBe(2)
+      expect([...r.swarmServices.keys()].sort()).toEqual(
+        [...finished!.swarm_service_names!].sort()
+      )
+      for (const labels of r.swarmServices.values())
+        expect(labels["ploydok.service_id"]).toBe(row.id)
+    })
+  }
+)
+
+test.skipIf(!process.env.DATABASE_URL)(
+  "compensation removes planned Swarm services and retries an interrupted cleanup",
+  async () => {
+    await isolated(async (db) => {
+      const r = runtime("create")
+      const deps = { agent: r.agent, swarm: r.swarm, caddy: r.caddy }
+      const row = await installFromTemplate({ db, ...deps }, "fixture-user", input)
+      await expect(resumeServiceCreation({ db, ...deps }, row.id)).rejects.toThrow(
+        "interrupted at create"
+      )
+      await db
+        .update(resource_creation_sagas)
+        .set({ state: "compensating", next_retry_at: new Date(0) })
+      r.swarm.serviceRemove.mockRejectedValueOnce(new Error("agent unavailable"))
+      await expect(resumeServiceCreation({ db, ...deps }, row.id)).rejects.toThrow(
+        "agent unavailable"
+      )
+      const [pending] = await db.select().from(resource_creation_sagas)
+      expect(pending?.state).toBe("compensating")
+      await db
+        .update(resource_creation_sagas)
+        .set({ next_retry_at: new Date(0) })
+      await resumeServiceCreation({ db, ...deps }, row.id)
+      const [saga] = await db.select().from(resource_creation_sagas)
+      const [service] = await db
+        .select()
+        .from(services)
+        .where(eq(services.id, row.id))
+      expect(saga?.state).toBe("compensated")
+      expect(service?.swarm_service_names).toEqual([])
+      expect(service?.status).toBe("failed")
+      expect(r.swarmServices.size).toBe(0)
     })
   }
 )

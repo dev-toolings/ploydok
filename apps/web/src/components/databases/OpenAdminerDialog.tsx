@@ -2,6 +2,9 @@
 import * as React from "react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
+import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
+import { Label } from "@workspace/ui/components/label"
 import {
   Dialog,
   DialogContent,
@@ -10,16 +13,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { Button } from "@workspace/ui/components/button"
-import { Input } from "@workspace/ui/components/input"
-import { Label } from "@workspace/ui/components/label"
 import { apiBaseUrl } from "../../lib/api/base"
 import {
   useCreateAdminerSession,
   useRevealDatabaseCredentials,
 } from "../../lib/databases"
-import type { AdminerSessionLaunch, Database } from "../../lib/databases"
 import i18n from "../../lib/i18n"
+import type { AdminerSessionLaunch, Database } from "../../lib/databases"
 
 const AUTO_HIDE_PASSWORD_MS = 30_000
 

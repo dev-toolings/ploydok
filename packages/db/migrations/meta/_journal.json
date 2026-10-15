@@ -540,6 +540,48 @@
       "when": 1791971443268,
       "tag": "0077_service_creation_sagas",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1791971503268,
+      "tag": "0078_project_swarm_network_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1791971563268,
+      "tag": "0079_compose_swarm_service_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1791974115179,
+      "tag": "0080_service_secrets_encrypted",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1791974771732,
+      "tag": "0081_preview_queue_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1791976256000,
+      "tag": "0082_service_runtime_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1791980773550,
+      "tag": "0083_service_declared_entrypoint",
+      "breakpoints": true
     }
   ]
 }

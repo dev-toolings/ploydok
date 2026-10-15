@@ -124,6 +124,8 @@ mock.module("@ploydok/db", () => ({
   createDb: () => fakeDb,
   createRedis: () => fakeRedis,
   gitlab_tokens: fakeTable,
+  preview_deployments: fakeTable,
+  preview_queue_jobs: fakeTable,
   provider_credentials: fakeProviderCredentials,
   provider_installations: fakeProviderInstallations,
   users: {

@@ -2,9 +2,9 @@
 import * as React from "react"
 import { startAuthentication } from "@simplewebauthn/browser"
 import { Button } from "@workspace/ui/components/button"
+import { useTranslation } from "react-i18next"
 import { apiFetch } from "../../lib/api"
 import { useLogin } from "../../lib/auth"
-import { useTranslation } from "react-i18next"
 import { usePendingAction } from "../../lib/hooks/use-pending-action"
 
 interface LoginOptionsResponse {

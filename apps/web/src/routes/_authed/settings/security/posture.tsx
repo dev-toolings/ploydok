@@ -11,11 +11,13 @@ import {
 } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { useMe } from "../../../../lib/auth"
 import { usePasskeys } from "../../../../lib/passkeys"
 import { useSessions } from "../../../../lib/sessions"
 
 export const Route = createFileRoute("/_authed/settings/security/posture")({
+  head: createPageHead("posture"),
   component: SecurityPosturePage,
 })
 

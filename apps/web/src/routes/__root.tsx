@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
-import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
+import {
+  HeadContent,
+  Scripts,
+  createRootRoute,
+  useRouter,
+  useRouterState,
+} from "@tanstack/react-router"
 import {
   QueryCache,
   QueryClient,
@@ -10,6 +16,7 @@ import {
 import { Toaster } from "sonner"
 
 import appCss from "@workspace/ui/globals.css?url"
+import { I18nextProvider } from "react-i18next"
 import { ApiErrorState } from "../components/errors/ApiErrorState"
 import { NotFoundState } from "../components/errors/NotFoundState"
 import { NavigationProgress } from "../components/layout/NavigationProgress"
@@ -26,10 +33,11 @@ import {
 import { apiBaseUrl } from "../lib/api/base"
 import { broadcastAuthEvent, subscribeAuthEvents } from "../lib/api/broadcast"
 import { startProactiveRefresh } from "../lib/api/scheduler"
-import type { ErrorComponentProps } from "@tanstack/react-router"
-import { I18nextProvider } from "react-i18next"
 import i18n from "../lib/i18n"
+import { ensureDefaultLocaleSelected } from "../lib/i18n/locale-store"
 import { resolveRequestLocale } from "../lib/i18n/resolve-locale"
+import { createPageHead, formatPageTitle } from "../lib/page-metadata"
+import type { ErrorComponentProps } from "@tanstack/react-router"
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -75,13 +83,14 @@ export const Route = createRootRoute({
   beforeLoad: async () => {
     const locale = await resolveRequestLocale()
     if (i18n.language !== locale) await i18n.changeLanguage(locale)
+    return { locale }
   },
-  head: () => ({
+  head: ({ matches }) => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { name: "referrer", content: "no-referrer" },
-      { title: "Ploydok" },
+      ...createPageHead("product")({ matches }).meta,
     ],
     // The self-hosted control plane must render without leaking page visits to
     // a third-party font CDN. The design system uses its local/system fallbacks.
@@ -97,6 +106,37 @@ export const Route = createRootRoute({
 })
 
 function BrandingInjector(): React.JSX.Element {
+  const router = useRouter()
+  const [brandName, setBrandName] = React.useState("Ploydok")
+  const pageTitle = useRouterState({
+    select: (state) => {
+      for (const match of [...state.matches].reverse()) {
+        const title = match.meta?.find(
+          (meta) => typeof meta?.title === "string"
+        )?.title
+        if (typeof title === "string") return title
+      }
+      return formatPageTitle()
+    },
+  })
+
+  React.useEffect(() => {
+    const refreshMetadata = () => {
+      void router.invalidate()
+    }
+    i18n.on("languageChanged", refreshMetadata)
+    return () => {
+      i18n.off("languageChanged", refreshMetadata)
+    }
+  }, [router])
+
+  React.useEffect(() => {
+    const suffix = formatPageTitle()
+    document.title = pageTitle.endsWith(suffix)
+      ? `${pageTitle.slice(0, -suffix.length)}${formatPageTitle(undefined, brandName)}`
+      : pageTitle
+  }, [pageTitle, brandName])
+
   React.useEffect(() => {
     if (window.location.pathname === "/openship-mock") return
 
@@ -123,7 +163,7 @@ function BrandingInjector(): React.JSX.Element {
         if (!branding) return
 
         if (branding.app_name) {
-          document.title = branding.app_name
+          setBrandName(branding.app_name)
         }
 
         if (branding.favicon_url) {
@@ -250,6 +290,10 @@ function RootDocument({
 }: {
   children: React.ReactNode
 }): React.JSX.Element {
+  React.useEffect(() => {
+    ensureDefaultLocaleSelected()
+  }, [])
+
   return (
     <html lang={i18n.language} className="h-full antialiased" suppressHydrationWarning>
       <head>

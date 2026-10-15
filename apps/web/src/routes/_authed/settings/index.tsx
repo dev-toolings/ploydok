@@ -6,6 +6,7 @@ import {
   RiShieldCheckLine,
   RiUserLine,
 } from "@remixicon/react"
+import { createPageHead } from "../../../lib/page-metadata"
 import { ShellPage } from "../../../components/layout/AppShell"
 import { SettingsTabs } from "../../../components/settings/SettingsTabs"
 import { WorkspacesSection } from "../../../components/settings/WorkspacesSection"
@@ -13,6 +14,7 @@ import { AppearancePanel } from "../../../components/theme/AppearancePanel"
 import { useMe } from "../../../lib/auth"
 
 export const Route = createFileRoute("/_authed/settings/")({
+  head: createPageHead("settings"),
   component: SettingsOverviewPage,
 })
 

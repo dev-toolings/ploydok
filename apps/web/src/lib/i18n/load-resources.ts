@@ -60,9 +60,12 @@ function isBunRuntime(): boolean {
   return typeof (globalThis as { Bun?: unknown }).Bun !== "undefined"
 }
 
-/** Vite inlines `import.meta.glob`; bun tests read the JSON files from disk. */
+/** Vite bundles catalogs for browser and SSR, including SSR running under Bun.
+ * Direct Bun tests have no Vite boolean environment flags and read from disk.
+ */
 export function loadResources(): Resource {
-  return isBunRuntime() ? loadFromDisk() : loadFromGlob()
+  const isViteBundle = import.meta.env.PROD === true || import.meta.env.DEV === true
+  return isBunRuntime() && !isViteBundle ? loadFromDisk() : loadFromGlob()
 }
 
 export function loadLocaleModules(

@@ -22,6 +22,10 @@ RUN set -eux; \
 FROM oven/bun:1.3-debian AS runtime
 WORKDIR /app
 
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \

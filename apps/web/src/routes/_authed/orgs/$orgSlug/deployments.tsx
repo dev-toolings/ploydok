@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@workspace/ui/components/select"
 import { useTranslation } from "react-i18next"
+import { createPageHead } from "../../../../lib/page-metadata"
 import { BuildLogDrawer } from "../../../../components/apps/BuildLogDrawer"
 import {
   
@@ -64,6 +65,7 @@ function validateDeploymentsSearch(
 }
 
 export const Route = createFileRoute("/_authed/orgs/$orgSlug/deployments")({
+  head: createPageHead("deployments"),
   validateSearch: validateDeploymentsSearch,
   component: DeploymentsPage,
 })

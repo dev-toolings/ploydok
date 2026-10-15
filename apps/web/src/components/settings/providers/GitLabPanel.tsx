@@ -8,6 +8,7 @@ import {
 } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
+import { useTranslation } from "react-i18next"
 import {
   gitLabOAuthErrorMessage,
   gitlabConnectUrl,
@@ -23,7 +24,6 @@ import { useGitProviderStatus } from "../../../lib/git-providers"
 import { CachedReposPanel } from "./CachedReposPanel"
 import { GitLabConfigForm, GitLabSetupHelp } from "./GitLabConfigForm"
 import { SyncProgressDialog } from "./SyncProgressDialog"
-import { useTranslation } from "react-i18next"
 import { useSyncWithProgress } from "./useSyncWithProgress"
 
 export function GitLabPanel(): React.JSX.Element {

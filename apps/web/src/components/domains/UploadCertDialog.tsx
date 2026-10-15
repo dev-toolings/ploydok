@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useTranslation } from "react-i18next"
+import { Button } from "@workspace/ui/components/button"
+import { Textarea } from "@workspace/ui/components/textarea"
+import { Label } from "@workspace/ui/components/label"
 import {
   Dialog,
   DialogContent,
@@ -10,9 +13,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../i18n/dialog"
-import { Button } from "@workspace/ui/components/button"
-import { Textarea } from "@workspace/ui/components/textarea"
-import { Label } from "@workspace/ui/components/label"
 import { useUploadCert } from "../../lib/tls-upload"
 
 interface UploadCertDialogProps {

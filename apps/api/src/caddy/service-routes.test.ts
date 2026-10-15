@@ -32,6 +32,7 @@ function makeContainer(
     restartPolicy: "unless-stopped",
     command: [],
     dependsOn: [],
+    composeName: "app",
     ...overrides,
   }
 }
@@ -118,6 +119,33 @@ describe("upsertServiceRoute", () => {
 
     expect(client.upsertRoute).toHaveBeenCalledWith(
       expect.objectContaining({ upstream: "svc-c1:9000" })
+    )
+  })
+
+  it("uses the declared template entrypoint instead of the first exposed container", async () => {
+    const client = makeClient()
+    const worker = makeContainer({
+      name: "svc-worker",
+      composeName: "worker",
+      exposedPort: 9000,
+      ports: [{ containerPort: 9000, hostPort: 9000, proto: "tcp" }],
+    })
+    const web = makeContainer({
+      name: "svc-web",
+      composeName: "web",
+      exposedPort: 8080,
+      ports: [{ containerPort: 8080, hostPort: 8080, proto: "tcp" }],
+    })
+
+    await upsertServiceRoute(client as unknown as CaddyClient, {
+      serviceId: "svc-declared",
+      domain: "declared.example.com",
+      containers: [worker, web],
+      entrypoint: { name: "svc-web", port: 8088 },
+    })
+
+    expect(client.upsertRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ upstream: "svc-web:8088" })
     )
   })
 

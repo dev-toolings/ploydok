@@ -169,9 +169,8 @@ export function useApp(appId: string, opts?: UseAppOptions) {
   const subscribeToEvents = opts?.subscribeToEvents ?? true
 
   const syncStatus = (status: import("@ploydok/shared").AppStatus) => {
-    qc.setQueryData<AppDetail | undefined>(
-      ["apps", appId],
-      (current) => applyAppStatus(current, status) as AppDetail | undefined
+    qc.setQueryData<AppDetail | undefined>(["apps", appId], (current) =>
+      applyAppStatus(current, status)
     )
     // Match every list cache by prefix — ["apps", "all"], ["apps", orgId], …
     // Plain setQueryData(["apps"], …) only hit the literal ["apps"] key,

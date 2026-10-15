@@ -7,7 +7,7 @@ import path from "node:path"
 // ---------------------------------------------------------------------------
 
 export type DetectedMethod = {
-  method: "docker" | "nixpacks" | "static"
+  method: "docker" | "nixpacks" | "static" | "compose"
   dockerfilePath?: string
 }
 
@@ -16,7 +16,7 @@ export interface DetectOptions {
   /** Sub-directory within the workspace to look in. Default: '.'. */
   rootDir?: string
   /** Force a build method (skip auto-detection). */
-  override?: "docker" | "nixpacks" | "static" | "auto"
+  override?: "docker" | "nixpacks" | "static" | "compose" | "auto"
   /** Dockerfile path relative to rootDir. Default: 'Dockerfile'. */
   dockerfilePath?: string
 }
@@ -50,6 +50,9 @@ export async function detectBuildMethod(
   }
   if (opts.override === "static") {
     return { method: "static" }
+  }
+  if (opts.override === "compose") {
+    return { method: "compose" }
   }
 
   const root = path.join(opts.workspacePath, opts.rootDir ?? ".")

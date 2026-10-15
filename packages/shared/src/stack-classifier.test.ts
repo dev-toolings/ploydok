@@ -31,7 +31,7 @@ describe("classifyStack — Compose", () => {
     const r = classifyStack(probes(["compose.yaml"]))
     expect(r.stack).toBe("compose")
     expect(r.recommendedBuild).toBe("compose")
-    expect(r.warnings.join(" ")).toContain("pas encore disponible")
+    expect(r.warnings).toEqual(["compose_images_only"])
   })
 
   it("docker-compose.yml also matches", () => {

@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@workspace/ui/components/alert"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { SetupAdminFormSchema, fieldErrors } from "@ploydok/shared"
+import { createPageHead } from "../../lib/page-metadata"
 import i18n from "../../lib/i18n"
 import { apiFetch } from "../../lib/api"
 import { ApiError } from "../../lib/api/errors"
@@ -111,6 +112,7 @@ function FirstBootShowcase({ step }: { step: SetupStep }): React.JSX.Element {
 }
 
 export const Route = createFileRoute("/_public/setup")({
+  head: createPageHead("setup"),
   validateSearch: (search): SetupSearch => ({
     token: typeof search.token === "string" ? search.token : undefined,
   }),

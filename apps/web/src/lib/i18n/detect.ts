@@ -3,9 +3,9 @@
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE,
-  type Locale,
   resolveSupportedLocale,
 } from "./locales"
+import type { Locale } from "./locales"
 
 function cookieLocale(): Locale | null {
   if (typeof document === "undefined") return null
@@ -18,14 +18,9 @@ function cookieLocale(): Locale | null {
 }
 
 /**
- * Cookie → navigator.language → default. On the server this is the default
- * until `resolveRequestLocale` swaps the shared instance in root `beforeLoad`.
+ * Cookie, otherwise English. A first visit does not follow navigator.language:
+ * the product default is English until the operator picks a language.
  */
 export function detectClientLocale(): Locale {
-  const fromCookie = cookieLocale()
-  if (fromCookie) return fromCookie
-  if (typeof navigator !== "undefined" && navigator.language) {
-    return resolveSupportedLocale(navigator.language) ?? DEFAULT_LOCALE
-  }
-  return DEFAULT_LOCALE
+  return cookieLocale() ?? DEFAULT_LOCALE
 }

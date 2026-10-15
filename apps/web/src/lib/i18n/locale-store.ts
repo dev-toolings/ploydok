@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { DEFAULT_LOCALE, LOCALE_COOKIE } from "./locales"
 import i18n from "./index"
-import { LOCALE_COOKIE, type Locale } from "./locales"
+import type { Locale } from "./locales"
 
 function persist(locale: Locale): void {
   if (typeof document === "undefined") return
@@ -14,4 +15,17 @@ function persist(locale: Locale): void {
 export function changeLocale(locale: Locale): void {
   persist(locale)
   void i18n.changeLanguage(locale)
+}
+
+/**
+ * A first visit has no `ploydok-locale` cookie. Select English so the
+ * switcher and the next request both treat EN as the chosen language.
+ */
+export function ensureDefaultLocaleSelected(): void {
+  if (typeof document === "undefined") return
+  const chosen = document.cookie
+    .split(";")
+    .some((part) => part.trim().startsWith(`${LOCALE_COOKIE}=`))
+  if (chosen) return
+  changeLocale(DEFAULT_LOCALE)
 }
