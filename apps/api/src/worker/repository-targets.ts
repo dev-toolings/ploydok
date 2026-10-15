@@ -4,6 +4,7 @@ import path from "node:path"
 import {
   defaultRepositoryTarget,
   discoverRepositoryTargets,
+  ManifestTooLargeError,
 } from "@ploydok/shared"
 import { FatalDeployError } from "./errors"
 
@@ -38,13 +39,16 @@ export async function resolveRepositoryRoot(options: {
       if (
         !resolved.startsWith(`${root}${path.sep}`) ||
         !stat.isFile() ||
-        stat.isSymbolicLink() ||
-        stat.size > 64 * 1024
+        stat.isSymbolicLink()
       ) {
         throw new FatalDeployError(
           `Cannot inspect application manifest: ${file}`
         )
       }
+      if (stat.size > 64 * 1024)
+        throw new ManifestTooLargeError(
+          `Application manifest too large: ${file}`
+        )
       return readFile(candidate, "utf8")
     }
   )

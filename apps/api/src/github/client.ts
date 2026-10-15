@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { GitBranchSchema, GitRepoSchema } from "@ploydok/shared";
+import { GitBranchSchema, GitRepoSchema, ManifestTooLargeError } from "@ploydok/shared";
 import type {
   CommitStatusInput,
   GitBranch,
@@ -201,11 +201,11 @@ export class GitHubProvider implements GitProvider {
     }
 
     const body = data as { type?: string; encoding?: string; content?: string; size?: number }
+    if (body.type === "file" && (body.size ?? 0) > 64 * 1024) {
+      throw new ManifestTooLargeError(`GitHub /repos/${fullName}/contents/${filePath} is too large`)
+    }
     if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
       throw new Error(`GitHub /repos/${fullName}/contents/${filePath} is not a base64 file`)
-    }
-    if ((body.size ?? 0) > 64 * 1024) {
-      throw new Error(`GitHub /repos/${fullName}/contents/${filePath} is too large`)
     }
     return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8")
   }

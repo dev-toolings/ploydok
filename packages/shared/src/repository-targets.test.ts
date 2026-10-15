@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test"
 import {
   defaultRepositoryTarget,
   discoverRepositoryTargets,
+  ManifestTooLargeError,
 } from "./repository-targets"
 
 function discover(files: Record<string, string>) {
@@ -118,4 +119,41 @@ it("preserves a root Dockerfile without depending on unrelated manifests", async
     defaultRepositoryTarget(targets)?.classification.recommendedBuild
   ).toBe("dockerfile")
   expect(defaultRepositoryTarget(targets)?.rootDir).toBe(".")
+})
+
+it("skips an oversized manifest and still classifies the monorepo", async () => {
+  const files: Record<string, string> = {
+    "apps/web/package.json": JSON.stringify({
+      scripts: { build: "vite build" },
+      dependencies: { vite: "7" },
+    }),
+    "apps/web/index.html": "<html />",
+    "apps/api/composer.json": JSON.stringify({
+      require: { "laravel/framework": "12" },
+    }),
+    "apps/api/composer.lock": "",
+    "apps/api/artisan": "<?php",
+  }
+  const targets = await discoverRepositoryTargets(
+    Object.keys(files),
+    async (path) => {
+      if (path.endsWith("composer.lock"))
+        throw new ManifestTooLargeError("too large")
+      return files[path]!
+    }
+  )
+  expect(
+    targets.map((target) => [target.rootDir, target.classification.stack])
+  ).toEqual([
+    ["apps/api", "laravel"],
+    ["apps/web", "static"],
+  ])
+})
+
+it("still propagates non-size read errors", async () => {
+  await expect(
+    discoverRepositoryTargets(["composer.json", "artisan"], async () => {
+      throw new Error("401 unauthorized")
+    })
+  ).rejects.toThrow("401 unauthorized")
 })
