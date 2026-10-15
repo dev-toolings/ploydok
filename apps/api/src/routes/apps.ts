@@ -118,7 +118,6 @@ import {
 } from "../domains/availability"
 import {
   inspectDomainDns,
-  inspectDomainTls,
   publishHealthyAppRoute,
   syncAppDomainAliases,
 } from "../domains/routing"
@@ -126,8 +125,21 @@ import { CaddyClient } from "../caddy/client"
 import { ContainerHealthStatus } from "@ploydok/agent-proto"
 import { listSwarmTasks, taskIsHealthy } from "../worker/swarm-runner"
 import { caddyStaticRootForApp, staticRootForApp } from "../worker/handlers/build-static"
+import { createRateLimiter } from "../webhooks/rate-limit"
+import { runtimeContainerNameCandidates } from "../services/runtime-containers"
 
 export { deriveDefaultAppDomainBase } from "../domains/app-domain"
+
+const domainPreviewRateLimit = createRateLimiter({
+  redis: createRedis(env.REDIS_URL),
+  windowSec: 60,
+  max: 60,
+  keyPrefix: "rl:apps-domain-preview",
+  keyFrom: (c) => {
+    const user = c.get("user") as AuthUser | undefined
+    return user?.id ? `user:${user.id}` : { key: "user:unknown", max: 1 }
+  },
+})
 
 // ---------------------------------------------------------------------------
 // Validation schemas
@@ -775,6 +787,47 @@ type RecheckTarget =
   | { kind: "proxy"; upstream: { host: string; port: number } }
   | { kind: "static"; root: string; spaFallback: boolean }
 
+function appHasConfiguredHealthcheck(app: AppRow): boolean {
+  if (app.runtime_has_healthcheck !== null && app.runtime_has_healthcheck !== undefined) {
+    return app.runtime_has_healthcheck
+  }
+  if (app.build_method !== "compose") return true
+  return [
+    app.healthcheck_path,
+    app.healthcheck_port,
+    app.healthcheck_interval_s,
+    app.healthcheck_timeout_s,
+    app.healthcheck_retries,
+    app.healthcheck_start_period_s,
+  ].some((value) => value !== null && value !== undefined)
+}
+
+async function cleanupRetainedDockerSlot(
+  app: AppRow,
+  previousUpstream: { host: string; port: number } | null,
+  currentUpstream: { host: string; port: number }
+): Promise<void> {
+  if (!previousUpstream) return
+  if (previousUpstream.host === currentUpstream.host) return
+
+  const ownedSlots = new Set([
+    ...runtimeContainerNameCandidates(app, "blue"),
+    ...runtimeContainerNameCandidates(app, "green"),
+  ])
+  if (!ownedSlots.has(previousUpstream.host)) return
+
+  const agent = getSharedAgent()
+  await agent.containerStop({
+    containerId: previousUpstream.host,
+    timeoutSeconds: 10,
+  }).catch(() => undefined)
+  await agent.containerRemove({
+    containerId: previousUpstream.host,
+    force: true,
+    removeVolumes: false,
+  }).catch(() => undefined)
+}
+
 export async function resolveHealthyRecheckTarget(
   db: Db,
   app: AppRow
@@ -795,7 +848,11 @@ export async function resolveHealthyRecheckTarget(
   const port = app.runtime_port ?? 3000
   if (app.runtime_mode === "swarm" && app.swarm_service_name) {
     const tasks = await listSwarmTasks(app.id, db)
-    if (tasks.filter(taskIsHealthy).length < Math.max(1, app.replicas ?? 1)) {
+    if (
+      tasks.filter((task) =>
+        taskIsHealthy(task, appHasConfiguredHealthcheck(app))
+      ).length < Math.max(1, app.replicas ?? 1)
+    ) {
       throw new Error("Runtime is not healthy")
     }
     return {
@@ -810,10 +867,15 @@ export async function resolveHealthyRecheckTarget(
   const health = await getSharedAgent().inspectContainerHealth({
     containerId: app.container_id,
   })
+  const hasHealthcheck = appHasConfiguredHealthcheck(app)
   if (
     health.containerMissing ||
     health.running !== true ||
-    health.status !== ContainerHealthStatus.CONTAINER_HEALTH_STATUS_HEALTHY
+    (health.status !== ContainerHealthStatus.CONTAINER_HEALTH_STATUS_HEALTHY &&
+      !(
+        !hasHealthcheck &&
+        health.status === ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE
+      ))
   ) {
     throw new Error("Runtime is not healthy")
   }
@@ -850,7 +912,7 @@ export function createAppsRouter(db: Db): Hono {
   // Preview the final host before an app exists. DNS is checked against the
   // real resolver with a short timeout; an unavailable DNS record is reported
   // as a pending action and never treated as proof that the host is ready.
-  router.get("/domain-preview", appsRead, async (c) => {
+  router.get("/domain-preview", appsRead, domainPreviewRateLimit, async (c) => {
     const rawDomain = c.req.query("domain") ?? c.req.query("hostname")
     if (!rawDomain) {
       return c.json(
@@ -888,14 +950,19 @@ export function createAppsRouter(db: Db): Hono {
       findDomainCollisions(db, hostname, appId ? { excludeAppId: appId } : {}),
       inspectDomainDns(hostname),
     ])
-    const tls =
-      env.PLOYDOK_PUBLIC_SCHEME !== "https" || dns.status === "valid"
-        ? await inspectDomainTls(hostname)
-        : {
-            status: "pending" as const,
-            checkedAt: new Date().toISOString(),
-            error: "TLS waits for valid DNS",
-          }
+    // A preview must not perform an arbitrary-SNI TLS handshake. TLS becomes
+    // evidence only after the route has been published and rechecked.
+    const tls = {
+      status:
+        env.PLOYDOK_PUBLIC_SCHEME === "https"
+          ? ("pending" as const)
+          : ("not_required" as const),
+      checkedAt: new Date().toISOString(),
+      error:
+        env.PLOYDOK_PUBLIC_SCHEME === "https"
+          ? "TLS is checked after route publication"
+          : null,
+    }
 
     return c.json({
       available: collisions.length === 0,
@@ -905,9 +972,6 @@ export function createAppsRouter(db: Db): Hono {
       expectedRecords: dns.expectedRecords,
       dns,
       tls,
-      collisions: collisions.map((collision) => ({
-        resource: collision.resource,
-      })),
     })
   })
 
@@ -970,10 +1034,15 @@ export function createAppsRouter(db: Db): Hono {
     }
 
     const caddy = new CaddyClient()
+    const previousUpstream =
+      target.kind === "proxy"
+        ? await caddy.getUpstream(appId).catch(() => null)
+        : null
     const result = await publishHealthyAppRoute({
       db,
       appId,
       hostname: app.domain,
+      proxied: app.cdn_mode === "external",
       applyRoute: async () => {
         if (target.kind === "static") {
           await caddy.upsertStaticRoute({
@@ -983,31 +1052,38 @@ export function createAppsRouter(db: Db): Hono {
             spaFallback: target.spaFallback,
             cdn: app,
           })
-          const aliases = await syncAppDomainAliases({
-            db,
-            appId,
-            static: { root: target.root, spaFallback: target.spaFallback },
-            caddy,
-          })
-          if (aliases.errors.length) {
-            throw new Error("Alias routing requires attention")
-          }
           return
         }
         await caddy.setUpstream(appId, app.domain!, target.upstream, {
           cdn: app,
         })
-        const aliases = await syncAppDomainAliases({
-          db,
-          appId,
-          upstream: target.upstream,
-          caddy,
-        })
+      },
+      afterRoute: async () => {
+        const aliases =
+          target.kind === "static"
+            ? await syncAppDomainAliases({
+                db,
+                appId,
+                static: { root: target.root, spaFallback: target.spaFallback },
+                caddy,
+              })
+            : await syncAppDomainAliases({
+                db,
+                appId,
+                upstream: target.upstream,
+                caddy,
+              })
         if (aliases.errors.length) {
           throw new Error("Alias routing requires attention")
         }
       },
     })
+    if (
+      result.status === "ready" &&
+      target.kind === "proxy"
+    ) {
+      await cleanupRetainedDockerSlot(app, previousUpstream, target.upstream)
+    }
     const issue =
       result.dnsStatus !== "valid"
         ? "dns"

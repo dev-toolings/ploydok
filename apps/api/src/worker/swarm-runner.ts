@@ -16,6 +16,7 @@ import type {
 import { apps, builds, projects } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { createAgentClient } from "../agent/client.js"
+import { toAgentError } from "../agent/errors.js"
 import { CaddyClient } from "../caddy/client.js"
 import { publishHealthyAppRoute, syncAppDomainAliases } from "../domains/routing.js"
 import { assertDomainAvailable, withDomainLock } from "../domains/availability.js"
@@ -30,6 +31,7 @@ import { purgeCloudflareForApp } from "../cloudflare/purge.js"
 import { logBus } from "./log-bus.js"
 import { workerLog } from "./logger.js"
 import { buildEnvForDeploy } from "../secrets/resolver.js"
+import { classifyAppDomainWithInstanceBase } from "../domains/app-domain.js"
 import { PLANS } from "@ploydok/shared"
 import type { PlanName } from "@ploydok/shared"
 import {
@@ -107,7 +109,32 @@ function taskIsRunning(status: string): boolean {
   return normalized.includes("up ") || normalized.includes("running")
 }
 
-export function taskIsHealthy(task: SwarmTaskSnapshot): boolean {
+function isUnavailableRollbackImage(error: unknown): boolean {
+  const agentError = toAgentError(error)
+  const detail = `${agentError.details} ${agentError.message}`.toLowerCase()
+  return /manifest unknown|manifest .*not found|no such image|image .*not found|not found.*image|pull access denied|repository .*does not exist|failed to resolve source metadata/.test(
+    detail
+  )
+}
+
+class UnavailableRollbackImageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "UnavailableRollbackImageError"
+  }
+}
+
+export function taskIsHealthy(
+  task: SwarmTaskSnapshot,
+  hasHealthcheck = true
+): boolean {
+  if (task.running === false) return false
+  const reportedCheck = task.healthStatus !== undefined && task.healthStatus !== "none"
+  const legacyCheck = /\((?:healthy|unhealthy|health:\s*starting)\)/i.test(task.status)
+  if (!hasHealthcheck && !reportedCheck && !legacyCheck) {
+    if (task.running !== undefined) return task.running
+    return taskIsRunning(task.status)
+  }
   if (task.healthStatus !== undefined) {
     return task.running === true && task.healthStatus === "healthy"
   }
@@ -120,6 +147,8 @@ async function waitForServiceHealthy(opts: {
   serviceName: string
   replicas: number
   channel: string
+  hasHealthcheck?: boolean
+  failOnUnavailableImage?: boolean
   timeoutMs?: number
 }) {
   const timeoutAt = Date.now() + (opts.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS)
@@ -130,7 +159,17 @@ async function waitForServiceHealthy(opts: {
       opts.agent.listServiceTasks.bind(opts.agent),
       { serviceName: opts.serviceName }
     )
-    const healthy = last.tasks.filter(taskIsHealthy)
+    if (opts.failOnUnavailableImage) {
+      const unavailableTask = last.tasks.find(
+        (task) => task.error && isUnavailableRollbackImage(task.error)
+      )
+      if (unavailableTask) {
+        throw new UnavailableRollbackImageError(unavailableTask.error)
+      }
+    }
+    const healthy = last.tasks.filter((task) =>
+      taskIsHealthy(task, opts.hasHealthcheck ?? true)
+    )
     if (healthy.length >= opts.replicas) return last
     logBus.publish(
       opts.channel,
@@ -158,6 +197,7 @@ export interface RunSwarmDeployOptions {
 export interface RunSwarmDeployResult {
   serviceName: string
   runtimeRef: string
+  routeApplied: boolean
 }
 
 export async function runSwarmDeploy(
@@ -177,6 +217,7 @@ export async function runSwarmDeploy(
       healthcheck_timeout_s: apps.healthcheck_timeout_s,
       healthcheck_retries: apps.healthcheck_retries,
       healthcheck_start_period_s: apps.healthcheck_start_period_s,
+      runtime_has_healthcheck: apps.runtime_has_healthcheck,
       plan: apps.plan,
       cpu_limit: apps.cpu_limit,
       mem_limit_bytes: apps.mem_limit_bytes,
@@ -217,6 +258,7 @@ export async function runSwarmDeploy(
   const caddy = new CaddyClient(opts.caddyBaseUrl)
   const createsService = !app.swarm_service_name
   let runtimeMutated = false
+  let primaryRouteApplied = !app.domain
 
   try {
     logBus.publish(channel, `[swarm] ensuring single-node swarm`)
@@ -321,18 +363,27 @@ export async function runSwarmDeploy(
       runtimeMutated = true
     }
 
-    await waitForServiceHealthy({ agent, serviceName, replicas, channel })
+    await waitForServiceHealthy({
+      agent,
+      serviceName,
+      replicas,
+      channel,
+      hasHealthcheck: Boolean(spec.healthcheck),
+    })
 
     if (app.domain) {
       await fenceDeploySideEffect()
-      await publishHealthyAppRoute({
+      const routeResult = await publishHealthyAppRoute({
         db, appId, hostname: app.domain,
+        proxied: app.cdn_mode === "external",
         beforePersist: fenceDeploySideEffect,
         applyRoute: async () => {
           await fenceDeploySideEffect()
           await caddy.setUpstream(appId, app.domain!, {
             host: serviceName, port: runtimePort,
           }, { cdn: app })
+        },
+        afterRoute: async () => {
           const aliases = await syncAppDomainAliases({
             db, appId, caddy, upstream: { host: serviceName, port: runtimePort },
             beforeSideEffect: fenceDeploySideEffect,
@@ -340,8 +391,17 @@ export async function runSwarmDeploy(
           if (aliases.errors.length) throw new Error("Alias routing requires attention")
         },
       })
-      await fenceDeploySideEffect()
-      await purgeCloudflareForApp(db, appId)
+      const routeApplied = routeResult.routeApplied
+      primaryRouteApplied = routeApplied
+      if (routeApplied) {
+        await fenceDeploySideEffect()
+        await purgeCloudflareForApp(db, appId)
+      } else {
+        logBus.publish(
+          channel,
+          `[swarm] service is healthy but its primary route requires DNS/TLS action`
+        )
+      }
     }
 
     await fenceDeploySideEffect()
@@ -352,6 +412,7 @@ export async function runSwarmDeploy(
         swarm_service_name: serviceName,
         container_id: null,
         status: "running",
+        runtime_has_healthcheck: Boolean(spec.healthcheck),
         updated_at: new Date(),
       })
       .where(and(eq(apps.id, appId), currentDeployLeaseCondition()))
@@ -362,7 +423,7 @@ export async function runSwarmDeploy(
       )
     }
 
-    const result = { serviceName, runtimeRef: serviceName }
+    const result = { serviceName, runtimeRef: serviceName, routeApplied: primaryRouteApplied }
     if (opts.onLive) await opts.onLive(result)
     logBus.publish(channel, `[swarm] service live: ${serviceName}`)
     workerLog.info(
@@ -404,6 +465,8 @@ export async function scaleSwarmApp(appId: string, replicas: number, db: Db) {
     .select({
       service: apps.swarm_service_name,
       id: apps.id,
+      build_method: apps.build_method,
+      runtime_has_healthcheck: apps.runtime_has_healthcheck,
     })
     .from(apps)
     .where(eq(apps.id, appId))
@@ -421,6 +484,7 @@ export async function scaleSwarmApp(appId: string, replicas: number, db: Db) {
       serviceName: app.service,
       replicas,
       channel: `runtime:${appId}`,
+      hasHealthcheck: app.runtime_has_healthcheck ?? app.build_method !== "compose",
     })
     await db
       .update(apps)
@@ -478,6 +542,9 @@ export async function rollbackSwarmApp(
     .select({
       service: apps.swarm_service_name,
       domain: apps.domain,
+      cdn_mode: apps.cdn_mode,
+      build_method: apps.build_method,
+      runtime_has_healthcheck: apps.runtime_has_healthcheck,
       runtime_port: apps.runtime_port,
       replicas: apps.replicas,
       update_parallelism: apps.update_parallelism,
@@ -499,45 +566,143 @@ export async function rollbackSwarmApp(
     ...(targetBuildId ? [eq(builds.id, targetBuildId)] : [inArray(builds.status, ["succeeded", "succeeded_with_warning"])]),
   )).orderBy(desc(builds.created_at)).limit(targetBuildId ? 1 : 2)
   const target = targets[targetBuildId ? 0 : 1]
-  if (!target) throw new Error(`Rollback target not found for app ${appId}`)
-  const domain = target.routing_domain ?? app.domain
+  if (targetBuildId && !target) {
+    throw new Error(`Rollback target not found for app ${appId}`)
+  }
+  const domain = target?.routing_domain ?? app.domain
   const agent = createAgentClient()
+  let runtimeMutated = false
+  let useNativeRollback = !target || !target.image_tag
+  let nativeRollbackApplied = false
   try {
-    if (!target.image_tag) throw new Error(`Rollback build ${target.id} has no image tag`)
-    await grpcUnary(agent.serviceUpdateImage.bind(agent), {
-      serviceName: app.service,
-      image: target.image_tag,
-      replicas: app.replicas ?? 1,
-      updateParallelism: app.update_parallelism ?? 1,
-      updateDelaySeconds: app.update_delay_s ?? 10,
-      updateMonitorSeconds: app.update_monitor_s ?? 30,
-      updateOrder: app.update_order ?? "start-first",
-      failureAction: app.failure_action ?? "rollback",
-    })
-    await waitForServiceHealthy({
-      agent,
-      serviceName: app.service,
-      replicas: app.replicas ?? 1,
-      channel: `runtime:${appId}`,
-    })
+    if (useNativeRollback) {
+      workerLog.info(
+        { appId, serviceName: app.service },
+        "swarm rollback: no historical image available, using native service rollback"
+      )
+      runtimeMutated = true
+      await grpcUnary<ServiceRollbackResponse>(
+        agent.serviceRollback.bind(agent),
+        { serviceName: app.service }
+      )
+      nativeRollbackApplied = true
+    } else {
+      if (!target?.image_tag) {
+        throw new Error(`Rollback build ${target?.id ?? targetBuildId} has no image tag`)
+      }
+      try {
+        await grpcUnary(agent.serviceUpdateImage.bind(agent), {
+          serviceName: app.service,
+          image: target.image_tag,
+          replicas: app.replicas ?? 1,
+          updateParallelism: app.update_parallelism ?? 1,
+          updateDelaySeconds: app.update_delay_s ?? 10,
+          updateMonitorSeconds: app.update_monitor_s ?? 30,
+          updateOrder: app.update_order ?? "start-first",
+          failureAction: app.failure_action ?? "rollback",
+        })
+        runtimeMutated = true
+      } catch (error) {
+        if (!isUnavailableRollbackImage(error)) throw error
+        workerLog.warn(
+          { appId, serviceName: app.service, image: target.image_tag },
+          "swarm rollback: historical image unavailable, using native service rollback"
+        )
+        useNativeRollback = true
+        runtimeMutated = true
+        await grpcUnary<ServiceRollbackResponse>(
+          agent.serviceRollback.bind(agent),
+          { serviceName: app.service }
+        )
+        nativeRollbackApplied = true
+      }
+    }
+    const hasHealthcheck =
+      app.runtime_has_healthcheck ?? app.build_method !== "compose"
+    try {
+      await waitForServiceHealthy({
+        agent,
+        serviceName: app.service,
+        replicas: app.replicas ?? 1,
+        channel: `runtime:${appId}`,
+        hasHealthcheck,
+        failOnUnavailableImage: !useNativeRollback,
+      })
+    } catch (error) {
+      if (
+        useNativeRollback ||
+        !(error instanceof UnavailableRollbackImageError)
+      ) {
+        throw error
+      }
+      workerLog.warn(
+        { appId, serviceName: app.service },
+        "swarm rollback: task reported unavailable historical image, using native service rollback"
+      )
+      useNativeRollback = true
+      runtimeMutated = true
+      await grpcUnary<ServiceRollbackResponse>(
+        agent.serviceRollback.bind(agent),
+        { serviceName: app.service }
+      )
+      nativeRollbackApplied = true
+      await waitForServiceHealthy({
+        agent,
+        serviceName: app.service,
+        replicas: app.replicas ?? 1,
+        channel: `runtime:${appId}`,
+        hasHealthcheck,
+      })
+    }
     if (domain) {
       await withDomainLock(db, domain, async (tx, hostname) => {
         await assertDomainAvailable(tx, hostname, { excludeAppId: appId })
-        await tx.update(apps).set({ domain: hostname }).where(eq(apps.id, appId))
       })
       const caddy = new CaddyClient()
-      await publishHealthyAppRoute({
+      const upstream = { host: app.service, port: app.runtime_port ?? 3000 }
+      const routeResult = await publishHealthyAppRoute({
         db, appId, hostname: domain,
+        proxied: app.cdn_mode === "external",
         applyRoute: async () => {
-          const upstream = { host: app.service!, port: app.runtime_port ?? 3000 }
           await caddy.setUpstream(appId, domain, upstream)
+        },
+        afterRoute: async () => {
           const aliases = await syncAppDomainAliases({ db, appId, caddy, upstream })
           if (aliases.errors.length) throw new Error("Alias routing requires attention")
         },
       })
+      const routeApplied = routeResult.routeApplied
+      if (!routeApplied) {
+        logBus.publish(
+          `runtime:${appId}`,
+          `[swarm] rollback service is healthy but its primary route requires DNS/TLS action`
+        )
+      }
     }
-    await db.update(apps).set({ domain, status: "running", updated_at: new Date() })
+    await db.update(apps).set({
+      ...(domain
+        ? {
+            domain,
+            domain_source: classifyAppDomainWithInstanceBase(domain),
+          }
+        : {}),
+      status: "running",
+      updated_at: new Date(),
+    })
       .where(eq(apps.id, appId))
+  } catch (error) {
+    if (runtimeMutated && (!useNativeRollback || nativeRollbackApplied)) {
+      await grpcUnary<ServiceRollbackResponse>(
+        agent.serviceRollback.bind(agent),
+        { serviceName: app.service }
+      ).catch((cleanupError) =>
+        workerLog.error(
+          { appId, serviceName: app.service, cleanupError },
+          "swarm rollback: failed to restore the previous service snapshot"
+        )
+      )
+    }
+    throw error
   } finally {
     agent.close()
   }

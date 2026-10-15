@@ -551,7 +551,11 @@ describe("pollHealthcheck (Docker State.Health.Status)", () => {
 
   test("resolves false on NONE — container has no HEALTHCHECK declared", async () => {
     const { agent, callCount } = makeHealthMockAgent([
-      { status: ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE },
+      {
+        status: ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE,
+        running: false,
+        state: "exited",
+      },
     ])
 
     const result = await pollHealthcheck({
@@ -567,6 +571,29 @@ describe("pollHealthcheck (Docker State.Health.Status)", () => {
 
     expect(result).toBe(false)
     // NONE is fatal: no point retrying when there is no HEALTHCHECK.
+    expect(callCount()).toBe(1)
+  })
+
+  test("treats a running container without a HEALTHCHECK as ready", async () => {
+    const { agent, callCount } = makeHealthMockAgent([
+      {
+        status: ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE,
+        running: true,
+      },
+    ])
+
+    const result = await pollHealthcheck({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      agent: agent as any,
+      containerId: "ploydok-app-test",
+      intervalMs: 30,
+      retries: 6,
+      startPeriodMs: 0,
+      appId: "test-app",
+      color: "blue",
+    })
+
+    expect(result).toBe(true)
     expect(callCount()).toBe(1)
   })
 

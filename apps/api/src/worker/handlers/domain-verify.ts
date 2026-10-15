@@ -137,23 +137,23 @@ export async function handleDomainVerify(
     "domain verified, registering Caddy route"
   )
 
-  try {
-    const upstream = await caddyClient.getUpstream(claimed.app_id)
-    if (!upstream) {
-      const reason = "Runtime is not healthy; route registration requires go-live"
-      await db
-        .update(domains)
-        .set({ tls_status: "pending", verify_error: reason, updated_at: new Date() })
-        .where(eq(domains.id, domainId))
-      throw new Error(reason)
-    }
+  const upstream = await caddyClient.getUpstream(claimed.app_id)
+  if (!upstream) {
+    const reason = "Runtime is not healthy; route registration requires go-live"
+    await db
+      .update(domains)
+      .set({ tls_status: "pending", verify_error: reason, updated_at: new Date() })
+      .where(eq(domains.id, domainId))
+    throw new Error(reason)
+  }
 
-    const tls = await getCaddyTlsOptionsForDomain(
-      db,
-      claimed.app_id,
-      claimed.tls_mode,
-      claimed.dns01_provider
-    )
+  const tls = await getCaddyTlsOptionsForDomain(
+    db,
+    claimed.app_id,
+    claimed.tls_mode,
+    claimed.dns01_provider
+  )
+  try {
     await caddyClient.upsertRoute({
       host: claimed.hostname,
       upstream: `${upstream.host}:${upstream.port}`,
@@ -161,38 +161,49 @@ export async function handleDomainVerify(
       ...(tls ? { tls } : {}),
       ...(parentApp ? { middlewares: { cdn: parentApp } } : {}),
     })
-    const tlsCheck = await inspectDomainTls(claimed.hostname)
-    if (tlsCheck.status === "failed" || tlsCheck.status === "pending") {
-      const reason = tlsCheck.error ?? "TLS certificate requires attention"
-      await db
-        .update(domains)
-        .set({ tls_status: "failed", verify_error: reason, updated_at: new Date() })
-        .where(eq(domains.id, domainId))
-      logger.warn(
-        { domainId, hostname: claimed.hostname, reason },
-        "domain verified but TLS remains an action required"
-      )
-      return
-    }
-    await db
-      .update(domains)
-      .set({ tls_status: tlsCheck.status, verify_error: null, updated_at: new Date() })
-      .where(eq(domains.id, domainId))
-    logger.info(
-      { domainId, hostname: claimed.hostname },
-      "Caddy domain route registered"
-    )
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     await db
       .update(domains)
-      .set({ tls_status: "failed", verify_error: reason, updated_at: new Date() })
+      .set({ tls_status: "pending", verify_error: reason, updated_at: new Date() })
       .where(eq(domains.id, domainId))
-    // DNS/ACME/Caddy errors become an operator action after go-live. The app
-    // runtime has already been verified and must not be marked as failed.
     logger.warn(
       { domainId, err },
-      "domain route or TLS provisioning requires attention"
+      "domain route application failed; retrying without changing app runtime"
     )
+    throw err
   }
+
+  let tlsCheck
+  try {
+    tlsCheck = await inspectDomainTls(claimed.hostname, {
+      allowProvisioning: true,
+    })
+  } catch (err) {
+    tlsCheck = {
+      status: "failed" as const,
+      checkedAt: new Date().toISOString(),
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+  if (tlsCheck.status === "failed" || tlsCheck.status === "pending") {
+    const reason = tlsCheck.error ?? "TLS certificate requires attention"
+    await db
+      .update(domains)
+      .set({ tls_status: "failed", verify_error: reason, updated_at: new Date() })
+      .where(eq(domains.id, domainId))
+    logger.warn(
+      { domainId, hostname: claimed.hostname, reason },
+      "domain verified but TLS remains an action required"
+    )
+    return
+  }
+  await db
+    .update(domains)
+    .set({ tls_status: tlsCheck.status, verify_error: null, updated_at: new Date() })
+    .where(eq(domains.id, domainId))
+  logger.info(
+    { domainId, hostname: claimed.hostname },
+    "Caddy domain route registered"
+  )
 }

@@ -80,6 +80,53 @@ describe("domain availability", () => {
     }
   })
 
+  it("reserves configured control-plane hosts and the generated app namespace", async () => {
+    const testEnv = env as {
+      PLOYDOK_PUBLIC_HOST: string
+      PLOYDOK_DOMAIN_BASE?: string
+      WEB_ORIGIN: string
+      PLOYDOK_REGISTRY_URL: string
+      PLOYDOK_REGISTRY_API_URL?: string
+      PLOYDOK_REGISTRY_PUSH_URL: string
+    }
+    const previous = {
+      PLOYDOK_PUBLIC_HOST: testEnv.PLOYDOK_PUBLIC_HOST,
+      PLOYDOK_DOMAIN_BASE: testEnv.PLOYDOK_DOMAIN_BASE,
+      WEB_ORIGIN: testEnv.WEB_ORIGIN,
+      PLOYDOK_REGISTRY_URL: testEnv.PLOYDOK_REGISTRY_URL,
+      PLOYDOK_REGISTRY_API_URL: testEnv.PLOYDOK_REGISTRY_API_URL,
+      PLOYDOK_REGISTRY_PUSH_URL: testEnv.PLOYDOK_REGISTRY_PUSH_URL,
+    }
+    Object.assign(testEnv, {
+      PLOYDOK_PUBLIC_HOST: "control.example.com",
+      PLOYDOK_DOMAIN_BASE: "apps.example.com",
+      WEB_ORIGIN: "https://console.example.com",
+      PLOYDOK_REGISTRY_URL: "registry.example.com:5000",
+      PLOYDOK_REGISTRY_API_URL: "https://registry-api.example.com",
+      PLOYDOK_REGISTRY_PUSH_URL: "registry-push.example.com:5000",
+    })
+    try {
+      for (const hostname of [
+        "control.example.com",
+        "api.control.example.com",
+        "registry.control.example.com",
+        "adminer.control.example.com",
+        "console.example.com",
+        "registry.example.com",
+        "registry-api.example.com",
+        "registry-push.example.com",
+        "apps.example.com",
+        "*.apps.example.com",
+      ]) {
+        await expect(assertDomainAvailable(makeDb(), hostname)).rejects.toBeInstanceOf(
+          DomainCollisionError
+        )
+      }
+    } finally {
+      Object.assign(testEnv, previous)
+    }
+  })
+
   it("returns the normalized hostname when all app, service, and domain owners are clear", async () => {
     await expect(
       assertDomainAvailable(makeDb(), "API.Example.com")

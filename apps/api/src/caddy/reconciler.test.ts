@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import pino from "pino"
 import {
+  canRestoreAppRoute,
   reconcileCaddyRoutes,
   reconcileServiceRoutes,
   type AppForReconcile,
@@ -10,6 +11,49 @@ import {
 import type { CaddyClient } from "./client.js"
 
 const silentLogger = pino({ level: "silent" })
+
+describe("canRestoreAppRoute", () => {
+  test("allows generated hosts and previously verified custom hosts", () => {
+    expect(
+      canRestoreAppRoute({
+        domain_source: "generated",
+        routing_status: "action_required",
+        routing_dns_status: null,
+      })
+    ).toBe(true)
+    expect(
+      canRestoreAppRoute({
+        domain_source: "custom",
+        routing_status: "ready",
+        routing_dns_status: null,
+      })
+    ).toBe(true)
+    expect(
+      canRestoreAppRoute({
+        domain_source: "custom",
+        routing_status: "action_required",
+        routing_dns_status: "valid",
+      })
+    ).toBe(true)
+  })
+
+  test("does not restore an unverified custom primary host", () => {
+    expect(
+      canRestoreAppRoute({
+        domain_source: "custom",
+        routing_status: "action_required",
+        routing_dns_status: "missing",
+      })
+    ).toBe(false)
+    expect(
+      canRestoreAppRoute({
+        domain_source: "custom",
+        routing_status: "pending",
+        routing_dns_status: null,
+      })
+    ).toBe(false)
+  })
+})
 
 // Le chemin publie dans la config Caddy est celui vu par le container, pas
 // celui ou l'API ecrit : on le fige pour que le test decrive le contrat de

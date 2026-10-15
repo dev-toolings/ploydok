@@ -65,12 +65,25 @@ export interface DatabaseProxyForReconcile {
   public_port: number | null
 }
 
+/** Reconciliation may restore a verified route, but cannot authorize a new custom host. */
+export function canRestoreAppRoute(app: {
+  domain_source: string
+  routing_status: string
+  routing_dns_status: string | null
+}): boolean {
+  return app.domain_source === "generated" || app.routing_status === "ready" ||
+    app.routing_dns_status === "valid"
+}
+
 export async function fetchRunningAppsForCaddy(
   db: Db
 ): Promise<AppForReconcile[]> {
-  return db
+  const rows = await db
     .select({
       id: appsTable.id,
+      domain_source: appsTable.domain_source,
+      routing_status: appsTable.routing_status,
+      routing_dns_status: appsTable.routing_dns_status,
       domain: appsTable.domain,
       container_id: appsTable.container_id,
       runtime_mode: appsTable.runtime_mode,
@@ -94,6 +107,7 @@ export async function fetchRunningAppsForCaddy(
         isNotNull(appsTable.domain)
       )
     )
+  return rows.filter(canRestoreAppRoute)
 }
 
 export async function fetchRunningServicesForCaddy(

@@ -52,6 +52,7 @@ import type { PlanName } from "@ploydok/shared"
 import { buildEnvForDeploy } from "../secrets/resolver.js"
 import { purgeCloudflareForApp } from "../cloudflare/purge.js"
 import { listRuntimeAppVolumeMounts } from "../services/app-volumes.js"
+import { classifyAppDomainWithInstanceBase } from "../domains/app-domain.js"
 import {
   currentDeployLease,
   currentDeployLeaseCondition,
@@ -234,8 +235,9 @@ function sleep(ms: number): Promise<void> {
  *  - `STARTING`     → keep polling.
  *  - `UNHEALTHY`    → keep polling (Docker will keep retrying — we may yet
  *                     transition to healthy).
- *  - `NONE`         → resolve false: the container has no HEALTHCHECK at all,
- *                     which is a runner bug we want to surface fast.
+ *  - `NONE`         → resolve true when Docker reports the container running,
+ *                     which is how older agents represent a container without
+ *                     a HEALTHCHECK; a stopped container still fails.
  *  - `containerMissing` → resolve false immediately: no point retrying when
  *                         the target has been removed under our feet.
  */
@@ -300,9 +302,16 @@ export async function pollHealthcheck(opts: {
           break
         case ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE:
         default:
+          if (resp.running === true || resp.state === "running") {
+            logBus.publish(
+              channel,
+              `${label} status=none: container is running without a HEALTHCHECK; treating it as ready`
+            )
+            return true
+          }
           logBus.publish(
             channel,
-            `${label} status=none — container has no HEALTHCHECK declared, aborting`
+            `${label} status=none: container has no HEALTHCHECK and is not running, aborting`
           )
           return false
       }
@@ -912,8 +921,9 @@ export async function runBlueGreen(
 
     // 4. Switch Caddy upstream.
     await fenceDeploySideEffect()
-    await publishHealthyAppRoute({
+    const routeResult = await publishHealthyAppRoute({
       db, appId, hostname: domain,
+      proxied: appRow.cdn_mode === "external",
       beforePersist: fenceDeploySideEffect,
       applyRoute: async () => {
         await fenceDeploySideEffect()
@@ -921,6 +931,8 @@ export async function runBlueGreen(
           host: newName, port: runtimePort,
         }, { cdn: appRow })
         caddySwitched = true
+      },
+      afterRoute: async () => {
         const aliases = await syncAppDomainAliases({
           db, appId, caddy: caddyClient,
           upstream: { host: newName, port: runtimePort },
@@ -929,9 +941,17 @@ export async function runBlueGreen(
         if (aliases.errors.length) throw new Error("Alias routing requires attention")
       },
     })
-    await fenceDeploySideEffect()
-    await purgeCloudflareForApp(db, appId)
-    logBus.publish(channel, `[runner] Caddy upstream updated`)
+    const routeApplied = routeResult.routeApplied
+    if (routeApplied) {
+      await fenceDeploySideEffect()
+      await purgeCloudflareForApp(db, appId)
+      logBus.publish(channel, `[runner] Caddy upstream updated`)
+    } else {
+      logBus.publish(
+        channel,
+        `[runner] primary route requires DNS/TLS action; retaining the old runtime while the new container is live`
+      )
+    }
     workerLog.info(
       {
         appId,
@@ -948,7 +968,7 @@ export async function runBlueGreen(
     await fenceDeploySideEffect()
     const appUpdates = await db
       .update(apps)
-      .set({ container_id: newName, status: "running", updated_at: new Date() })
+      .set({ container_id: newName, status: "running", runtime_has_healthcheck: true, updated_at: new Date() })
       .where(and(eq(apps.id, appId), currentDeployLeaseCondition()))
       .returning({ id: apps.id })
     if (!appUpdates[0]) {
@@ -968,15 +988,22 @@ export async function runBlueGreen(
     }
     logBus.publish(channel, `[runner] app live — status set to running`)
 
-    // 6. Grace period.
-    logBus.publish(channel, `[runner] grace period ${GRACE_MS / 1_000}s …`)
-    await sleep(GRACE_MS)
+    if (routeApplied) {
+      // 6. Grace period.
+      logBus.publish(channel, `[runner] grace period ${GRACE_MS / 1_000}s …`)
+      await sleep(GRACE_MS)
 
-    // 7. Stop old container.
-    logBus.publish(channel, `[runner] stopping old container ${oldNames[0]}`)
-    await fenceDeploySideEffect()
-    await stopContainerCandidates(agent, oldNames)
-    logBus.publish(channel, `[runner] old container stopped`)
+      // 7. Stop old container.
+      logBus.publish(channel, `[runner] stopping old container ${oldNames[0]}`)
+      await fenceDeploySideEffect()
+      await stopContainerCandidates(agent, oldNames)
+      logBus.publish(channel, `[runner] old container stopped`)
+    } else {
+      logBus.publish(
+        channel,
+        `[runner] old container retained until the primary route passes DNS/TLS checks`
+      )
+    }
 
     return liveInfo
   } catch (error) {
@@ -1154,6 +1181,8 @@ export async function rollbackApp(
       id: apps.id,
       slug: apps.slug,
       domain: apps.domain,
+      domain_source: apps.domain_source,
+      container_id: apps.container_id,
       restart_policy: apps.restart_policy,
       runtime_port: apps.runtime_port,
       healthcheck_path: apps.healthcheck_path,
@@ -1199,6 +1228,9 @@ export async function rollbackApp(
     await loadRuntimeEnv(db, appId),
     runtimePort
   )
+
+  let rollbackContainerId: string | undefined
+  let caddySwitched = false
 
   try {
     // Pull image first — host daemon cache ≠ registry storage.
@@ -1263,6 +1295,7 @@ export async function rollbackApp(
         },
       },
     })
+    rollbackContainerId = createResp.containerId
 
     logBus.publish(
       channel,
@@ -1291,14 +1324,17 @@ export async function rollbackApp(
 
     await withDomainLock(db, domain, async (tx, hostname) => {
       await assertDomainAvailable(tx, hostname, { excludeAppId: appId })
-      await tx.update(apps).set({ domain: hostname }).where(eq(apps.id, appId))
     })
-    await publishHealthyAppRoute({
+    const routeResult = await publishHealthyAppRoute({
       db, appId, hostname: domain,
+      proxied: appRow.cdn_mode === "external",
       applyRoute: async () => {
         await caddyClient.setUpstream(appId, domain, {
           host: rollbackName, port: runtimePort,
         }, { cdn: appRow })
+        caddySwitched = true
+      },
+      afterRoute: async () => {
         const aliases = await syncAppDomainAliases({
           db, appId, caddy: caddyClient,
           upstream: { host: rollbackName, port: runtimePort },
@@ -1306,12 +1342,27 @@ export async function rollbackApp(
         if (aliases.errors.length) throw new Error("Alias routing requires attention")
       },
     })
-    await purgeCloudflareForApp(db, appId)
-    logBus.publish(channel, `[runner] Caddy switched to rollback container`)
+    const routeApplied = routeResult.routeApplied
+    if (routeApplied) {
+      await purgeCloudflareForApp(db, appId)
+      logBus.publish(channel, `[runner] Caddy switched to rollback container`)
+    } else {
+      logBus.publish(
+        channel,
+        `[runner] rollback runtime is healthy but its primary route requires DNS/TLS action`
+      )
+    }
 
-    // Stop old container.
-    await stopContainerCandidates(agent, oldNames)
-    logBus.publish(channel, `[runner] old container stopped`)
+    if (routeApplied) {
+      // Stop old container.
+      await stopContainerCandidates(agent, oldNames)
+      logBus.publish(channel, `[runner] old container stopped`)
+    } else {
+      logBus.publish(
+        channel,
+        `[runner] old container retained until the rollback route passes DNS/TLS checks`
+      )
+    }
 
     // Update DB.
     await db
@@ -1319,12 +1370,53 @@ export async function rollbackApp(
       .set({
         container_id: rollbackName,
         domain,
+        domain_source: classifyAppDomainWithInstanceBase(domain),
         status: "running",
+        runtime_has_healthcheck: true,
         updated_at: new Date(),
       })
       .where(eq(apps.id, appId))
 
     logBus.publish(channel, `[runner] rollback complete`)
+  } catch (error) {
+    if (caddySwitched) {
+      await runOwnedDeployReconciliation(async () => {
+        if (appRow.domain && appRow.container_id) {
+          await caddyClient.setUpstream(
+            appId,
+            appRow.domain,
+            { host: appRow.container_id, port: runtimePort },
+            { cdn: appRow }
+          )
+          await syncAppDomainAliases({
+            db,
+            appId,
+            caddy: caddyClient,
+            upstream: { host: appRow.container_id, port: runtimePort },
+          })
+        } else {
+          await caddyClient.removeUpstream(appId)
+        }
+        await purgeCloudflareForApp(db, appId)
+      }).catch((cleanupError) =>
+        workerLog.error(
+          { appId, cleanupError },
+          "runner: Caddy rollback failed during app rollback reconciliation"
+        )
+      )
+    }
+    if (rollbackContainerId) {
+      const containerIdToRemove = rollbackContainerId
+      await runOwnedDeployReconciliation(() =>
+        stopContainer(agent, containerIdToRemove)
+      ).catch((cleanupError) =>
+        workerLog.error(
+          { appId, rollbackContainerId: containerIdToRemove, cleanupError },
+          "runner: rollback container reconciliation failed"
+        )
+      )
+    }
+    throw error
   } finally {
     agent.close()
   }

@@ -43,7 +43,7 @@ import {
   DialogTitle,
 } from "../i18n/dialog"
 import { useCreateApp } from "../../lib/apps"
-import { apiFetch } from "../../lib/api"
+import { ApiError, apiFetch } from "../../lib/api"
 import {
   useCreateDatabase,
   useDatabases,
@@ -73,7 +73,6 @@ import { RepoSelector } from "./RepoSelector"
 import { GitLabRepoSelector } from "./GitLabRepoSelector"
 import { PlanSelector } from "./PlanSelector"
 import type { TFunction } from "i18next"
-import type { ApiError } from "../../lib/api"
 import type { Database, DbKind, DbPlan } from "../../lib/databases"
 import type { PlanSelectorValue } from "./PlanSelector"
 import type {
@@ -333,16 +332,47 @@ const CUSTOM_DOMAIN_REGEX = new RegExp(
 )
 
 function normalizeCustomDomain(value: string): string {
-  return value
-    .trim()
-    .replace(/^https?:\/\//i, "")
-    .replace(/\/.*$/, "")
-    .replace(/\.$/, "")
-    .toLowerCase()
+  const raw = value.trim()
+  if (!raw || raw.includes("*") || raw.includes("@")) return ""
+
+  try {
+    const parsed = new URL(raw.includes("://") ? raw : `http://${raw}`)
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.port ||
+      (parsed.pathname !== "/" && parsed.pathname !== "") ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return ""
+    }
+    return parsed.hostname.replace(/\.$/, "").toLowerCase()
+  } catch {
+    return ""
+  }
 }
 
 function domainLooksValid(value: string): boolean {
-  return CUSTOM_DOMAIN_REGEX.test(normalizeCustomDomain(value))
+  const hostname = normalizeCustomDomain(value)
+  const ipv4 = hostname.split(".")
+  const isIpv4 =
+    ipv4.length === 4 &&
+    ipv4.every((label) => /^\d{1,3}$/.test(label) && Number(label) <= 255)
+  if (!hostname || hostname.length > 253 || isIpv4) {
+    return false
+  }
+  return CUSTOM_DOMAIN_REGEX.test(hostname)
+}
+
+function localizedCreateError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error ? error.message : fallback
+  }
+
+  const key = `errors:codes.${error.code}`
+  if (i18n.exists(key)) return i18n.t(key)
+  return i18n.t("errors:unexpected")
 }
 
 // ---------------------------------------------------------------------------
@@ -827,9 +857,7 @@ export function CreateAppModal({
       }
       onClose()
     } catch (err) {
-      setSubmitError(
-        err instanceof Error ? err.message : t("create.failed")
-      )
+      setSubmitError(localizedCreateError(err, t("create.failed")))
       throw err
     } finally {
       submitInFlightRef.current = false
@@ -838,7 +866,7 @@ export function CreateAppModal({
   }
 
   const submitAction = usePendingAction(handleSubmit, {
-    keepPendingOnSuccess: Boolean(onCreated),
+    keepPendingOnSuccess: true,
   })
   const isSubmitting = mutationSubmitting || submitAction.pending
 
@@ -858,7 +886,7 @@ export function CreateAppModal({
     } catch (error) {
       setDomainCheck(null)
       setDomainCheckError(
-        error instanceof Error ? error.message : t("create.domainCheckFailed")
+        localizedCreateError(error, t("create.domainCheckFailed"))
       )
       return null
     }
@@ -1188,6 +1216,9 @@ export function BranchSelectionDialog({
       )
     : branches
   const canConfirm = branches.some((branch) => branch.name === value)
+  const branchErrorMessage = error
+    ? localizedCreateError(error, t("create.loadBranchesFailed"))
+    : ""
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1241,9 +1272,9 @@ export function BranchSelectionDialog({
               {repo
                 ? t("create.loadBranchesFailedFor", {
                     repo: repo.fullName,
-                    message: error.message,
+                    message: branchErrorMessage,
                   })
-                : `${t("create.loadBranchesFailed")} : ${error.message}`}
+                : `${t("create.loadBranchesFailed")} : ${branchErrorMessage}`}
             </p>
           ) : needsInstall ? (
             <p
@@ -3325,7 +3356,12 @@ function EnvStep({
       .catch((err: Error) => {
         if (cancelled) return
         setDatabaseValues(null)
-        setDatabaseValuesError(err.message)
+        setDatabaseValuesError(
+          localizedCreateError(
+            err,
+            t("create.cannotReadDb", { message: t("errors:unexpected") })
+          )
+        )
       })
       .finally(() => {
         if (!cancelled) setDatabaseValuesLoading(false)
@@ -3429,9 +3465,7 @@ function EnvStep({
       onChange(next)
       setIgnoredDatabaseImportKeys(Array.from(ignoredKeys).sort())
     } catch (err) {
-      setEnvImportError(
-        err instanceof Error ? err.message : t("create.importFailed")
-      )
+      setEnvImportError(localizedCreateError(err, t("create.importFailed")))
     } finally {
       setIsImportingEnv(false)
     }
@@ -3501,8 +3535,8 @@ function EnvStep({
                 type="button"
                 size="sm"
                 variant="outline"
+                loading={isImportingEnv}
                 disabled={
-                  isImportingEnv ||
                   source === "image" ||
                   !repoFullName ||
                   !branch ||

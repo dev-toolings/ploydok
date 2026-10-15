@@ -116,11 +116,87 @@ describe("inspectDomainDns", () => {
     expect(result.status).toBe("mismatch")
     expect(result.error).toContain("do not point")
   })
+
+  it("skips DNS lookups for generated localhost domains", async () => {
+    let lookups = 0
+    const lookup = async () => {
+      lookups++
+      throw new Error("generated domains must not query DNS")
+    }
+
+    const result = await inspectDomainDns("app.demo.localhost", {
+      publicHost: "localhost",
+      functions: {
+        resolve4: lookup,
+        resolve6: lookup,
+        resolveCname: lookup,
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      records: [],
+      expectedRecords: [],
+      error: null,
+    })
+    expect(lookups).toBe(0)
+  })
+
+  it("skips generated-base DNS lookups while preserving setup instructions", async () => {
+    let lookups = 0
+    const lookup = async () => {
+      lookups++
+      throw new Error("generated domains must not query DNS")
+    }
+
+    const result = await inspectDomainDns("app.apps.example.com", {
+      publicHost: "control.example.com",
+      domainBase: "apps.example.com",
+      functions: {
+        resolve4: lookup,
+        resolve6: lookup,
+        resolveCname: lookup,
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      records: [],
+      expectedRecords: [
+        {
+          type: "CNAME",
+          name: "app.apps.example.com",
+          value: "control.example.com",
+        },
+      ],
+      error: null,
+    })
+    expect(lookups).toBe(0)
+  })
+
+  it("reports proxied DNS as unknown instead of claiming it points to the host", async () => {
+    const result = await inspectDomainDns("app.example.com", {
+      publicHost: "203.0.113.10",
+      proxied: true,
+      functions: {
+        resolve4: async () => ["104.16.1.1"],
+        resolve6: notFound,
+        resolveCname: notFound,
+      },
+    })
+
+    expect(result.status).toBe("unknown")
+  })
 })
 
 describe("inspectDomainTls", () => {
   it("keeps TLS out of the DNS action when the public scheme is HTTP", async () => {
     const result = await inspectDomainTls("app.example.com", { scheme: "http" })
     expect(result).toMatchObject({ status: "not_required", error: null })
+  })
+
+  it("does not provision or probe TLS until a route is authorized", async () => {
+    const result = await inspectDomainTls("app.example.com", { scheme: "https" })
+    expect(result).toMatchObject({ status: "pending", error: null })
   })
 })

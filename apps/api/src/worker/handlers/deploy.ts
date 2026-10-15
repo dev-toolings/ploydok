@@ -39,7 +39,7 @@ import { diskGuard, gcKeepLast, tagManifest } from "../registry"
 import { workerLog } from "../logger"
 import { eventBus } from "../event-bus"
 import { runBlueGreen } from "../runner"
-import { runSwarmDeploy, appHttpHealthcheckShell } from "../swarm-runner"
+import { runSwarmDeploy } from "../swarm-runner"
 import {
   deployPlannedComposeStack,
   planComposeSwarmDeploy,
@@ -1293,12 +1293,6 @@ export async function handleDeploy(
         },
       })
       const entrypoint = plan.services.find((service) => service.name === plan.entrypoint?.name)
-      if (entrypoint && !entrypoint.healthcheck) {
-        entrypoint.healthcheck = {
-          test: ["CMD-SHELL", appHttpHealthcheckShell(plan.entrypoint!.port, "/")],
-          intervalSeconds: 5, timeoutSeconds: 5, retries: 6, startPeriodSeconds: 30,
-        }
-      }
       const swarmClient = createAgentClient()
       const swarm = swarmAgentFromGrpc(swarmClient)
       await fenceDeploySideEffect()
@@ -1310,7 +1304,8 @@ export async function handleDeploy(
       })
       try {
         if (entrypoint) await waitForSwarmServiceCondition(swarm, {
-          serviceName: entrypoint.name, condition: "service_healthy",
+          serviceName: entrypoint.name,
+          condition: entrypoint.healthcheck ? "service_healthy" : "service_started",
           replicas: entrypoint.replicas, restartPolicy: entrypoint.restartPolicy,
           onPoll: fenceDeploySideEffect,
         })
@@ -1321,22 +1316,48 @@ export async function handleDeploy(
         swarmClient.close()
       }
       if (app.domain && plan.entrypoint) {
-        await fenceDeploySideEffect()
-        await publishHealthyAppRoute({
-          db, appId: app.id, hostname: app.domain,
-          beforePersist: fenceDeploySideEffect,
-          applyRoute: async () => {
-            await fenceDeploySideEffect()
-            const caddy = new CaddyClient()
-            const upstream = { host: plan.entrypoint!.name, port: plan.entrypoint!.port }
-            await caddy.setUpstream(app.id, app.domain!, upstream)
-            const aliases = await syncAppDomainAliases({
-              db, appId: app.id, caddy, upstream,
-              beforeSideEffect: fenceDeploySideEffect,
+        try {
+          await fenceDeploySideEffect()
+          const routeResult = await publishHealthyAppRoute({
+            db, appId: app.id, hostname: app.domain,
+            proxied: app.cdn_mode === "external",
+            beforePersist: fenceDeploySideEffect,
+            applyRoute: async () => {
+              await fenceDeploySideEffect()
+              const caddy = new CaddyClient()
+              const upstream = { host: plan.entrypoint!.name, port: plan.entrypoint!.port }
+              await caddy.setUpstream(app.id, app.domain!, upstream)
+            },
+            afterRoute: async () => {
+              const caddy = new CaddyClient()
+              const upstream = { host: plan.entrypoint!.name, port: plan.entrypoint!.port }
+              const aliases = await syncAppDomainAliases({
+                db, appId: app.id, caddy, upstream,
+                beforeSideEffect: fenceDeploySideEffect,
+              })
+              if (aliases.errors.length) throw new Error("Alias routing requires attention")
+            },
+          })
+          if (!routeResult.routeApplied) {
+            onLog(
+              `[deploy] compose stack is healthy but its primary route requires DNS/TLS action`
+            )
+          }
+        } catch (error) {
+          await runOwnedDeployReconciliation(() => {
+            const cleanupClient = createAgentClient()
+            const cleanupSwarm = swarmAgentFromGrpc(cleanupClient)
+            return removeComposeSwarmServices(cleanupSwarm, names).finally(() => {
+              cleanupClient.close()
             })
-            if (aliases.errors.length) throw new Error("Alias routing requires attention")
-          },
-        })
+          }).catch((cleanupError) =>
+            workerLog.error(
+              { appId: app.id, names, cleanupError },
+              "compose: failed to remove services after route publication error"
+            )
+          )
+          throw error
+        }
         onLog(
           `[deploy] Caddy upstream ${plan.entrypoint.name}:${plan.entrypoint.port}`
         )
@@ -1351,6 +1372,11 @@ export async function handleDeploy(
           container_id: null,
           status: "running",
           runtime_port: plan.entrypoint?.port ?? app.runtime_port,
+          runtime_has_healthcheck: Boolean(
+            plan.services.find(
+              (service) => service.name === plan.entrypoint?.name
+            )?.healthcheck
+          ),
           updated_at: new Date(),
         })
         .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
@@ -1391,8 +1417,9 @@ export async function handleDeploy(
 
       if (app.domain) {
         await fenceDeploySideEffect()
-        await publishHealthyAppRoute({
+        const routeResult = await publishHealthyAppRoute({
           db, appId: app.id, hostname: app.domain,
+          proxied: app.cdn_mode === "external",
           beforePersist: fenceDeploySideEffect,
           applyRoute: async () => {
             await fenceDeploySideEffect()
@@ -1403,6 +1430,8 @@ export async function handleDeploy(
               spaFallback: app.static_spa_fallback ?? true,
               cdn: app,
             })
+          },
+          afterRoute: async () => {
             const aliases = await syncAppDomainAliases({
               db, appId: app.id, caddy: getSharedCaddy(),
               static: { root: caddyStaticRootForApp(app.id), spaFallback: app.static_spa_fallback ?? true },
@@ -1411,9 +1440,15 @@ export async function handleDeploy(
             if (aliases.errors.length) throw new Error("Alias routing requires attention")
           },
         })
-        await fenceDeploySideEffect()
-        await purgeCloudflareForApp(db, app.id)
-        onLog(`[deploy] Caddy static route updated for ${app.domain}`)
+        if (!routeResult.routeApplied) {
+          onLog(
+            `[deploy] static artifact is live but its primary route requires DNS/TLS action`
+          )
+        } else {
+          await fenceDeploySideEffect()
+          await purgeCloudflareForApp(db, app.id)
+          onLog(`[deploy] Caddy static route updated for ${app.domain}`)
+        }
       }
 
       const keep = app.keep_per_repo ?? 3
@@ -1433,6 +1468,7 @@ export async function handleDeploy(
         })
         .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
 
+      rollbackStaticPromotion = null
       finalPatch = { finishedAt: new Date() }
       finalStatus = "succeeded"
       await fenceDeploySideEffect()
@@ -1887,6 +1923,13 @@ export async function handleDeploy(
 
     finalStatus = "failed"
     finalPatch = { finishedAt: new Date(), errorMessage: msg }
+    await rollbackStaticPromotion?.().catch((rollbackError) =>
+      workerLog.error(
+        { appId: app.id, buildId, rollbackError },
+        "static deploy: failed to restore the previous promotion after failure"
+      )
+    )
+    rollbackStaticPromotion = null
     commitStatusErrorState =
       err instanceof FatalDeployError ? "failure" : "error"
     deploymentOutcome = deploymentOutcomeForError(err)

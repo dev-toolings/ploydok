@@ -7,6 +7,7 @@ type TlsMode = "issued" | "failed"
 
 let dnsMode: DnsMode = "missing"
 let tlsMode: TlsMode = "issued"
+let tlsConnectCalls = 0
 
 Bun.env["PLOYDOK_PUBLIC_SCHEME"] = "https"
 Bun.env["PLOYDOK_PUBLIC_HOST"] = "localhost"
@@ -27,10 +28,12 @@ mock.module("node:dns/promises", () => ({
   },
   resolve6: dnsNotFound,
   resolveCname: dnsNotFound,
+  resolveTxt: dnsNotFound,
 }))
 
 const fakeTls = {
   connect: () => {
+    tlsConnectCalls++
     const socket = new EventEmitter() as EventEmitter & {
       destroy: () => void
     }
@@ -80,10 +83,11 @@ describe("publishHealthyAppRoute", () => {
 
     expect(missing).toMatchObject({
       status: "action_required",
+      routeApplied: false,
       dnsStatus: "missing",
       tlsStatus: "pending",
     })
-    expect(routeCalls).toBe(1)
+    expect(routeCalls).toBe(0)
     expect(updates.at(-1)).toMatchObject({
       routing_status: "action_required",
       routing_dns_status: "missing",
@@ -105,12 +109,95 @@ describe("publishHealthyAppRoute", () => {
       dnsStatus: "valid",
       tlsStatus: "issued",
     })
-    expect(routeCalls).toBe(2)
+    expect(ready).toMatchObject({ routeApplied: true })
+    expect(routeCalls).toBe(1)
     expect(updates.at(-1)).toMatchObject({
       routing_status: "ready",
       routing_dns_status: "valid",
       routing_tls_status: "issued",
     })
+  })
+
+  it("fails the deployment when the primary route cannot be applied", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    dnsMode = "valid"
+    await expect(
+      publishHealthyAppRoute({
+        db: makeDb([]),
+        appId: "app-1",
+        hostname: "app.example.com",
+        inspectTls: async () => ({
+          status: "issued",
+          checkedAt: new Date().toISOString(),
+          error: null,
+        }),
+        applyRoute: async () => {
+          throw new Error("Caddy unavailable")
+        },
+      })
+    ).rejects.toThrow("Caddy unavailable")
+  })
+
+  it("requires valid DNS before applying a custom route", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    let routeCalls = 0
+    const result = await publishHealthyAppRoute({
+      db: makeDb([]),
+      appId: "app-1",
+      hostname: "custom.example.com",
+      inspectDns: async () => ({
+        status: "valid",
+        records: [{ type: "A", value: "203.0.113.10" }],
+        expectedRecords: [],
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      inspectTls: async () => ({
+        status: "not_required",
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "ready",
+      routeApplied: true,
+      dnsStatus: "valid",
+    })
+    expect(routeCalls).toBe(1)
+  })
+
+  it("bypasses the DNS gate for an instance-managed localhost route", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    let routeCalls = 0
+    const result = await publishHealthyAppRoute({
+      db: makeDb([]),
+      appId: "app-1",
+      hostname: "app.localhost",
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "ready",
+      routeApplied: true,
+      dnsStatus: "unknown",
+      tlsStatus: "issued",
+    })
+    expect(routeCalls).toBe(1)
+  })
+
+  it("does not open a TLS connection during a preview inspection", async () => {
+    const { inspectDomainTls } = await import("./routing")
+    tlsConnectCalls = 0
+    const result = await inspectDomainTls("custom.example.com")
+
+    expect(result).toMatchObject({ status: "pending", error: null })
+    expect(tlsConnectCalls).toBe(0)
   })
 
   it("keeps the runtime deployment successful when ACME still needs attention", async () => {

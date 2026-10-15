@@ -6,6 +6,7 @@ import type { Db } from "@ploydok/db"
 import { env } from "../env"
 import {
   domainCollisionCandidates,
+  deriveDefaultAppDomainBase,
   normalizeAppHostname,
 } from "./app-domain"
 import type { AppDomainCollision } from "./app-domain"
@@ -15,6 +16,66 @@ function normalizeClaimedHostname(value: string): string | null {
   if (!raw.startsWith("*.")) return normalizeAppHostname(raw)
   const base = normalizeAppHostname(raw.slice(2))
   return base ? `*.${base}` : null
+}
+
+function configuredHost(value: string | null | undefined): string | null {
+  const raw = value?.trim()
+  if (!raw) return null
+  try {
+    const parsed = new URL(raw.includes("://") ? raw : `http://${raw}`)
+    return normalizeAppHostname(parsed.hostname)
+  } catch {
+    return null
+  }
+}
+
+type ReservedHostnames = {
+  exact: Set<string>
+  wildcardBases: Set<string>
+}
+
+/**
+ * Hosts owned by the instance must not be claimed by an app. A wildcard
+ * reservation is kept separate from exact hosts so `*.apps.example.com`
+ * cannot claim the generated namespace while `foo.apps.example.com` remains
+ * a valid generated app hostname.
+ */
+export function reservedPublicHostnames(): ReservedHostnames {
+  const exact = new Set<string>()
+  const wildcardBases = new Set<string>()
+  const addExact = (value: string | null) => {
+    if (value) exact.add(value)
+  }
+  const publicHost = configuredHost(env.PLOYDOK_PUBLIC_HOST)
+  if (publicHost) {
+    addExact(publicHost)
+    wildcardBases.add(publicHost)
+    for (const label of ["api", "registry", "adminer"]) {
+      addExact(`${label}.${publicHost}`)
+    }
+  }
+
+  const generatedBase = deriveDefaultAppDomainBase({
+    explicitBase: env.PLOYDOK_DOMAIN_BASE,
+    publicHost: env.PLOYDOK_PUBLIC_HOST,
+  })
+  addExact(normalizeAppHostname(generatedBase))
+  wildcardBases.add(generatedBase)
+  addExact(configuredHost(env.WEB_ORIGIN))
+  addExact(configuredHost(env.PLOYDOK_REGISTRY_URL))
+  addExact(configuredHost(env.PLOYDOK_REGISTRY_API_URL))
+  addExact(configuredHost(env.PLOYDOK_REGISTRY_PUSH_URL))
+  return { exact, wildcardBases }
+}
+
+function isReservedHostname(hostname: string): boolean {
+  const reserved = reservedPublicHostnames()
+  return (
+    reserved.exact.has(hostname) ||
+    (hostname.startsWith("*.") &&
+      (reserved.wildcardBases.has(hostname.slice(2)) ||
+        [...reserved.exact].some((host) => domainCollisionCandidates(host).includes(hostname))))
+  )
 }
 
 export class DomainCollisionError extends Error {
@@ -80,8 +141,7 @@ export async function findDomainCollisions(
 ): Promise<AppDomainCollision[]> {
   const hostname = normalizeClaimedHostname(rawHostname)
   if (!hostname) throw new InvalidAppDomainError()
-  const instanceHostname = normalizeAppHostname(env.PLOYDOK_PUBLIC_HOST)
-  if (instanceHostname && domainCollisionCandidates(instanceHostname).includes(hostname)) {
+  if (isReservedHostname(hostname)) {
     return [{ resource: "domain", resourceId: "instance", hostname }]
   }
   const candidates = domainCollisionCandidates(hostname)

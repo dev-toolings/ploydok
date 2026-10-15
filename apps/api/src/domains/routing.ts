@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { resolve4, resolve6, resolveCname } from "node:dns/promises"
 import { connect } from "node:tls"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { apps, builds, domains } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { env } from "../env"
-import { normalizeAppHostname } from "./app-domain"
+import { classifyAppDomain, deriveDefaultAppDomainBase, normalizeAppHostname } from "./app-domain"
+import { isCloudflareProxyAddress } from "./cdn-addresses"
+import { verifyDomain } from "./verifier"
 import { getCaddyTlsOptionsForDomain } from "./caddy-tls"
 import type { CaddyMiddlewares, CaddyTlsOptions } from "../caddy/types"
 
-export type DnsStatus = "valid" | "missing" | "mismatch" | "error"
+export type DnsStatus = "valid" | "missing" | "mismatch" | "error" | "unknown"
 export type TlsStatus = "issued" | "pending" | "failed" | "not_required"
 export type RoutingStatus = "ready" | "action_required"
 
@@ -36,6 +38,7 @@ export type TlsInspection = {
 export type HealthyRouteResult = {
   status: RoutingStatus
   hostname: string
+  routeApplied: boolean
   dnsStatus: DnsStatus
   tlsStatus: TlsStatus
   error: string | null
@@ -96,10 +99,21 @@ export function expectedDnsRecords(
   return [{ type: "CNAME", name: hostname, value: target }]
 }
 
+export function isInstanceManagedDomain(hostname: string, publicHost = env.PLOYDOK_PUBLIC_HOST, domainBase?: string): boolean {
+  const base = domainBase ?? deriveDefaultAppDomainBase({
+    explicitBase: env.PLOYDOK_DOMAIN_BASE,
+    publicHost,
+  })
+  return hostname === "localhost" || hostname.endsWith(".localhost") ||
+    classifyAppDomain(hostname, base) === "generated"
+}
+
 export async function inspectDomainDns(
   hostname: string,
   opts: {
     publicHost?: string
+    domainBase?: string
+    proxied?: boolean
     timeoutMs?: number
     functions?: DnsFns
   } = {}
@@ -110,6 +124,10 @@ export async function inspectDomainDns(
   const functions = opts.functions ?? dnsFns
   const timeoutMs = opts.timeoutMs ?? 1_500
   const checkedAt = new Date().toISOString()
+  if (isInstanceManagedDomain(normalized, publicHost, opts.domainBase)) {
+    const local = normalized === "localhost" || normalized.endsWith(".localhost")
+    return { status: "unknown", records: [], expectedRecords: local ? [] : expectedRecords, checkedAt, error: null }
+  }
 
   const lookups = await Promise.allSettled([
     withTimeout(functions.resolve4(normalized), timeoutMs),
@@ -160,6 +178,8 @@ export async function inspectDomainDns(
   let error: string | null = null
   if (matches) {
     status = "valid"
+  } else if (addresses.length > 0 && (opts.proxied || addresses.every((record) => isCloudflareProxyAddress(record.value)))) {
+    status = "unknown"
   } else if (allMissing && !meaningfulError) {
     status = "missing"
   } else if (meaningfulError) {
@@ -177,6 +197,8 @@ export async function inspectDomainTls(
   hostname: string,
   opts: {
     scheme?: "http" | "https"
+    /** Set only after ownership and healthy route registration, never in preview. */
+    allowProvisioning?: boolean
     port?: number
     timeoutMs?: number
   } = {}
@@ -187,6 +209,9 @@ export async function inspectDomainTls(
     return { status: "not_required", checkedAt, error: null }
   }
 
+  if (!opts.allowProvisioning) {
+    return { status: "pending", checkedAt, error: null }
+  }
   const normalized = normalizeAppHostname(hostname) ?? hostFromValue(hostname)
   const port = opts.port ?? 443
   const timeoutMs = opts.timeoutMs ?? 3_000
@@ -232,93 +257,119 @@ function isDeployControlError(error: unknown): boolean {
   return /lease.?lost|deploy.?cancel|cancelled/i.test(marker)
 }
 
+async function hasCustomDomainTxtProof(db: Db, appId: string, hostname: string): Promise<boolean> {
+  try {
+    const rows = await db.select({ id: domains.id }).from(domains).where(and(
+      eq(domains.app_id, appId), eq(domains.hostname, hostname)
+    )).limit(1)
+    if (!rows[0]) return false
+    return (await withTimeout(verifyDomain(db, rows[0].id), 1_500)).ok
+  } catch {
+    return false
+  }
+}
+
 export async function publishHealthyAppRoute(input: {
   db: Db
   appId: string
   buildId?: string
   hostname: string
   applyRoute: () => Promise<void>
+  /** Alias publication is secondary to the primary route and may need follow-up. */
+  afterRoute?: () => Promise<void>
+  proxied?: boolean
   beforePersist?: () => Promise<void>
   inspectDns?: (hostname: string) => Promise<DnsInspection>
   inspectTls?: (hostname: string) => Promise<TlsInspection>
+  verifyOwnership?: (hostname: string) => Promise<boolean>
 }): Promise<HealthyRouteResult> {
   const hostname = normalizeAppHostname(input.hostname)
   if (!hostname) throw new Error("Cannot publish route for invalid hostname")
 
   let dns: DnsInspection
   try {
-    dns = await (input.inspectDns ?? inspectDomainDns)(hostname)
+    dns = input.inspectDns
+      ? await input.inspectDns(hostname)
+      : await inspectDomainDns(hostname, input.proxied === undefined ? {} : { proxied: input.proxied })
   } catch (error) {
+    if (isDeployControlError(error)) throw error
     dns = {
-      status: "error",
-      records: [],
+      status: "error", records: [],
       expectedRecords: expectedDnsRecords(hostname, env.PLOYDOK_PUBLIC_HOST),
       checkedAt: new Date().toISOString(),
       error: error instanceof Error ? error.message : String(error),
     }
   }
 
-  let routeError: string | null = null
-  try {
+  const managed = isInstanceManagedDomain(hostname)
+  let ownershipVerified = false
+  if (!managed && dns.status !== "valid") {
+    try {
+      ownershipVerified = await (input.verifyOwnership ??
+        ((host) => hasCustomDomainTxtProof(input.db, input.appId, host)))(hostname)
+    } catch (error) {
+      if (isDeployControlError(error)) throw error
+      // Failed proof lookups leave the healthy runtime awaiting user action.
+    }
+  }
+  const authorized = managed || dns.status === "valid" || ownershipVerified
+  let aliasError: string | null = null
+  let routeApplied = false
+  if (authorized) {
+    // Primary routing is part of the runtime switch. Propagate failures so the
+    // caller reconciles the new slot and retains its previously live runtime.
     await input.applyRoute()
-  } catch (error) {
-    if (isDeployControlError(error)) throw error
-    routeError = error instanceof Error ? error.message : String(error)
+    routeApplied = true
+    if (input.afterRoute) {
+      try {
+        await input.afterRoute()
+      } catch (error) {
+        if (isDeployControlError(error)) throw error
+        aliasError = error instanceof Error ? error.message : String(error)
+      }
+    }
   }
 
   let tls: TlsInspection
   if (env.PLOYDOK_PUBLIC_SCHEME !== "https") {
-    tls = await (input.inspectTls ?? inspectDomainTls)(hostname)
-  } else if (dns.status === "valid" && !routeError) {
+    tls = { status: "not_required", checkedAt: new Date().toISOString(), error: null }
+  } else if (routeApplied) {
     try {
-      tls = await (input.inspectTls ?? inspectDomainTls)(hostname)
+      tls = input.inspectTls
+        ? await input.inspectTls(hostname)
+        : await inspectDomainTls(hostname, { allowProvisioning: true })
     } catch (error) {
+      if (isDeployControlError(error)) throw error
       tls = {
-        status: "failed",
-        checkedAt: new Date().toISOString(),
+        status: "failed", checkedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       }
     }
   } else {
-    tls = {
-      status: "pending",
-      checkedAt: new Date().toISOString(),
-      error: dns.status === "valid" ? routeError : "TLS waits for valid DNS",
-    }
+    tls = { status: "pending", checkedAt: new Date().toISOString(), error: null }
   }
 
-  const errors = [dns.error, routeError, tls.error].filter(
+  const gateError = authorized ? null :
+    dns.status === "unknown" ? "DOMAIN_OWNERSHIP_REQUIRED" : "DOMAIN_DNS_REQUIRED"
+  const errors = [gateError, dns.error, aliasError, tls.error].filter(
     (value): value is string => Boolean(value)
   )
-  const status: RoutingStatus =
-    !routeError &&
-    dns.status === "valid" &&
+  const status: RoutingStatus = routeApplied && !aliasError &&
     (tls.status === "issued" || tls.status === "not_required")
-      ? "ready"
-      : "action_required"
-  const result = {
-    status,
-    hostname,
-    dnsStatus: dns.status,
-    tlsStatus: tls.status,
+    ? "ready" : "action_required"
+  const result: HealthyRouteResult = {
+    status, hostname, routeApplied, dnsStatus: dns.status, tlsStatus: tls.status,
     error: errors.length ? errors.join("; ") : null,
-  } satisfies HealthyRouteResult
-
+  }
   if (input.beforePersist) await input.beforePersist()
-  await input.db
-    .update(apps)
-    .set({
-      routing_status: result.status,
-      routing_error: result.error,
-      routing_dns_status: result.dnsStatus,
-      routing_tls_status: result.tlsStatus,
-    })
-    .where(eq(apps.id, input.appId))
-  if (!routeError && input.buildId) {
-    await input.db
-      .update(builds)
-      .set({ routing_domain: hostname })
-      .where(eq(builds.id, input.buildId))
+  await input.db.update(apps).set({
+    routing_status: result.status,
+    routing_error: result.error,
+    routing_dns_status: result.dnsStatus,
+    routing_tls_status: result.tlsStatus,
+  }).where(eq(apps.id, input.appId))
+  if (routeApplied && input.buildId) {
+    await input.db.update(builds).set({ routing_domain: hostname }).where(eq(builds.id, input.buildId))
   }
   return result
 }

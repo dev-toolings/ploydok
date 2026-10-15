@@ -15,8 +15,14 @@ let containerHealth = {
 
 mock.module("../worker/swarm-runner", () => ({
   listSwarmTasks: async () => swarmTasks,
-  taskIsHealthy: (task: (typeof swarmTasks)[number]) =>
-    task.running === true && task.healthStatus === "healthy",
+  taskIsHealthy: (
+    task: (typeof swarmTasks)[number],
+    hasHealthcheck = true
+  ) =>
+    task.running === true &&
+    (hasHealthcheck
+      ? task.healthStatus === "healthy"
+      : task.healthStatus === "none"),
 }))
 
 mock.module("../debug/singletons", () => ({
@@ -102,6 +108,32 @@ describe("resolveHealthyRecheckTarget", () => {
       kind: "proxy",
       upstream: { host: "ploydok-app-demo", port: 8080 },
     })
+  })
+
+  it("accepts a running Swarm replica when healthchecks are persisted as absent", async () => {
+    const { resolveHealthyRecheckTarget } = await import("./apps")
+    swarmTasks = [
+      { status: "running", running: true, healthStatus: "none" },
+    ]
+    const swarmApp = app({
+      runtime_mode: "swarm",
+      swarm_service_name: "ploydok-app-demo",
+      runtime_has_healthcheck: false,
+    })
+
+    await expect(
+      resolveHealthyRecheckTarget({} as never, swarmApp as never)
+    ).resolves.toEqual({
+      kind: "proxy",
+      upstream: { host: "ploydok-app-demo", port: 8080 },
+    })
+
+    await expect(
+      resolveHealthyRecheckTarget(
+        {} as never,
+        { ...swarmApp, runtime_has_healthcheck: true } as never
+      )
+    ).rejects.toThrow("Runtime is not healthy")
   })
 
   it("uses the static artifact as the persisted healthy target", async () => {

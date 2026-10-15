@@ -47,6 +47,29 @@ describe("taskIsHealthy", () => {
     ).toBe(false)
   })
 
+  it("accepts a running task without a check only when health is not configured", () => {
+    const runningWithoutCheck = task({
+      running: true,
+      status: "running",
+      healthStatus: "none",
+    })
+
+    expect(taskIsHealthy(runningWithoutCheck, false)).toBe(true)
+    expect(taskIsHealthy(runningWithoutCheck, true)).toBe(false)
+    expect(
+      taskIsHealthy(
+        task({ running: true, status: "running", healthStatus: "unhealthy" }),
+        false
+      )
+    ).toBe(false)
+    expect(
+      taskIsHealthy(
+        task({ running: true, status: "running", healthStatus: "starting" }),
+        false
+      )
+    ).toBe(false)
+  })
+
   it("accepts the legacy Docker status format when no health field exists", () => {
     expect(
       taskIsHealthy(
@@ -56,6 +79,11 @@ describe("taskIsHealthy", () => {
     expect(
       taskIsHealthy(
         task({ running: false, status: "Up 1s (healthy)", healthStatus: undefined })
+      )
+    ).toBe(false)
+    expect(
+      taskIsHealthy(
+        task({ status: "Up 1s (healthy)", healthStatus: undefined })
       )
     ).toBe(true)
   })

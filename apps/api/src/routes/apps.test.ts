@@ -635,9 +635,9 @@ describe.skipIf(skip)("POST /apps", () => {
 
       const preview = await client.request(`/apps/domain-preview?domain=${domain.toUpperCase()}`)
       expect(preview.status).toBe(200)
-      const result = await preview.json() as { available: boolean; collisions: Array<Record<string, unknown>> }
+      const result = await preview.json() as { available: boolean; collisions?: Array<Record<string, unknown>> }
       expect(result.available).toBe(false)
-      expect(result.collisions).toEqual([{ resource: kind }])
+      expect(result).not.toHaveProperty("collisions")
 
       const create = await client.request("/apps", {
         method: "POST",

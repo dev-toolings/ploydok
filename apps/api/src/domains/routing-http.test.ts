@@ -51,9 +51,10 @@ describe("publishHealthyAppRoute over HTTP", () => {
       },
     })
 
-    expect(routeApplied).toBe(true)
+    expect(routeApplied).toBe(false)
     expect(result).toMatchObject({
       status: "action_required",
+      routeApplied: false,
       dnsStatus: "missing",
       tlsStatus: "not_required",
     })

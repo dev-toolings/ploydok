@@ -24,7 +24,14 @@
     "BACKEND_UNAVAILABLE": "Impossible de joindre le service. Vérifiez votre connexion et réessayez.",
     "INVALID_CREDENTIALS": "Adresse e-mail ou mot de passe incorrect.",
     "RATE_LIMITED": "Trop de tentatives. Réessayez dans quelques minutes.",
-    "CSRF_MISMATCH": "Votre jeton de sécurité a expiré. Rechargez la page et réessayez."
+    "CSRF_MISMATCH": "Votre jeton de sécurité a expiré. Rechargez la page et réessayez.",
+    "INVALID_DOMAIN": "Saisissez un nom d'hôte valide sans chemin, port ni identifiants.",
+    "DOMAIN_CONFLICT": "Ce nom d'hôte est déjà utilisé par une autre ressource.",
+    "CONFLICT": "Cette action entre en conflit avec une ressource existante.",
+    "VALIDATION_ERROR": "Certaines valeurs sont invalides. Vérifiez le formulaire et réessayez.",
+    "rate_limited": "Trop de requêtes. Réessayez dans un instant.",
+    "replay_limit_reached": "Cette livraison a atteint sa limite de rejeu.",
+    "REPLAY_LIMIT_REACHED": "Cette livraison a atteint sa limite de rejeu."
   },
   "networkDiagnostic": "Aucune réponse HTTP pour {{method}} {{url}} ({{reason}}). Vérifiez le processus API, le réseau, CORS et la console du navigateur. Le navigateur ne révèle pas la cause exacte à JavaScript.",
   "httpDiagnostic": "{{method}} {{url}} : HTTP {{status}} [{{code}}]. {{message}}",

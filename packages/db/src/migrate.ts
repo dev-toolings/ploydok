@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 import postgres from "postgres"
 import { drizzle } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
+import { assertNoCaseInsensitiveAppDomainDuplicates } from "./migration-safety"
 
 const url =
   Bun.env["DATABASE_URL"] ?? "postgres://ploydok:ploydok@127.0.0.1:5432/ploydok"
@@ -29,6 +30,14 @@ function redactDatabaseUrl(value: string): string {
 console.log(
   `[migrate] applying migrations from ${migrationsFolder} to ${redactDatabaseUrl(url)}`
 )
-await migrate(db, { migrationsFolder })
-await sql.end()
-console.log("[migrate] done")
+await sql`SELECT pg_advisory_lock(hashtext('ploydok:drizzle-migrations'))`
+try {
+  await assertNoCaseInsensitiveAppDomainDuplicates(sql)
+  await migrate(db, { migrationsFolder })
+  console.log("[migrate] done")
+} finally {
+  await sql`SELECT pg_advisory_unlock(hashtext('ploydok:drizzle-migrations'))`.catch(
+    () => undefined
+  )
+  await sql.end()
+}

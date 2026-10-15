@@ -7,6 +7,7 @@ const events: string[] = []
 const upstreams: Array<{ host: string; port: number }> = []
 const updates: Array<Record<string, unknown>> = []
 let healthStatus = 1
+let domainCollision = false
 
 mock.module("@ploydok/agent-proto", () => {
   class AgentClient {
@@ -107,6 +108,7 @@ mock.module("../domains/routing.js", () => ({
     return {
       status: "ready",
       hostname: input.hostname,
+    routeApplied: true,
       dnsStatus: "valid",
       tlsStatus: "not_required",
       error: null,
@@ -116,7 +118,9 @@ mock.module("../domains/routing.js", () => ({
 }))
 
 mock.module("../domains/availability.js", () => ({
-  assertDomainAvailable: async () => {},
+  assertDomainAvailable: async () => {
+    if (domainCollision) throw new Error("domain already claimed")
+  },
   withDomainLock: async (
     db: unknown,
     hostname: string,
@@ -246,6 +250,7 @@ describe("rollbackApp routing gate", () => {
     upstreams.length = 0
     updates.length = 0
     healthStatus = 1
+    domainCollision = false
     globalThis.setTimeout = ((callback: unknown, ...args: Array<unknown>) => {
       if (typeof callback === "function") callback(...args)
       return 0 as unknown as ReturnType<typeof setTimeout>
@@ -268,11 +273,12 @@ describe("rollbackApp routing gate", () => {
     expect(upstreams).toEqual([
       { host: expect.stringContaining("-green"), port: 3000 },
     ])
-    expect(updates).toContainEqual({ domain: "old.example.com" })
     expect(updates).toContainEqual({
       container_id: expect.stringContaining("-green"),
       domain: "old.example.com",
+      domain_source: "custom",
       status: "running",
+      runtime_has_healthcheck: true,
       updated_at: expect.any(Date),
     })
   })
@@ -287,5 +293,17 @@ describe("rollbackApp routing gate", () => {
 
     expect(events).not.toContain("route-check:old.example.com")
     expect(events).toContain("stop")
+  })
+
+  it("stops the new rollback container when the restored domain collides", async () => {
+    const { rollbackApp } = await import("./runner.js")
+    domainCollision = true
+
+    await expect(
+      rollbackApp("app-1", makeDb() as never, "build-old")
+    ).rejects.toThrow("domain already claimed")
+
+    expect(events).toContain("stop")
+    expect(events).not.toContain("route-check:old.example.com")
   })
 })
