@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, mock } from "bun:test"
 import { Hono } from "hono"
-import { OrganizationDeploymentsResponseSchema } from "@ploydok/shared"
+import {
+  OrganizationDeploymentActivityResponseSchema,
+  OrganizationDeploymentsResponseSchema,
+} from "@ploydok/shared"
 import type { AuthUser } from "../auth/middleware"
 
 const user: AuthUser = {
@@ -17,6 +20,8 @@ let accessibleOrganization: { id: string; slug: string } | null = {
 }
 let membershipRole: "owner" | "member" = "owner"
 let listCalls: Array<{ organizationId: string; options: unknown }> = []
+let activityCalls: Array<{ organizationId: string; since: Date }> = []
+let activityRows: Array<{ day: string; status: string; total: number }> = []
 let listResult: {
   deployments: unknown[]
   total: number
@@ -65,6 +70,14 @@ mock.module("@ploydok/db/queries", () => ({
     listCalls.push({ organizationId, options })
     return listResult
   },
+  listOrganizationDeploymentActivity: async (
+    _db: unknown,
+    organizationId: string,
+    since: Date
+  ) => {
+    activityCalls.push({ organizationId, since })
+    return activityRows
+  },
 }))
 
 async function buildApp(authedUser?: AuthUser) {
@@ -86,6 +99,8 @@ function reset() {
   accessibleOrganization = { id: "org-1", slug: "workspace-one" }
   membershipRole = "owner"
   listCalls = []
+  activityCalls = []
+  activityRows = []
   listResult = {
     deployments: [],
     total: 0,
@@ -282,5 +297,66 @@ describe("GET /organizations/:orgSlug/deployments", () => {
 
     expect(response.status).toBe(400)
     expect(listCalls).toHaveLength(0)
+  })
+})
+
+describe("GET /organizations/:orgSlug/deployments/activity", () => {
+  it("returns one zero-filled bucket per day and folds statuses", async () => {
+    reset()
+    const today = new Date().toISOString().slice(0, 10)
+    activityRows = [
+      { day: today, status: "succeeded", total: 2 },
+      { day: today, status: "succeeded_with_warning", total: 1 },
+      { day: today, status: "failed", total: 3 },
+      { day: today, status: "cancelled", total: 1 },
+      { day: "1999-01-01", status: "failed", total: 9 },
+    ]
+    const app = await buildApp(user)
+
+    const response = await app.request(
+      "/organizations/workspace-one/deployments/activity?days=7"
+    )
+
+    expect(response.status).toBe(200)
+    const body = OrganizationDeploymentActivityResponseSchema.parse(
+      await response.json()
+    )
+    expect(body.days).toBe(7)
+    expect(body.buckets).toHaveLength(7)
+    expect(body.buckets.at(-1)).toEqual({
+      date: today,
+      succeeded: 3,
+      failed: 3,
+      other: 1,
+    })
+    expect(body.buckets.slice(0, 6).every((b) => b.failed === 0)).toBe(true)
+    expect(activityCalls[0]?.organizationId).toBe("org-1")
+    expect(activityCalls[0]?.since.toISOString().slice(0, 10)).toBe(
+      body.buckets[0]?.date
+    )
+  })
+
+  it("rejects ranges other than 7, 30 or 90 days", async () => {
+    reset()
+    const app = await buildApp(user)
+
+    const response = await app.request(
+      "/organizations/workspace-one/deployments/activity?days=14"
+    )
+
+    expect(response.status).toBe(400)
+    expect(activityCalls).toHaveLength(0)
+  })
+
+  it("returns 404 outside the member workspace", async () => {
+    reset()
+    const app = await buildApp(user)
+
+    const response = await app.request(
+      "/organizations/other-workspace/deployments/activity"
+    )
+
+    expect(response.status).toBe(404)
+    expect(activityCalls).toHaveLength(0)
   })
 })

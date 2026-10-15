@@ -4,11 +4,18 @@
 
 import { Hono } from "hono"
 import type { Db } from "@ploydok/db"
-import { getMembership, listOrganizationDeployments } from "@ploydok/db/queries"
 import {
+  getMembership,
+  listOrganizationDeploymentActivity,
+  listOrganizationDeployments,
+} from "@ploydok/db/queries"
+import {
+  OrganizationDeploymentActivityQuerySchema,
+  OrganizationDeploymentActivityResponseSchema,
   OrganizationDeploymentsQuerySchema,
   OrganizationDeploymentsResponseSchema,
 } from "@ploydok/shared"
+import type { OrganizationDeploymentActivityBucket } from "@ploydok/shared"
 import type { AuthUser } from "../auth/middleware"
 import { requireScope } from "../auth/require-scope"
 import { getOrganizationBySlugForUser } from "../services/organizations"
@@ -44,6 +51,43 @@ function serializeBuild(
     createdAt: build.created_at.getTime(),
     app: row.app,
   }
+}
+
+const DAY_MS = 86_400_000
+
+/**
+ * One zero-filled bucket per UTC day, oldest first, ending today. Warning
+ * builds count as succeeded; pending, running and cancelled builds as other.
+ */
+export function buildActivityBuckets(
+  rows: ReadonlyArray<{ day: string; status: string; total: number }>,
+  days: number,
+  now: Date
+): OrganizationDeploymentActivityBucket[] {
+  const todayStart = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate()
+  )
+  const buckets = new Map<string, OrganizationDeploymentActivityBucket>()
+  for (let offset = days - 1; offset >= 0; offset--) {
+    const date = new Date(todayStart - offset * DAY_MS)
+      .toISOString()
+      .slice(0, 10)
+    buckets.set(date, { date, succeeded: 0, failed: 0, other: 0 })
+  }
+  for (const row of rows) {
+    const bucket = buckets.get(row.day)
+    if (!bucket) continue
+    if (row.status === "succeeded" || row.status === "succeeded_with_warning") {
+      bucket.succeeded += row.total
+    } else if (row.status === "failed") {
+      bucket.failed += row.total
+    } else {
+      bucket.other += row.total
+    }
+  }
+  return [...buckets.values()]
 }
 
 export function createOrganizationDeploymentsRouter(db: Db): Hono {
@@ -141,6 +185,67 @@ export function createOrganizationDeploymentsRouter(db: Db): Hono {
     }
 
     return c.json(OrganizationDeploymentsResponseSchema.parse(response))
+  })
+
+  router.get("/:orgSlug/deployments/activity", appsRead, async (c) => {
+    const parsed = OrganizationDeploymentActivityQuerySchema.safeParse({
+      days: c.req.query("days"),
+    })
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "days must be 7, 30 or 90",
+          },
+        },
+        400
+      )
+    }
+
+    const user = getUser(c)
+    if (!user) {
+      return c.json(
+        {
+          error: {
+            code: "UNAUTHENTICATED",
+            message: "Authentication required",
+          },
+        },
+        401
+      )
+    }
+
+    const organization = await getOrganizationBySlugForUser(
+      db,
+      user.id,
+      c.req.param("orgSlug")!
+    )
+    if (!organization) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "Organization not found" } },
+        404
+      )
+    }
+
+    const { days } = parsed.data
+    const now = new Date()
+    const since = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) -
+        (days - 1) * DAY_MS
+    )
+    const rows = await listOrganizationDeploymentActivity(
+      db,
+      organization.id,
+      since
+    )
+
+    return c.json(
+      OrganizationDeploymentActivityResponseSchema.parse({
+        days,
+        buckets: buildActivityBuckets(rows, days, now),
+      })
+    )
   })
 
   return router

@@ -175,6 +175,3 @@ export interface RegistryUsage {
   diskPct: number
 }
 
-export interface BuildWithApp extends Build {
-  appName: string
-}

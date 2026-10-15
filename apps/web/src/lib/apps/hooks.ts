@@ -2,7 +2,6 @@
 import * as React from "react"
 import {
   useMutation,
-  useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
@@ -31,7 +30,6 @@ import type {
   AppStatusEventPayload,
   AppsResponse,
   BuildStatusEventPayload,
-  BuildWithApp,
   BuildsResponse,
   RawAppDetail,
   RegistryUsage,
@@ -425,41 +423,6 @@ export function useRegistryUsage(appId: string) {
     staleTime: 30_000,
     enabled: Boolean(appId),
   })
-}
-
-export function useRecentBuildsAcrossApps(
-  apps: Array<AppListItem>,
-  maxApps = 6
-): { builds: Array<BuildWithApp>; isLoading: boolean } {
-  const targets = apps.slice(0, maxApps)
-
-  const results = useQueries({
-    queries: targets.map((app) => ({
-      queryKey: ["apps", app.id],
-      queryFn: async (): Promise<AppDetail> => {
-        const { app: raw, builds: rawBuilds } = await apiFetch<{
-          app: RawAppDetail
-          builds: Array<Build>
-        }>(`/apps/${app.id}`)
-        return { ...normalizeAppDetail(raw), builds: rawBuilds }
-      },
-      staleTime: 15_000,
-      enabled: Boolean(app.id),
-    })),
-  })
-
-  const isLoading = results.some((r) => r.isLoading)
-
-  const builds: Array<BuildWithApp> = results
-    .flatMap((r, idx) => {
-      const detail = r.data
-      if (!detail?.builds) return []
-      const appName = targets[idx]?.name ?? detail.name
-      return detail.builds.map((b) => ({ ...b, appName }))
-    })
-    .sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt))
-
-  return { builds, isLoading }
 }
 
 export function useAppCaddyExtra(appId: string) {

@@ -119,3 +119,38 @@ export const OrganizationDeploymentsResponseSchema = z.object({
 export type OrganizationDeploymentsResponse = z.infer<
   typeof OrganizationDeploymentsResponseSchema
 >
+
+export const DEPLOYMENT_ACTIVITY_RANGES = [7, 30, 90] as const
+export type DeploymentActivityRange =
+  (typeof DEPLOYMENT_ACTIVITY_RANGES)[number]
+
+export const OrganizationDeploymentActivityQuerySchema = z.object({
+  days: z.coerce
+    .number()
+    .int()
+    .refine(
+      (value): value is DeploymentActivityRange =>
+        (DEPLOYMENT_ACTIVITY_RANGES as ReadonlyArray<number>).includes(value),
+      { message: "days must be 7, 30 or 90" }
+    )
+    .default(30),
+})
+
+export const OrganizationDeploymentActivityBucketSchema = z.object({
+  /** UTC calendar day, YYYY-MM-DD. */
+  date: z.string(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  other: z.number().int().nonnegative(),
+})
+export type OrganizationDeploymentActivityBucket = z.infer<
+  typeof OrganizationDeploymentActivityBucketSchema
+>
+
+export const OrganizationDeploymentActivityResponseSchema = z.object({
+  days: z.number().int().positive(),
+  buckets: z.array(OrganizationDeploymentActivityBucketSchema),
+})
+export type OrganizationDeploymentActivityResponse = z.infer<
+  typeof OrganizationDeploymentActivityResponseSchema
+>

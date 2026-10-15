@@ -54,7 +54,39 @@
     "buildsToday": "Builds aujourd'hui",
     "noBuildsYet": "Aucun build pour l'instant",
     "loadingRecentBuilds": "Chargement des builds récents",
-    "manual": "manuel"
+    "manual": "manuel",
+    "viewAll": "Tout voir",
+    "updated": "Mis à jour {{time}}",
+    "kpi": {
+      "deployments": "Déploiements (7 jours)",
+      "successRate": "Taux de réussite (30 jours)",
+      "medianBuild": "Durée médiane de build (30 jours)",
+      "vsPrevious": "par rapport à la période précédente",
+      "noBuilds": "Aucun build terminé",
+      "noBaseline": "Pas de période précédente à comparer"
+    },
+    "activity": {
+      "title": "Activité des déploiements",
+      "range_one": "{{count}} jour",
+      "range_other": "{{count}} jours",
+      "succeeded": "Réussis",
+      "failed": "Échoués",
+      "other": "Autres",
+      "empty": "Aucun déploiement sur cette période"
+    },
+    "host": {
+      "title": "Ressources de l'hôte",
+      "cpu": "CPU",
+      "memory": "Mémoire",
+      "disk": "Disque",
+      "cores_one": "{{count}} cœur",
+      "cores_other": "{{count}} cœurs"
+    },
+    "recent": {
+      "title": "Derniers déploiements",
+      "count_one": "{{count}} déploiement",
+      "count_other": "{{count}} déploiements"
+    }
   },
   "members": {
     "title": "Membres",

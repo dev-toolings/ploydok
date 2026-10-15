@@ -159,3 +159,40 @@ export async function listOrganizationDeployments(
 }
 
 export const organizationDeploymentStatuses = statuses
+
+export interface OrganizationDeploymentActivityRow {
+  /** UTC calendar day, YYYY-MM-DD. */
+  day: string
+  status: OrganizationDeploymentStatus
+  total: number
+}
+
+/**
+ * Counts a workspace's builds per UTC day and status since `since`. Days
+ * without builds are absent; the caller fills the gaps.
+ */
+export async function listOrganizationDeploymentActivity(
+  db: Db,
+  organizationId: string,
+  since: Date
+): Promise<OrganizationDeploymentActivityRow[]> {
+  const day = sql<string>`to_char(${builds.created_at} at time zone 'UTC', 'YYYY-MM-DD')`
+  const rows = await db
+    .select({
+      day,
+      status: builds.status,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(builds)
+    .innerJoin(apps, eq(builds.app_id, apps.id))
+    .where(
+      and(eq(apps.project_id, organizationId), gte(builds.created_at, since))
+    )
+    .groupBy(day, builds.status)
+
+  return rows.map((row) => ({
+    day: row.day,
+    status: row.status as OrganizationDeploymentStatus,
+    total: Number(row.total),
+  }))
+}
