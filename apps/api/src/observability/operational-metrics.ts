@@ -9,9 +9,8 @@ import { counter, gauge } from "./metrics"
 import type { HealthReport } from "./health"
 import {
   backupAgeSeconds,
-  backupIsStale,
   backupFreshnessKey,
-  backupMaxAgeSeconds,
+  backupDeadlineTimestampSeconds,
   listBackupFreshness,
   timestampSeconds,
   type BackupFreshnessRow,
@@ -77,9 +76,9 @@ const backupAge = gauge(
   "ploydok_backup_age_seconds",
   "Age in seconds of the latest successful backup for an enabled database or application-volume config."
 )
-const backupMaxAge = gauge(
-  "ploydok_backup_max_age_seconds",
-  "Maximum tolerated age in seconds for an enabled database or application-volume backup config."
+const backupDeadline = gauge(
+  "ploydok_backup_deadline_timestamp_seconds",
+  "Unix timestamp after which an enabled database or application-volume backup config is considered stale."
 )
 const controlPlaneBackupLastSuccess = gauge(
   "ploydok_control_plane_backup_last_success_timestamp_seconds",
@@ -187,10 +186,7 @@ function setBackupFreshnessMetrics(
     backupConfiguredAt.set(labels, configuredAt)
     backupLastSuccess.set(labels, lastSuccess)
     backupAge.set(labels, age)
-    backupMaxAge.set(
-      labels,
-      backupMaxAgeSeconds(row.schedule_cron, now)
-    )
+    backupDeadline.set(labels, backupDeadlineTimestampSeconds(row) ?? 0)
   }
 
   for (const key of backupFreshnessSeries.keys()) {
@@ -199,7 +195,7 @@ function setBackupFreshnessMetrics(
     backupConfiguredAt.remove(labels)
     backupLastSuccess.remove(labels)
     backupAge.remove(labels)
-    backupMaxAge.remove(labels)
+    backupDeadline.remove(labels)
     backupFreshnessSeries.delete(key)
   }
 
@@ -372,9 +368,13 @@ export async function collectOperationalMetrics(
     const freshnessRows = await listBackupFreshness(db)
     const now = new Date()
     setBackupFreshnessMetrics(freshnessRows, now)
+    const nowSeconds = now.getTime() / 1_000
     staleBackupResources.set(
       undefined,
-      freshnessRows.filter((row) => backupIsStale(row, now)).length
+      freshnessRows.filter((row) => {
+        const deadline = backupDeadlineTimestampSeconds(row)
+        return deadline !== null && deadline > 0 && nowSeconds > deadline
+      }).length
     )
   } catch (error) {
     console.error("[operational-metrics] backup freshness collection failed", error)

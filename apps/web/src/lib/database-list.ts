@@ -45,13 +45,13 @@ export function isDatabaseProtected(database: Database): boolean {
   if (!database.last_successful_backup_at) return false
 
   const lastSuccessfulBackup = Date.parse(database.last_successful_backup_at)
-  const maxAgeSeconds = database.backup_max_age_seconds
+  const deadline = database.backup_deadline_at
+    ? Date.parse(database.backup_deadline_at)
+    : Number.NaN
   return (
     Number.isFinite(lastSuccessfulBackup) &&
-    typeof maxAgeSeconds === "number" &&
-    Number.isFinite(maxAgeSeconds) &&
-    maxAgeSeconds >= 0 &&
-    Date.now() - lastSuccessfulBackup <= maxAgeSeconds * 1000
+    Number.isFinite(deadline) &&
+    Date.now() <= deadline
   )
 }
 

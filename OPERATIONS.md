@@ -167,20 +167,35 @@ The endpoint supports limit-only pagination: callers may request a bounded
 result set up to 200 entries, but there is no offset or cursor. Resource-scoped
 queries keep the UI response bounded while the cache avoids repeating probes.
 
-Each enabled database or volume backup config is checked against its
-schedule-derived maximum age, including resources that are stopped. For a valid
-UTC cron schedule, the age is `max(30 seconds, ceil(1.5 * consecutive schedule
-interval seconds + 30 seconds))`; invalid legacy expressions use the 24-hour
-default. The API exposes that per-config age to the database list, and the UI
+Each enabled database or volume backup config is checked against a
+schedule-derived deadline, including resources that are stopped. For a valid
+UTC cron schedule, use the latest successful backup as the reference, or the
+config creation timestamp when there is no successful backup. Find the first
+scheduled occurrence strictly after that reference, then the second occurrence
+after the first. The deadline is the first occurrence plus a tolerance of
+`max(60 seconds, 0.5 * (second - first))`: the 60-second floor covers the
+30-second scheduler scan and its 30-second grace. Invalid legacy expressions
+use the reference plus 24 hours. The API exposes `backup_deadline_at` to the
+database list, and Prometheus exports
+`ploydok_backup_deadline_timestamp_seconds` for each config. The UI
 does not infer a fixed freshness window. The protection badge uses the newest
 enabled config and successful backups from that same config. A recent failed or
-running job does not reset the age of the last successful backup. A config with
-no success becomes stale once its configured maximum age has elapsed. Per-config
-Prometheus series feed
-`BackupFailureOrStale` after its existing ten-minute hold. API channels that
-subscribe to `backup.stale` receive the same condition through the resource's
-project owner, with a four-hour repeat window per stale episode. An episode
-changes when a new successful backup is recorded.
+running job does not reset the reference to the last successful backup. A
+config with no success becomes stale when its configured deadline has elapsed.
+The `BackupFailureOrStale` alert evaluates only positive deadline values and
+keeps the existing `ploydok_backup_failures_24h > 0` failure path. It retains
+its ten-minute hold. API channels that subscribe to `backup.stale` receive the
+same condition through the resource's project owner, with a four-hour repeat
+window per stale episode. An episode changes when a new successful backup is
+recorded.
+
+The checked-in Prometheus deadline scenarios can be replayed from the test
+directory:
+
+```bash
+cd installer/tests
+promtool test rules backup-freshness.rules.test.yml
+```
 
 ### Application backup restore drill
 
@@ -334,11 +349,12 @@ that an ordinary running deployment is stuck without a heartbeat signal.
 
 ### BackupFailureOrStale
 
-Trigger: `ploydok_backup_failures_24h > 0`, an enabled application backup config
-exceeds its schedule-derived maximum age, the control-plane success stamp is
-older than 24 hours, or its failure stamp is newer than its success stamp. The
-control-plane rule is gated by `ploydok_control_plane_backup_configured`, so a
-fresh installation does not page before its backup timer is configured.
+Trigger: `ploydok_backup_failures_24h > 0`, or an enabled application backup
+config has a positive `ploydok_backup_deadline_timestamp_seconds` value and
+`time()` is beyond that deadline. The control-plane success stamp is older than
+24 hours, or its failure stamp is newer than its success stamp. The control-plane
+rule is gated by `ploydok_control_plane_backup_configured`, so a fresh
+installation does not page before its backup timer is configured.
 
 1. Verify destination connectivity, free space, credentials and encryption
    recipient without printing secrets.
@@ -346,7 +362,11 @@ fresh installation does not page before its backup timer is configured.
    object existence.
 3. A successful upload is not closure: schedule a restore verification and
    record its duration against the four-hour RTO.
-4. For the control plane, compare the timestamps exported by
+4. For an application or volume config, compare
+   `ploydok_backup_last_success_timestamp_seconds` with its labelled
+   `ploydok_backup_deadline_timestamp_seconds`; a positive deadline that has
+   passed remains actionable until a subsequent success refreshes the series.
+5. For the control plane, compare the timestamps exported by
    `ploydok_control_plane_backup_last_success_timestamp_seconds` and
    `ploydok_control_plane_backup_last_failure_timestamp_seconds`; a newer
    failure remains actionable until a subsequent success refreshes the stamp.

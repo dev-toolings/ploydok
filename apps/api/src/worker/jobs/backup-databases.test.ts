@@ -66,6 +66,8 @@ const {
   runScheduledBackups,
 } = await import("./backup-databases")
 
+const testPgUrl = Bun.env.DATABASE_URL
+
 const createdAt = new Date("2026-10-01T00:00:00Z")
 const now = new Date("2026-10-14T03:20:00Z")
 const due = new Date("2026-10-14T03:00:00Z")
@@ -219,25 +221,22 @@ describe("scheduled backups", () => {
     }
     expect(alert.expr).toContain("ploydok_backup_failures_24h > 0")
     expect(alert.expr).toContain(
-      "ploydok_backup_last_success_timestamp_seconds == 0"
+      "ploydok_backup_deadline_timestamp_seconds > 0"
     )
     expect(alert.expr).toContain(
-      "time() - ploydok_backup_configured_at_timestamp_seconds"
-    )
-    expect(alert.expr).toContain(
-      "time() - ploydok_backup_last_success_timestamp_seconds"
+      "time() > ploydok_backup_deadline_timestamp_seconds"
     )
     expect(alert.for).toBe("10m")
   })
 })
 
 // Temporary tables isolate this regression check from every real backup config.
-test.skipIf(!process.env.DATABASE_URL)(
+test.skipIf(!testPgUrl)(
   "PostgreSQL commits the cursor with the result and excludes concurrent runners",
   async () => {
     const { createDb } = await import("@ploydok/db")
     const { sql } = await import("drizzle-orm")
-    const db = createDb(process.env.DATABASE_URL!)
+    const db = createDb(testPgUrl!)
     try {
       await db.transaction(async (tx) => {
         await tx.execute(
@@ -300,10 +299,10 @@ test.skipIf(!process.env.DATABASE_URL)(
   }
 )
 
-test.skipIf(!process.env.DATABASE_URL)(
+test.skipIf(!testPgUrl)(
   "notifies stale database and volume configs once with owner and project scope",
   async () => {
-    const db = createDb(process.env.DATABASE_URL!)
+    const db = createDb(testPgUrl!)
     const suffix = `stale-${Date.now().toString(36)}`
     const scanAt = new Date("2026-10-15T12:00:00.000Z")
     const configuredAt = new Date("2026-10-12T12:00:00.000Z")

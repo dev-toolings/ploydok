@@ -402,10 +402,10 @@ describe("operational metrics", () => {
 
     const output = renderMetrics()
     expect(output).toContain(
-      `ploydok_backup_max_age_seconds{config_id="${weeklyConfigId}",resource_id="weekly-database-${suffix}",resource_type="database"} 907230`
+      `ploydok_backup_deadline_timestamp_seconds{config_id="${weeklyConfigId}",resource_id="weekly-database-${suffix}",resource_type="database"} 1792594800`
     )
     expect(output).toContain(
-      `ploydok_backup_max_age_seconds{config_id="${hourlyConfigId}",resource_id="hourly-volume-${suffix}",resource_type="volume"} 5430`
+      `ploydok_backup_deadline_timestamp_seconds{config_id="${hourlyConfigId}",resource_id="hourly-volume-${suffix}",resource_type="volume"} 1790829000`
     )
     expect(output).toContain(
       `ploydok_backup_last_success_timestamp_seconds{config_id="${hourlyConfigId}",resource_id="hourly-volume-${suffix}",resource_type="volume"} 0`
@@ -436,7 +436,7 @@ describe("operational metrics", () => {
   })
 })
 
-const testPgUrl = Bun.env.PLOYDOK_TEST_PG_URL ?? Bun.env.DATABASE_URL
+const testPgUrl = Bun.env.DATABASE_URL
 describe.skipIf(!testPgUrl)("operational metrics PostgreSQL contract", () => {
   test("executes the complete multi-table collector query", async () => {
     const db = createDb(testPgUrl!)

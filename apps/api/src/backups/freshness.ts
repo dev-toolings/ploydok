@@ -6,7 +6,7 @@ import type { Db } from "@ploydok/db"
 export const BACKUP_SCAN_INTERVAL_SECONDS = 30
 export const BACKUP_SCAN_GRACE_SECONDS = BACKUP_SCAN_INTERVAL_SECONDS
 /** Safety window used only when a legacy schedule cannot be parsed. */
-export const INVALID_BACKUP_SCHEDULE_MAX_AGE_SECONDS = 24 * 60 * 60
+export const INVALID_BACKUP_SCHEDULE_FALLBACK_SECONDS = 24 * 60 * 60
 
 export interface BackupFreshnessRow extends Record<string, unknown> {
   resource_type: "database" | "volume" | string
@@ -16,7 +16,7 @@ export interface BackupFreshnessRow extends Record<string, unknown> {
   project_id: string
   owner_id: string
   schedule_cron: string
-  configured_at: Date | string
+  configured_at: Date | string | null
   last_success_at: Date | string | null
   resource_status: string | null
 }
@@ -125,47 +125,56 @@ export async function listBackupFreshness(
   return Array.from(rows)
 }
 
-export function timestampSeconds(value: Date | string | null): number {
-  if (value === null) return 0
+function parseTimestampSeconds(value: Date | string | null): number | null {
+  if (value === null) return null
   const timestamp = value instanceof Date ? value.getTime() : Date.parse(value)
-  return Number.isFinite(timestamp) ? timestamp / 1_000 : 0
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return null
+  return timestamp / 1_000
 }
 
 /**
- * Return the tolerated age for one schedule. The window allows one and a half
- * schedule intervals plus one scheduler scan, while never falling below the
- * scan interval itself. Invalid legacy expressions retain the documented
- * explicit invalid-schedule fallback so a metrics or alerting pass cannot
- * fail closed. Callers can identify that configuration error from the
- * schedule itself without confusing it with a normal per-config threshold.
+ * Return the fixed deadline for a configured backup. The reference is the
+ * latest successful backup, or the configuration time before the first one.
+ * Cron occurrences are calculated strictly after that reference in UTC.
  */
-export function backupMaxAgeSeconds(
-  scheduleCron = "0 3 * * *",
-  anchor = new Date()
-): number {
+export function backupDeadlineTimestampSeconds(
+  row: Pick<
+    BackupFreshnessRow,
+    "schedule_cron" | "configured_at" | "last_success_at"
+  >
+): number | null {
+  const reference = parseTimestampSeconds(
+    row.last_success_at === null ? row.configured_at : row.last_success_at
+  )
+  if (reference === null) return null
+
   try {
-    const interval = CronExpressionParser.parse(scheduleCron, {
-      currentDate: anchor,
+    const interval = CronExpressionParser.parse(row.schedule_cron, {
+      currentDate: new Date(reference * 1_000),
       tz: "UTC",
     })
     const first = interval.next().toDate()
     const second = interval.next().toDate()
+    const firstSeconds = first.getTime() / 1_000
     const scheduleIntervalSeconds =
       (second.getTime() - first.getTime()) / 1_000
     if (
+      !Number.isFinite(firstSeconds) ||
       !Number.isFinite(scheduleIntervalSeconds) ||
       scheduleIntervalSeconds <= 0
     ) {
-      return INVALID_BACKUP_SCHEDULE_MAX_AGE_SECONDS
+      return reference + INVALID_BACKUP_SCHEDULE_FALLBACK_SECONDS
     }
-    return Math.max(
-      BACKUP_SCAN_INTERVAL_SECONDS,
-      Math.ceil(
-        scheduleIntervalSeconds * 1.5 + BACKUP_SCAN_GRACE_SECONDS
+
+    return (
+      firstSeconds +
+      Math.max(
+        BACKUP_SCAN_INTERVAL_SECONDS + BACKUP_SCAN_GRACE_SECONDS,
+        Math.ceil(scheduleIntervalSeconds * 0.5)
       )
     )
   } catch {
-    return INVALID_BACKUP_SCHEDULE_MAX_AGE_SECONDS
+    return reference + INVALID_BACKUP_SCHEDULE_FALLBACK_SECONDS
   }
 }
 
@@ -176,10 +185,8 @@ export function backupIsStale(
   >,
   now: Date
 ): boolean {
-  const maxAge = backupMaxAgeSeconds(row.schedule_cron, now)
-  const lastSuccess = timestampSeconds(row.last_success_at)
-  const reference = lastSuccess || timestampSeconds(row.configured_at)
-  return reference > 0 && now.getTime() / 1_000 - reference > maxAge
+  const deadline = backupDeadlineTimestampSeconds(row)
+  return deadline !== null && now.getTime() / 1_000 > deadline
 }
 
 export function backupAgeSeconds(
@@ -195,4 +202,8 @@ export function backupFreshnessKey(
   row: Pick<BackupFreshnessRow, "resource_type" | "config_id">
 ): string {
   return `${row.resource_type}:${row.config_id}`
+}
+
+export function timestampSeconds(value: Date | string | null): number {
+  return parseTimestampSeconds(value) ?? 0
 }

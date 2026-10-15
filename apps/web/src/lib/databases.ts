@@ -45,7 +45,7 @@ export interface Database {
   last_started_at: string | null
   created_at: string
   backup_enabled?: boolean
-  backup_max_age_seconds?: number | null
+  backup_deadline_at?: string | null
   latest_backup_status?: "running" | "succeeded" | "failed" | null
   latest_backup_at?: string | null
   last_successful_backup_at?: string | null

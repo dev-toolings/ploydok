@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Deadlines stay fixed while Prometheus time advances between collections.
+# The weekday reference is Friday 03:00; Monday 15:00 is 84 hours later.
+rule_files:
+  - ../templates/ploydok-alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'ploydok_backup_deadline_timestamp_seconds{config_id="weekday-weekend",resource_id="fixture",resource_type="database"}'
+        values: '302401+0x5060'
+    alert_rule_test:
+      - eval_time: 60h
+        alertname: BackupFailureOrStale
+        exp_alerts: []
+      - eval_time: 84h11m
+        alertname: BackupFailureOrStale
+        exp_alerts:
+          - exp_labels:
+              config_id: weekday-weekend
+              resource_id: fixture
+              resource_type: database
+              severity: page
+            exp_annotations:
+              summary: A protected resource has a failed or stale backup
+              runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
+  - interval: 1m
+    input_series:
+      - series: 'ploydok_backup_deadline_timestamp_seconds{config_id="hourly",resource_id="fixture",resource_type="database"}'
+        values: '5401+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: BackupFailureOrStale
+        exp_alerts: []
+      - eval_time: 101m
+        alertname: BackupFailureOrStale
+        exp_alerts:
+          - exp_labels:
+              config_id: hourly
+              resource_id: fixture
+              resource_type: database
+              severity: page
+            exp_annotations:
+              summary: A protected resource has a failed or stale backup
+              runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
+  - interval: 1m
+    input_series:
+      - series: 'ploydok_backup_deadline_timestamp_seconds{config_id="weekly",resource_id="fixture",resource_type="database"}'
+        values: '907201+0x15140'
+    alert_rule_test:
+      - eval_time: 168h
+        alertname: BackupFailureOrStale
+        exp_alerts: []
+      - eval_time: 252h11m
+        alertname: BackupFailureOrStale
+        exp_alerts:
+          - exp_labels:
+              config_id: weekly
+              resource_id: fixture
+              resource_type: database
+              severity: page
+            exp_annotations:
+              summary: A protected resource has a failed or stale backup
+              runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
+  - interval: 1m
+    input_series:
+      - series: 'ploydok_backup_deadline_timestamp_seconds{config_id="never-succeeded",resource_id="fixture",resource_type="database"}'
+        values: '5401+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: BackupFailureOrStale
+        exp_alerts: []
+      - eval_time: 101m
+        alertname: BackupFailureOrStale
+        exp_alerts:
+          - exp_labels:
+              config_id: never-succeeded
+              resource_id: fixture
+              resource_type: database
+              severity: page
+            exp_annotations:
+              summary: A protected resource has a failed or stale backup
+              runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale
+  - interval: 1m
+    input_series:
+      - series: 'ploydok_backup_deadline_timestamp_seconds{config_id="invalid-cron-fallback",resource_id="fixture",resource_type="database"}'
+        values: '86401+0x1460'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: BackupFailureOrStale
+        exp_alerts: []
+      - eval_time: 24h11m
+        alertname: BackupFailureOrStale
+        exp_alerts:
+          - exp_labels:
+              config_id: invalid-cron-fallback
+              resource_id: fixture
+              resource_type: database
+              severity: page
+            exp_annotations:
+              summary: A protected resource has a failed or stale backup
+              runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#backupfailureorstale

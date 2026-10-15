@@ -3,7 +3,6 @@ import { describe, it, expect, mock } from "bun:test"
 import { Hono } from "hono"
 import { PgDialect } from "drizzle-orm/pg-core"
 import type { SQL } from "drizzle-orm"
-import { backupMaxAgeSeconds } from "../backups/freshness"
 import { createDatabasesRouter } from "./databases"
 import type { Db } from "@ploydok/db"
 
@@ -444,7 +443,7 @@ describe("GET /databases", () => {
     expect(await res.json()).toEqual([
       expect.objectContaining({
         backup_enabled: false,
-        backup_max_age_seconds: null,
+        backup_deadline_at: null,
         latest_backup_status: null,
         latest_backup_at: null,
         linked_apps: [],
@@ -459,6 +458,7 @@ describe("GET /databases", () => {
         db: mockDatabaseRow,
         backup_enabled: true,
         backup_schedule_cron: "0 3 * * *",
+        backup_configured_at: new Date("2026-02-01T03:00:00.000Z"),
         latest_backup_status: "succeeded",
         latest_backup_at: latestBackupAt,
         last_successful_backup_at: new Date("2026-03-02T03:05:06.000Z"),
@@ -472,7 +472,7 @@ describe("GET /databases", () => {
     expect(await res.json()).toEqual([
       expect.objectContaining({
         backup_enabled: true,
-        backup_max_age_seconds: backupMaxAgeSeconds("0 3 * * *"),
+        backup_deadline_at: "2026-03-03T15:00:00.000Z",
         latest_backup_status: "succeeded",
         latest_backup_at: latestBackupAt.toISOString(),
         last_successful_backup_at: "2026-03-02T03:05:06.000Z",
