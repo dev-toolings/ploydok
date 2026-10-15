@@ -15,7 +15,11 @@ export const storage_destinations = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    kind: text("kind", { enum: ["s3", "local"] }).notNull(),
+    kind: text("kind", { enum: ["s3", "azure", "local"] }).notNull(),
+    /** Preset used to build the form; null for rows created before presets. */
+    provider: text("provider"),
+    // The s3_* columns predate Azure: for an Azure destination they hold the
+    // blob endpoint and the container name.
     s3_endpoint: text("s3_endpoint"),
     s3_bucket: text("s3_bucket"),
     s3_region: text("s3_region"),

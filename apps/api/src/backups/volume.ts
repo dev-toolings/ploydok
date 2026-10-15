@@ -14,8 +14,10 @@ import {
 import type { Db } from "@ploydok/db"
 import { childLogger } from "../logger"
 import { env } from "../env"
+import { isRemoteLocation } from "../storage/object-store"
 import {
   buildBackupFilename,
+  buildBackupLocation,
   deleteBackupArtifact,
   resolveBackupDestination,
   writeBackupStream,
@@ -112,23 +114,20 @@ async function prepareVolumeBackup(
     "tar",
     ageEncrypted
   )
-  const location =
-    config.destination_kind === "s3"
-      ? `s3://${config.s3_bucket}/${buildVolumeS3Key(
-          config.s3_prefix,
-          appId,
-          volumeId,
-          filename
-        )}`
-      : path.join(
-          env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
-          "..",
-          "backups",
-          "apps",
-          appId,
-          volumeId,
-          filename
-        )
+  const location = buildBackupLocation(
+    config,
+    buildVolumeS3Key(config.s3_prefix, appId, volumeId, filename),
+    () =>
+      path.join(
+        env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
+        "..",
+        "backups",
+        "apps",
+        appId,
+        volumeId,
+        filename
+      )
+  )
 
   await db.insert(volume_backups).values({
     id: backupId,
@@ -193,7 +192,7 @@ export async function runVolumeBackupOnce(
       )
       await archive.completed
       sizeBytes = stored.sizeBytes
-      if (sizeBytes === 0 && !location.startsWith("s3://")) {
+      if (sizeBytes === 0 && !isRemoteLocation(location)) {
         sizeBytes = (await stat(location).catch(() => null))?.size ?? 0
       }
     } catch (err) {
@@ -265,7 +264,7 @@ async function purgeOldVolumeBackups(
       await deleteBackupArtifact(
         db,
         backup.location,
-        backup.location.startsWith("s3://") ? config : null
+        isRemoteLocation(backup.location) ? config : null
       )
     } catch (err) {
       log.warn(

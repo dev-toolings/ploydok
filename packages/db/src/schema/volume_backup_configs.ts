@@ -26,7 +26,7 @@ export const volume_backup_configs = pgTable(
     destination_id: text("destination_id").references(
       () => storage_destinations.id
     ),
-    destination_kind: text("destination_kind", { enum: ["s3", "local"] })
+    destination_kind: text("destination_kind", { enum: ["s3", "azure", "local"] })
       .notNull()
       .default("local"),
     s3_endpoint: text("s3_endpoint"),

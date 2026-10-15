@@ -4,11 +4,10 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { Readable } from "node:stream"
-import type { S3Client } from "@aws-sdk/client-s3"
 import type { Db } from "@ploydok/db"
 import {
   inspectBackupArtifact,
-  type BackupS3Probe,
+  type BackupStoreProbe,
   writeBackupStream,
 } from "./storage"
 
@@ -69,17 +68,13 @@ describe("inspectBackupArtifact", () => {
   })
 
   it("accepts a reused S3 probe without resolving credentials again", async () => {
-    const send = mock(async () => ({
-      ContentLength: 17,
-      LastModified: new Date("2026-10-15T10:00:00.000Z"),
+    const head = mock(async () => ({
+      size: 17,
+      lastModified: new Date("2026-10-15T10:00:00.000Z"),
     }))
-    const probe: BackupS3Probe = {
-      client: { send } as unknown as S3Client,
-      credentials: {
-        accessKeyId: "access-key",
-        secretAccessKey: "secret-key",
-      },
-    }
+    const probe = {
+      store: { scheme: "s3", bucket: "bucket", head },
+    } as unknown as BackupStoreProbe
     const db = {
       select: () => {
         throw new Error("credentials should be resolved once per request")
@@ -103,6 +98,6 @@ describe("inspectBackupArtifact", () => {
       sizeBytes: 17,
       lastModifiedAt: new Date("2026-10-15T10:00:00.000Z"),
     })
-    expect(send).toHaveBeenCalledTimes(2)
+    expect(head).toHaveBeenCalledTimes(2)
   })
 })

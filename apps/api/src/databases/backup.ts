@@ -20,8 +20,10 @@ import type { Db } from "@ploydok/db"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
 import { env } from "../env"
+import { isRemoteLocation } from "../storage/object-store"
 import {
   buildBackupFilename,
+  buildBackupLocation,
   deleteBackupArtifact,
   resolveBackupDestination,
   writeBackupStream,
@@ -97,22 +99,24 @@ async function prepareBackup(
   const startedAt = new Date()
   const ageEncrypted = Boolean(config.age_recipient_public_key)
   const filename = buildBackupFilename(scheduledAt ?? startedAt, "dump", ageEncrypted)
-  const location =
-    config.destination_kind === "s3"
-      ? `s3://${config.s3_bucket}/${config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""}${databaseId}/${filename}`
-      : path.join(
-          env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
-          "..",
-          "backups",
-          databaseId,
-          filename
-        )
+  const location = buildBackupLocation(
+    config,
+    `${config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""}${databaseId}/${filename}`,
+    () =>
+      path.join(
+        env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
+        "..",
+        "backups",
+        databaseId,
+        filename
+      )
+  )
 
   await db.insert(backups).values({
     id: backupId,
     database_id: databaseId,
     config_id: config.id,
-    destination_kind: config.destination_kind as "s3" | "local",
+    destination_kind: config.destination_kind,
     location,
     age_encrypted: ageEncrypted,
     status: "running",
@@ -176,7 +180,7 @@ export async function runBackupOnce(db: Db, databaseId: string, scheduledAt?: Da
     .where(eq(backups.id, backupId))
 
   // 6. Delete backups older than retention_days
-  await purgeOldBackups(db, databaseId, config.id, config.retention_days, config.destination_kind as "s3" | "local", config)
+  await purgeOldBackups(db, databaseId, config.id, config.retention_days, config)
 
   // 7. Update config last_run_at + last_error
   await db
@@ -196,7 +200,6 @@ async function purgeOldBackups(
   databaseId: string,
   configId: string,
   retentionDays: number,
-  kind: "s3" | "local",
   config: typeof backup_configs.$inferSelect,
 ): Promise<void> {
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
@@ -214,7 +217,11 @@ async function purgeOldBackups(
 
   for (const backup of old) {
     try {
-      await deleteBackupArtifact(db, backup.location, kind === "s3" ? config : null)
+      await deleteBackupArtifact(
+        db,
+        backup.location,
+        isRemoteLocation(backup.location) ? config : null
+      )
     } catch (err) {
       log.warn({ err, backupId: backup.id }, "failed to delete old backup object (non-fatal)")
     }

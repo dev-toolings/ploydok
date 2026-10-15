@@ -24,7 +24,7 @@ export const volume_backups = pgTable(
     config_id: text("config_id").references(() => volume_backup_configs.id, {
       onDelete: "set null",
     }),
-    destination_kind: text("destination_kind", { enum: ["s3", "local"] }),
+    destination_kind: text("destination_kind", { enum: ["s3", "azure", "local"] }),
     location: text("location").notNull(),
     size_bytes: bigint("size_bytes", { mode: "number" }),
     age_encrypted: boolean("age_encrypted").notNull().default(false),

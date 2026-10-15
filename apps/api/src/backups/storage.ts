@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { createWriteStream } from "node:fs"
+import { createReadStream, createWriteStream } from "node:fs"
 import { mkdir, stat } from "node:fs/promises"
 import path from "node:path"
 import { Transform, type Readable } from "node:stream"
@@ -9,17 +9,21 @@ import { secrets, storage_destinations } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { decryptSecret } from "../secrets/crypto"
 import {
-  createS3Client,
-  deleteObject,
-  headObject,
-  uploadStream,
-} from "../storage/s3"
-import type { S3Client } from "@aws-sdk/client-s3"
+  buildRemoteLocation,
+  isMissingObjectError,
+  isRemoteLocation,
+  openObjectStore,
+  parseRemoteLocation,
+  type ObjectStore,
+  type ObjectStoreCredentials,
+} from "../storage/object-store"
+
+export type BackupDestinationKind = "s3" | "azure" | "local"
 
 export interface BackupDestinationConfig {
   destination_id?: string | null
   destination_updated_at?: Date | null
-  destination_kind: "s3" | "local"
+  destination_kind: BackupDestinationKind
   s3_endpoint: string | null
   s3_bucket: string | null
   s3_prefix: string | null
@@ -30,7 +34,7 @@ export interface BackupDestinationConfig {
 export interface S3BackedConfig {
   destination_id?: string | null
   destination_updated_at?: Date | null
-  destination_kind?: "s3" | "local" | null
+  destination_kind?: BackupDestinationKind | null
   s3_endpoint?: string | null
   s3_bucket?: string | null
   s3_prefix?: string | null
@@ -38,14 +42,9 @@ export interface S3BackedConfig {
   s3_credentials_secret_id?: string | null
 }
 
-export interface S3Credentials {
-  accessKeyId: string
-  secretAccessKey: string
-}
-
-export interface BackupS3Probe {
-  client: S3Client
-  credentials: S3Credentials
+/** One opened destination, reused across the probes of a request. */
+export interface BackupStoreProbe {
+  store: ObjectStore
 }
 
 export interface BackupArtifactMetadata {
@@ -68,6 +67,22 @@ class ByteCounter extends Transform {
   }
 }
 
+/**
+ * Location of a new artifact: an object URL for a remote destination, a path
+ * under the local backup root otherwise.
+ */
+export function buildBackupLocation(
+  config: Pick<BackupDestinationConfig, "destination_kind" | "s3_bucket">,
+  key: string,
+  localPath: () => string
+): string {
+  if (config.destination_kind === "local") return localPath()
+  if (!config.s3_bucket) {
+    throw new Error("Remote backup config is missing its bucket")
+  }
+  return buildRemoteLocation(config.destination_kind, config.s3_bucket, key)
+}
+
 export async function writeBackupStream(
   db: Db,
   config: BackupDestinationConfig,
@@ -77,21 +92,17 @@ export async function writeBackupStream(
   const resolvedConfig = await resolveBackupDestination(db, config)
   const counter = new ByteCounter()
 
-  if (resolvedConfig.destination_kind === "s3") {
+  if (resolvedConfig.destination_kind !== "local") {
     if (!resolvedConfig.s3_bucket) {
-      throw new Error("S3 backup config is missing s3_bucket")
+      throw new Error("Remote backup config is missing its bucket")
     }
-
-    const creds = await resolveS3Credentials(db, resolvedConfig)
-    const client = createS3Client({
-      ...(resolvedConfig.s3_endpoint ? { endpoint: resolvedConfig.s3_endpoint } : {}),
-      region: resolvedConfig.s3_region ?? "auto",
-      accessKeyId: creds.accessKeyId,
-      secretAccessKey: creds.secretAccessKey,
-    })
-
-    const { bucket, key } = parseS3Location(location)
-    await uploadStream(client, bucket, key, source.pipe(counter))
+    const store = await openBackupStore(db, resolvedConfig)
+    try {
+      const { key } = parseRemoteLocation(location)
+      await store.upload(key, source.pipe(counter))
+    } finally {
+      store.close()
+    }
     return { sizeBytes: counter.bytes }
   }
 
@@ -105,24 +116,36 @@ export async function deleteBackupArtifact(
   location: string,
   config: S3BackedConfig | null
 ): Promise<void> {
-  if (location.startsWith("s3://")) {
+  if (isRemoteLocation(location)) {
     if (!config) return
 
-    const resolvedConfig = await resolveBackupDestination(db, config)
-    const creds = await resolveS3Credentials(db, resolvedConfig)
-    const client = createS3Client({
-      ...(resolvedConfig.s3_endpoint ? { endpoint: resolvedConfig.s3_endpoint } : {}),
-      region: resolvedConfig.s3_region ?? "auto",
-      accessKeyId: creds.accessKeyId,
-      secretAccessKey: creds.secretAccessKey,
-    })
-    const { bucket, key } = parseS3Location(location)
-    await deleteObject(client, bucket, key)
+    const { key, ...target } = parseRemoteLocation(location)
+    const store = await openBackupStore(db, config, target)
+    try {
+      await store.delete(key)
+    } finally {
+      store.close()
+    }
     return
   }
 
   const { unlink } = await import("node:fs/promises")
   await unlink(location).catch(() => {})
+}
+
+/** Open the stored artifact for reading (restore, download). */
+export async function openBackupArtifact(
+  db: Db,
+  location: string,
+  config: S3BackedConfig | null
+): Promise<Readable> {
+  if (!isRemoteLocation(location)) return createReadStream(location)
+  if (!config) throw new Error("Remote backup configuration is unavailable")
+  const { key, ...target } = parseRemoteLocation(location)
+  const store = await openBackupStore(db, config, target)
+  const stream = await store.download(key)
+  stream.once("close", () => store.close())
+  return stream
 }
 
 /**
@@ -135,21 +158,29 @@ export async function inspectBackupArtifact(
   db: Db,
   location: string,
   config: S3BackedConfig | null,
-  probe?: BackupS3Probe,
+  probe?: BackupStoreProbe,
 ): Promise<BackupArtifactMetadata | null> {
-  if (location.startsWith("s3://")) {
+  if (isRemoteLocation(location)) {
     if (!config) {
-      throw new Error("S3 backup configuration is unavailable")
+      throw new Error("Remote backup configuration is unavailable")
     }
 
-    const resources = probe ?? (await createBackupS3Probe(db, config))
-    const { bucket, key } = parseS3Location(location)
+    const { key, ...target } = parseRemoteLocation(location)
+    const reusable =
+      probe &&
+      probe.store.scheme === target.scheme &&
+      probe.store.bucket === target.bucket
+    const store = reusable
+      ? probe.store
+      : await openBackupStore(db, config, target)
     let object
     try {
-      object = await headObject(resources.client, bucket, key)
+      object = await store.head(key)
     } catch (error) {
-      if (isMissingS3ObjectError(error)) return null
+      if (isMissingObjectError(error)) return null
       throw error
+    } finally {
+      if (!reusable) store.close()
     }
     if (!object.lastModified) return null
     return {
@@ -174,72 +205,106 @@ function isMissingLocalArtifactError(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR"
 }
 
-function isMissingS3ObjectError(error: unknown): boolean {
-  const candidate = error as
-    | {
-        name?: string
-        Code?: string
-        $metadata?: { httpStatusCode?: number }
-      }
-    | undefined
-  return (
-    candidate?.$metadata?.httpStatusCode === 404 ||
-    candidate?.name === "NotFound" ||
-    candidate?.name === "NoSuchKey" ||
-    candidate?.Code === "NotFound" ||
-    candidate?.Code === "NoSuchKey"
+/** Decrypt a destination secret and check it has the shape of its kind. */
+export function parseDestinationCredentials(
+  kind: "s3" | "azure",
+  plaintext: string
+): ObjectStoreCredentials {
+  const value = JSON.parse(plaintext) as Record<string, unknown>
+  if (kind === "azure") {
+    if (typeof value.accountName !== "string" || typeof value.accountKey !== "string") {
+      throw new Error(
+        "Azure credentials secret has unexpected format (expected { accountName, accountKey })"
+      )
+    }
+    return { accountName: value.accountName, accountKey: value.accountKey }
+  }
+  if (typeof value.accessKeyId !== "string" || typeof value.secretAccessKey !== "string") {
+    throw new Error(
+      "S3 credentials secret has unexpected format (expected { accessKeyId, secretAccessKey })"
+    )
+  }
+  return {
+    accessKeyId: value.accessKeyId,
+    secretAccessKey: value.secretAccessKey,
+  }
+}
+
+export async function resolveDestinationCredentials(
+  db: Db,
+  config: S3BackedConfig,
+  scheme?: "s3" | "azure"
+): Promise<ObjectStoreCredentials> {
+  const resolvedConfig = await resolveBackupDestination(db, config)
+  return readDestinationCredentials(
+    db,
+    resolvedConfig.s3_credentials_secret_id,
+    scheme ?? remoteKind(resolvedConfig.destination_kind)
   )
 }
 
-export async function resolveS3Credentials(
+async function readDestinationCredentials(
   db: Db,
-  config: S3BackedConfig
-): Promise<S3Credentials> {
-  const resolvedConfig = await resolveBackupDestination(db, config)
-  if (!resolvedConfig.s3_credentials_secret_id) {
-    throw new Error("S3 backup config is missing s3_credentials_secret_id")
+  secretId: string | null,
+  kind: "s3" | "azure"
+): Promise<ObjectStoreCredentials> {
+  if (!secretId) {
+    throw new Error("Remote backup config is missing its credentials secret")
   }
-
   const secretRows = await db
     .select()
     .from(secrets)
-    .where(eq(secrets.id, resolvedConfig.s3_credentials_secret_id))
+    .where(eq(secrets.id, secretId))
     .limit(1)
   const secret = secretRows[0]
   if (!secret || !secret.value_ciphertext || !secret.nonce) {
-    throw new Error("S3 credentials secret not found or missing ciphertext")
+    throw new Error("Destination credentials secret not found or missing ciphertext")
   }
 
   const plaintext = await decryptSecret(
     secret.value_ciphertext as Buffer,
     secret.nonce as Buffer
   )
-
-  const creds = JSON.parse(plaintext) as S3Credentials
-  if (!creds.accessKeyId || !creds.secretAccessKey) {
-    throw new Error(
-      "S3 credentials secret has unexpected format (expected { accessKeyId, secretAccessKey })"
-    )
-  }
-  return creds
+  return parseDestinationCredentials(kind, plaintext)
 }
 
-/** Resolve credentials and build one destination client for a request scope. */
-export async function createBackupS3Probe(
+function remoteKind(kind: BackupDestinationKind | null | undefined): "s3" | "azure" {
+  return kind === "azure" ? "azure" : "s3"
+}
+
+/**
+ * Open the object store of a destination. `target` comes from an artifact
+ * location when there is one: the artifact, not the current config, says
+ * which protocol and bucket hold it.
+ */
+export async function openBackupStore(
   db: Db,
-  config: S3BackedConfig
-): Promise<BackupS3Probe> {
+  config: S3BackedConfig,
+  target?: { scheme: "s3" | "azure"; bucket: string }
+): Promise<ObjectStore> {
   const resolvedConfig = await resolveBackupDestination(db, config)
-  const credentials = await resolveS3Credentials(db, resolvedConfig)
-  return {
+  const kind = target?.scheme ?? remoteKind(resolvedConfig.destination_kind)
+  const credentials = await readDestinationCredentials(
+    db,
+    resolvedConfig.s3_credentials_secret_id,
+    kind
+  )
+  return openObjectStore({
+    kind,
+    endpoint: resolvedConfig.s3_endpoint,
+    bucket: target?.bucket ?? resolvedConfig.s3_bucket ?? "",
+    region: resolvedConfig.s3_region,
     credentials,
-    client: createS3Client({
-      ...(resolvedConfig.s3_endpoint ? { endpoint: resolvedConfig.s3_endpoint } : {}),
-      region: resolvedConfig.s3_region ?? "auto",
-      accessKeyId: credentials.accessKeyId,
-      secretAccessKey: credentials.secretAccessKey,
-    }),
-  }
+  })
+}
+
+/** Resolve credentials and open one destination for a request scope. */
+export async function createBackupStoreProbe(
+  db: Db,
+  config: S3BackedConfig,
+  target?: { scheme: "s3" | "azure"; bucket: string }
+): Promise<BackupStoreProbe> {
+  return { store: await openBackupStore(db, config, target) }
 }
 
 /** Resolve the latest workspace destination while retaining legacy fallback. */
@@ -310,12 +375,4 @@ export function buildBackupFilename(
 ): string {
   const ts = startedAt.toISOString().replace(/[:.]/g, "-")
   return `${ts}.${extension}${encrypted ? ".age" : ""}`
-}
-
-function parseS3Location(location: string): { bucket: string; key: string } {
-  const url = new URL(location)
-  return {
-    bucket: url.hostname,
-    key: url.pathname.replace(/^\//, ""),
-  }
 }

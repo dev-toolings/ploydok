@@ -9,7 +9,7 @@ export const backups = pgTable('backups', {
     .notNull()
     .references(() => databases.id, { onDelete: 'cascade' }),
   config_id: text('config_id').references(() => backup_configs.id, { onDelete: 'set null' }),
-  destination_kind: text('destination_kind', { enum: ['s3', 'local'] }),
+  destination_kind: text('destination_kind', { enum: ['s3', 'azure', 'local'] }),
   // Full location: s3://bucket/prefix/id.age or /var/lib/ploydok/backups/db_id/ts.age
   location: text('location').notNull(),
   size_bytes: bigint('size_bytes', { mode: 'number' }),

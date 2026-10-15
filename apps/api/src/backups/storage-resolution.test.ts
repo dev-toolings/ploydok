@@ -25,9 +25,9 @@ mock.module("../storage/s3", () => ({
 }))
 
 const {
-  createBackupS3Probe,
+  createBackupStoreProbe,
   resolveBackupDestination,
-  resolveS3Credentials,
+  resolveDestinationCredentials,
 } = await import("./storage")
 
 const destination = {
@@ -148,7 +148,7 @@ describe("shared backup storage resolution", () => {
 
   it("resolves encrypted credentials and builds a probe from the workspace destination", async () => {
     const { db, select } = fakeDb({ destination, secret })
-    const probe = await createBackupS3Probe(db, {
+    const probe = await createBackupStoreProbe(db, {
       destination_id: destination.id,
       destination_kind: "local",
       s3_endpoint: "https://stale-inline.example.test",
@@ -158,10 +158,7 @@ describe("shared backup storage resolution", () => {
       s3_credentials_secret_id: "stale-secret",
     })
 
-    expect(probe.credentials).toEqual({
-      accessKeyId: "resolved-access",
-      secretAccessKey: "resolved-secret",
-    })
+    expect(probe.store.bucket).toBe(destination.s3_bucket)
     expect(createS3Client).toHaveBeenCalledWith({
       endpoint: destination.s3_endpoint,
       region: destination.s3_region,
@@ -180,7 +177,7 @@ describe("shared backup storage resolution", () => {
     const { db } = fakeDb({ secret })
 
     await expect(
-      resolveS3Credentials(db, {
+      resolveDestinationCredentials(db, {
         destination_kind: "s3",
         s3_endpoint: "https://legacy.example.test",
         s3_bucket: "legacy-bucket",

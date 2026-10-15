@@ -13,7 +13,7 @@ export const backup_configs = pgTable('backup_configs', {
   // below remain nullable so pre-migration rows and historical restores keep
   // working until they are migrated or edited.
   destination_id: text('destination_id').references(() => storage_destinations.id),
-  destination_kind: text('destination_kind', { enum: ['s3', 'local'] })
+  destination_kind: text('destination_kind', { enum: ['s3', 'azure', 'local'] })
     .notNull()
     .default('local'),
   s3_endpoint: text('s3_endpoint'),
