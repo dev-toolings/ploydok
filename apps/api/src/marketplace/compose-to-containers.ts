@@ -11,6 +11,11 @@ export interface ComposeToContainersInput {
   labels?: Record<string, string>
 }
 
+export type ComposeDependencyCondition =
+  | "service_started"
+  | "service_healthy"
+  | "service_completed_successfully"
+
 export interface ComposeContainer {
   name: string
   image: string
@@ -28,6 +33,8 @@ export interface ComposeContainer {
   command: string[]
   user?: string
   dependsOn: string[]
+  /** Conditions are keyed by the Compose service named in dependsOn. */
+  dependsOnConditions?: Record<string, ComposeDependencyCondition>
   composeName?: string
   healthcheck?: {
     test: string[]
@@ -53,9 +60,9 @@ export const ACCEPTED_COMPOSE_SUBSET = Object.freeze({
   topLevel: ["services", "volumes", "version"],
   service: ["image", "environment", "labels", "volumes", "command", "user", "healthcheck", "expose"],
   // Swarm: ports are internal only (never published on the host, ingress is
-  // Caddy); an explicit host IP selects the Docker runtime. Restart only
-  // always/unless-stopped.
-  // depends_on keeps creation order; conditions other than service_started are refused.
+  // Caddy); an explicit host IP selects the Docker runtime. Restart is
+  // always/unless-stopped except one-shot completion dependencies.
+  // depends_on conditions are preserved for the orchestration wait step.
   legacyOnly: ["ports", "restart", "depends_on"],
   healthcheck: ["test", "interval", "timeout", "retries", "start_period"],
 })
@@ -367,10 +374,16 @@ function parseCommand(raw: unknown): string[] {
 
 /**
  * Swarm services never publish host ports here (ingress goes through Caddy)
- * and restart under the default "any" condition. Accept only what keeps its
- * meaning under those rules, and refuse the rest before any resource exists.
+ * and ordinary services restart under the default "any" condition. One-shot
+ * services used by service_completed_successfully are validated separately.
+ * Accept only what keeps its meaning under those rules, and refuse the rest
+ * before any resource exists.
  */
-function assertSwarmCompatible(svcName: string, svc: Record<string, unknown>) {
+function assertSwarmCompatible(
+  svcName: string,
+  svc: Record<string, unknown>,
+  allowsOneShotRestart: boolean
+) {
   if (svc.command === "" || (Array.isArray(svc.command) && svc.command.length === 0))
     throw new UnsupportedComposeFeatureError("Empty command override cannot be preserved by the Swarm contract")
   // Swarm cannot bind a published port to a host IP. Marketplace selection
@@ -381,23 +394,56 @@ function assertSwarmCompatible(svcName: string, svc: Record<string, unknown>) {
       `Service "${svcName}": address-specific port publication cannot be preserved in Swarm`
     )
   }
-  if (svc.restart !== undefined && !SWARM_RESTART_EQUIVALENT.includes(String(svc.restart)))
-    throw new UnsupportedComposeFeatureError(`Service "${svcName}": restart "${String(svc.restart)}" cannot be preserved by Swarm's restart-on-any-exit policy; use always or unless-stopped`)
+  if (
+    svc.restart !== undefined &&
+    !SWARM_RESTART_EQUIVALENT.includes(String(svc.restart)) &&
+    !(allowsOneShotRestart && ["no", "on-failure"].includes(String(svc.restart)))
+  ) {
+    throw new UnsupportedComposeFeatureError(
+      `Service "${svcName}": restart "${String(svc.restart)}" cannot be preserved by Swarm's restart policy; use always or unless-stopped, or no/on-failure for service_completed_successfully`
+    )
+  }
 }
 
-function parseDependsOn(raw: unknown): string[] {
-  if (!raw) return []
-  if (Array.isArray(raw)) return raw.map(String)
-  if (typeof raw === "object" && raw !== null) {
-    // Only creation order is kept, so a readiness condition cannot be honoured.
-    for (const [dep, spec] of Object.entries(raw as Record<string, unknown>)) {
-      const condition = (spec as { condition?: unknown } | null)?.condition ?? "service_started"
-      if (condition !== "service_started")
-        throw new UnsupportedComposeFeatureError(`depends_on ${dep} condition "${String(condition)}" cannot be preserved (including service_healthy): only creation order is kept`)
+function parseDependsOn(raw: unknown): {
+  names: string[]
+  conditions: Record<string, ComposeDependencyCondition>
+} {
+  if (!raw) return { names: [], conditions: {} }
+  if (Array.isArray(raw)) {
+    const names = raw.map(String)
+    return {
+      names,
+      conditions: Object.fromEntries(
+        names.map((name) => [name, "service_started"])
+      ) as Record<string, ComposeDependencyCondition>,
     }
-    return Object.keys(raw as Record<string, unknown>)
   }
-  return []
+  if (typeof raw === "object" && raw !== null) {
+    const names: string[] = []
+    const conditions: Record<string, ComposeDependencyCondition> = {}
+    for (const [dep, spec] of Object.entries(raw as Record<string, unknown>)) {
+      let condition: unknown = "service_started"
+      if (spec && typeof spec === "object" && !Array.isArray(spec)) {
+        const depSpec = spec as Record<string, unknown>
+        assertFields(depSpec, ["condition"], `depends_on ${dep}`)
+        condition = depSpec.condition ?? "service_started"
+      }
+      if (
+        condition !== "service_started" &&
+        condition !== "service_healthy" &&
+        condition !== "service_completed_successfully"
+      ) {
+        throw new UnsupportedComposeFeatureError(
+          `depends_on ${dep} condition "${String(condition)}" is not supported; expected service_started, service_healthy or service_completed_successfully`
+        )
+      }
+      names.push(dep)
+      conditions[dep] = condition
+    }
+    return { names, conditions }
+  }
+  return { names: [], conditions: {} }
 }
 
 function parseHealthcheck(
@@ -433,6 +479,15 @@ function parseHealthcheck(
   return hc
 }
 
+function hasUsableHealthcheck(
+  healthcheck: ComposeContainer["healthcheck"] | undefined
+): boolean {
+  if (!healthcheck || healthcheck.test[0] === "NONE") return false
+  return healthcheck.test
+    .slice(1)
+    .some((part) => part.trim().length > 0)
+}
+
 function parseRestartPolicy(raw: unknown): ComposeContainer["restartPolicy"] {
   const valid = ["no", "always", "unless-stopped", "on-failure"] as const
   if (typeof raw === "string" && (valid as readonly string[]).includes(raw)) {
@@ -441,7 +496,7 @@ function parseRestartPolicy(raw: unknown): ComposeContainer["restartPolicy"] {
   return "unless-stopped"
 }
 
-// Topological sort — returns service names in dependency order, throws on cycle
+// Topological sort: returns service names in dependency order and throws on cycle
 function topoSort(services: Record<string, { dependsOn: string[] }>): string[] {
   const visited = new Set<string>()
   const inStack = new Set<string>()
@@ -582,7 +637,6 @@ export function composeToContainers(
     if (!svc || typeof svc !== "object" || Array.isArray(svc)) throw new UnsupportedComposeFeatureError(`Service "${svcName}" must be a map`)
     assertNoUnsupportedServiceFeatures(svcName, svc)
     assertFields(svc, [...ACCEPTED_COMPOSE_SUBSET.service, ...ACCEPTED_COMPOSE_SUBSET.legacyOnly], `Service "${svcName}"`)
-    if (input.runtime === "swarm") assertSwarmCompatible(svcName, svc)
     if (svc.user !== undefined && typeof svc.user !== "string" && typeof svc.user !== "number")
       throw new UnsupportedComposeFeatureError(`Service "${svcName}": user must be a string or numeric UID`)
 
@@ -621,11 +675,60 @@ export function composeToContainers(
       restartPolicy,
       command,
       ...(svc.user !== undefined ? { user: String(svc.user) } : {}),
-      dependsOn,
+      dependsOn: dependsOn.names,
+      ...(dependsOn.names.length
+        ? { dependsOnConditions: dependsOn.conditions }
+        : {}),
     }
     if (healthcheck !== undefined) entry.healthcheck = healthcheck
     if (exposedPort !== undefined) entry.exposedPort = exposedPort
     parsed[svcName] = entry
+  }
+
+  const completedDependencyNames = new Set<string>()
+  for (const [svcName, service] of Object.entries(parsed)) {
+    for (const [dependencyName, condition] of Object.entries(
+      service.dependsOnConditions ?? {}
+    )) {
+      const dependency = parsed[dependencyName]
+      if (!dependency) continue
+      if (
+        condition === "service_healthy" &&
+        !hasUsableHealthcheck(dependency.healthcheck)
+      ) {
+        throw new UnsupportedComposeFeatureError(
+          `depends_on ${svcName}.${dependencyName} condition "service_healthy" requires dependency service "${dependencyName}" to define a usable healthcheck`
+        )
+      }
+      if (condition === "service_completed_successfully") {
+        completedDependencyNames.add(dependencyName)
+        const dependencyRaw = services[dependencyName]
+        if (
+          dependencyRaw &&
+          typeof dependencyRaw === "object" &&
+          !Array.isArray(dependencyRaw) &&
+          (dependencyRaw as Record<string, unknown>).restart === undefined
+        ) {
+          // Compose defaults completed jobs to a one-shot container.
+          dependency.restartPolicy = "no"
+        }
+        if (!["no", "on-failure"].includes(dependency.restartPolicy)) {
+          throw new UnsupportedComposeFeatureError(
+            `depends_on ${svcName}.${dependencyName} condition "service_completed_successfully" requires dependency service "${dependencyName}" to use restart "no" or "on-failure"`
+          )
+        }
+      }
+    }
+  }
+
+  if (input.runtime === "swarm") {
+    for (const [svcName, svcRaw] of Object.entries(services)) {
+      assertSwarmCompatible(
+        svcName,
+        svcRaw as Record<string, unknown>,
+        completedDependencyNames.has(svcName)
+      )
+    }
   }
 
   // Topological sort

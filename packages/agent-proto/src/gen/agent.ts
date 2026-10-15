@@ -100,7 +100,10 @@ export interface PortMapping {
   hostPort: number;
   /** "tcp" or "udp" — defaults to "tcp" if empty */
   proto: string;
-  /** Literal host IP to bind; empty preserves legacy behavior. */
+  /**
+   * Literal host IP to bind. Empty preserves legacy behavior for callers
+   * that predate explicit host binding support.
+   */
   hostIp: string;
 }
 
@@ -420,6 +423,16 @@ export interface InspectContainerHealthResponse {
   lastProbeOutput: string;
   /** true when inspect returns 404. */
   containerMissing: boolean;
+  /** Docker State.Status == "running". */
+  running?:
+    | boolean
+    | undefined;
+  /** Docker State.ExitCode; -1 when unavailable. */
+  exitCode?:
+    | number
+    | undefined;
+  /** Docker State.Status (created/running/exited/...). */
+  state?: string | undefined;
 }
 
 /**
@@ -769,6 +782,8 @@ export interface SwarmServiceSpec {
   updateOrder: string;
   failureAction: string;
   stopGracePeriodSeconds: number;
+  /** "none", "on-failure", or "any". */
+  restartCondition: string;
 }
 
 export interface SwarmServiceSpec_EnvEntry {
@@ -839,6 +854,20 @@ export interface SwarmTaskSnapshot {
   status: string;
   nodeId: string;
   error: string;
+  /** Docker State.Status == "running". */
+  running?:
+    | boolean
+    | undefined;
+  /** Docker State.ExitCode; -1 when unavailable. */
+  exitCode?:
+    | number
+    | undefined;
+  /** "healthy", "unhealthy", "starting", or "none". */
+  healthStatus?:
+    | string
+    | undefined;
+  /** Docker State.Status. */
+  state?: string | undefined;
 }
 
 export interface ListServiceTasksRequest {
@@ -4857,7 +4886,15 @@ export const InspectContainerHealthRequest: MessageFns<InspectContainerHealthReq
 };
 
 function createBaseInspectContainerHealthResponse(): InspectContainerHealthResponse {
-  return { status: 0, failingStreak: 0, lastProbeOutput: "", containerMissing: false };
+  return {
+    status: 0,
+    failingStreak: 0,
+    lastProbeOutput: "",
+    containerMissing: false,
+    running: undefined,
+    exitCode: undefined,
+    state: undefined,
+  };
 }
 
 export const InspectContainerHealthResponse: MessageFns<InspectContainerHealthResponse> = {
@@ -4873,6 +4910,15 @@ export const InspectContainerHealthResponse: MessageFns<InspectContainerHealthRe
     }
     if (message.containerMissing !== false) {
       writer.uint32(32).bool(message.containerMissing);
+    }
+    if (message.running !== undefined) {
+      writer.uint32(40).bool(message.running);
+    }
+    if (message.exitCode !== undefined) {
+      writer.uint32(48).int32(message.exitCode);
+    }
+    if (message.state !== undefined) {
+      writer.uint32(58).string(message.state);
     }
     return writer;
   },
@@ -4916,6 +4962,30 @@ export const InspectContainerHealthResponse: MessageFns<InspectContainerHealthRe
           message.containerMissing = reader.bool();
           continue;
         }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.running = reader.bool();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.exitCode = reader.int32();
+          continue;
+        }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -4943,6 +5013,13 @@ export const InspectContainerHealthResponse: MessageFns<InspectContainerHealthRe
         : isSet(object.container_missing)
         ? globalThis.Boolean(object.container_missing)
         : false,
+      running: isSet(object.running) ? globalThis.Boolean(object.running) : undefined,
+      exitCode: isSet(object.exitCode)
+        ? globalThis.Number(object.exitCode)
+        : isSet(object.exit_code)
+        ? globalThis.Number(object.exit_code)
+        : undefined,
+      state: isSet(object.state) ? globalThis.String(object.state) : undefined,
     };
   },
 
@@ -4960,6 +5037,15 @@ export const InspectContainerHealthResponse: MessageFns<InspectContainerHealthRe
     if (message.containerMissing !== false) {
       obj.containerMissing = message.containerMissing;
     }
+    if (message.running !== undefined) {
+      obj.running = message.running;
+    }
+    if (message.exitCode !== undefined) {
+      obj.exitCode = Math.round(message.exitCode);
+    }
+    if (message.state !== undefined) {
+      obj.state = message.state;
+    }
     return obj;
   },
 
@@ -4972,6 +5058,9 @@ export const InspectContainerHealthResponse: MessageFns<InspectContainerHealthRe
     message.failingStreak = object.failingStreak ?? 0;
     message.lastProbeOutput = object.lastProbeOutput ?? "";
     message.containerMissing = object.containerMissing ?? false;
+    message.running = object.running ?? undefined;
+    message.exitCode = object.exitCode ?? undefined;
+    message.state = object.state ?? undefined;
     return message;
   },
 };
@@ -9087,6 +9176,7 @@ function createBaseSwarmServiceSpec(): SwarmServiceSpec {
     updateOrder: "",
     failureAction: "",
     stopGracePeriodSeconds: 0,
+    restartCondition: "",
   };
 }
 
@@ -9145,6 +9235,9 @@ export const SwarmServiceSpec: MessageFns<SwarmServiceSpec> = {
     }
     if (message.stopGracePeriodSeconds !== 0) {
       writer.uint32(144).uint32(message.stopGracePeriodSeconds);
+    }
+    if (message.restartCondition !== "") {
+      writer.uint32(154).string(message.restartCondition);
     }
     return writer;
   },
@@ -9306,6 +9399,14 @@ export const SwarmServiceSpec: MessageFns<SwarmServiceSpec> = {
           message.stopGracePeriodSeconds = reader.uint32();
           continue;
         }
+        case 19: {
+          if (tag !== 154) {
+            break;
+          }
+
+          message.restartCondition = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -9387,6 +9488,11 @@ export const SwarmServiceSpec: MessageFns<SwarmServiceSpec> = {
         : isSet(object.stop_grace_period_seconds)
         ? globalThis.Number(object.stop_grace_period_seconds)
         : 0,
+      restartCondition: isSet(object.restartCondition)
+        ? globalThis.String(object.restartCondition)
+        : isSet(object.restart_condition)
+        ? globalThis.String(object.restart_condition)
+        : "",
     };
   },
 
@@ -9458,6 +9564,9 @@ export const SwarmServiceSpec: MessageFns<SwarmServiceSpec> = {
     if (message.stopGracePeriodSeconds !== 0) {
       obj.stopGracePeriodSeconds = Math.round(message.stopGracePeriodSeconds);
     }
+    if (message.restartCondition !== "") {
+      obj.restartCondition = message.restartCondition;
+    }
     return obj;
   },
 
@@ -9504,6 +9613,7 @@ export const SwarmServiceSpec: MessageFns<SwarmServiceSpec> = {
     message.updateOrder = object.updateOrder ?? "";
     message.failureAction = object.failureAction ?? "";
     message.stopGracePeriodSeconds = object.stopGracePeriodSeconds ?? 0;
+    message.restartCondition = object.restartCondition ?? "";
     return message;
   },
 };
@@ -10461,6 +10571,10 @@ function createBaseSwarmTaskSnapshot(): SwarmTaskSnapshot {
     status: "",
     nodeId: "",
     error: "",
+    running: undefined,
+    exitCode: undefined,
+    healthStatus: undefined,
+    state: undefined,
   };
 }
 
@@ -10492,6 +10606,18 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
     }
     if (message.error !== "") {
       writer.uint32(74).string(message.error);
+    }
+    if (message.running !== undefined) {
+      writer.uint32(80).bool(message.running);
+    }
+    if (message.exitCode !== undefined) {
+      writer.uint32(88).int32(message.exitCode);
+    }
+    if (message.healthStatus !== undefined) {
+      writer.uint32(98).string(message.healthStatus);
+    }
+    if (message.state !== undefined) {
+      writer.uint32(106).string(message.state);
     }
     return writer;
   },
@@ -10575,6 +10701,38 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
           message.error = reader.string();
           continue;
         }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.running = reader.bool();
+          continue;
+        }
+        case 11: {
+          if (tag !== 88) {
+            break;
+          }
+
+          message.exitCode = reader.int32();
+          continue;
+        }
+        case 12: {
+          if (tag !== 98) {
+            break;
+          }
+
+          message.healthStatus = reader.string();
+          continue;
+        }
+        case 13: {
+          if (tag !== 106) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10611,6 +10769,18 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
         ? globalThis.String(object.node_id)
         : "",
       error: isSet(object.error) ? globalThis.String(object.error) : "",
+      running: isSet(object.running) ? globalThis.Boolean(object.running) : undefined,
+      exitCode: isSet(object.exitCode)
+        ? globalThis.Number(object.exitCode)
+        : isSet(object.exit_code)
+        ? globalThis.Number(object.exit_code)
+        : undefined,
+      healthStatus: isSet(object.healthStatus)
+        ? globalThis.String(object.healthStatus)
+        : isSet(object.health_status)
+        ? globalThis.String(object.health_status)
+        : undefined,
+      state: isSet(object.state) ? globalThis.String(object.state) : undefined,
     };
   },
 
@@ -10643,6 +10813,18 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
     if (message.error !== "") {
       obj.error = message.error;
     }
+    if (message.running !== undefined) {
+      obj.running = message.running;
+    }
+    if (message.exitCode !== undefined) {
+      obj.exitCode = Math.round(message.exitCode);
+    }
+    if (message.healthStatus !== undefined) {
+      obj.healthStatus = message.healthStatus;
+    }
+    if (message.state !== undefined) {
+      obj.state = message.state;
+    }
     return obj;
   },
 
@@ -10660,6 +10842,10 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
     message.status = object.status ?? "";
     message.nodeId = object.nodeId ?? "";
     message.error = object.error ?? "";
+    message.running = object.running ?? undefined;
+    message.exitCode = object.exitCode ?? undefined;
+    message.healthStatus = object.healthStatus ?? undefined;
+    message.state = object.state ?? undefined;
     return message;
   },
 };

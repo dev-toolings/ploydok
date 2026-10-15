@@ -365,6 +365,9 @@ impl Monitor {
                     failing_streak: 0,
                     last_probe_output: String::new(),
                     container_missing: true,
+                    running: Some(false),
+                    exit_code: Some(-1),
+                    state: Some(String::new()),
                 };
             }
             Err(e) => {
@@ -374,6 +377,9 @@ impl Monitor {
                     failing_streak: 0,
                     last_probe_output: msg,
                     container_missing: false,
+                    running: Some(false),
+                    exit_code: Some(-1),
+                    state: Some(String::new()),
                 };
             }
         };
@@ -411,6 +417,24 @@ impl Monitor {
             failing_streak,
             last_probe_output: last_output,
             container_missing: false,
+            running: Some(
+                info.state.as_ref().and_then(|state| state.status.as_ref())
+                    == Some(&bollard::models::ContainerStateStatusEnum::RUNNING),
+            ),
+            exit_code: Some(
+                info.state
+                    .as_ref()
+                    .and_then(|state| state.exit_code)
+                    .map(|code| code as i32)
+                    .unwrap_or(-1),
+            ),
+            state: Some(
+                info.state
+                    .as_ref()
+                    .and_then(|state| state.status.as_ref())
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+            ),
         }
     }
 

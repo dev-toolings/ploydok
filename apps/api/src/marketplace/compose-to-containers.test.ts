@@ -60,6 +60,70 @@ services:
     expect(result[1]!.dependsOn).toEqual(["db"])
   })
 
+  it("preserves health and completion conditions for the orchestration wait", () => {
+    const result = run(`
+services:
+  app:
+    image: myapp:latest
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+  migrate:
+    image: migrate:latest
+    restart: "no"
+`)
+
+    expect(result.map((service) => service.composeName)).toEqual([
+      "db",
+      "migrate",
+      "app",
+    ])
+    expect(result[2]!.dependsOn).toEqual(["db", "migrate"])
+    expect(result[2]!.dependsOnConditions).toEqual({
+      db: "service_healthy",
+      migrate: "service_completed_successfully",
+    })
+  })
+
+  it("refuses service_healthy when the dependency has no healthcheck", () => {
+    expect(() => run(`
+services:
+  app:
+    image: myapp:latest
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16
+`)).toThrow(/service_healthy.*healthcheck|healthcheck.*service_healthy/i)
+  })
+
+  it("keeps a successful one-shot dependency eligible for service_completed_successfully", () => {
+    const result = run(`
+services:
+  app:
+    image: myapp:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  migrate:
+    image: migrate:latest
+    restart: "no"
+`)
+
+    const migration = result.find((service) => service.composeName === "migrate")!
+    expect(migration.restartPolicy).toBe("no")
+    expect(result.find((service) => service.composeName === "app")!.dependsOnConditions).toEqual({
+      migrate: "service_completed_successfully",
+    })
+  })
+
   it("environment as map", () => {
     const result = run(`
 services:
@@ -315,8 +379,8 @@ services:
     ).toThrow(/"image" is required/)
   })
 
-  it("rejects readiness dependency conditions", () => {
-    expect(() => run('services:\n  app:\n    image: alpine\n    depends_on:\n      db:\n        condition: service_healthy\n  db:\n    image: postgres:16')).toThrow(/service_healthy/)
+  it("rejects unknown dependency conditions", () => {
+    expect(() => run('services:\n  app:\n    image: alpine\n    depends_on:\n      db:\n        condition: service_ready\n  db:\n    image: postgres:16')).toThrow(/service_ready|expected service_started/i)
   })
 
   it("networks override → UnsupportedComposeFeatureError", () => {

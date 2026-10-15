@@ -69,7 +69,11 @@ export async function claimCreationSaga(
       lease_token: token,
       lease_until: leaseUntil,
       attempt_count: sql`${resource_creation_sagas.attempt_count} + 1`,
-      last_error: null,
+      last_error: sql`CASE
+        WHEN ${resource_creation_sagas.state} = 'compensating'
+          THEN ${resource_creation_sagas.last_error}
+        ELSE NULL
+      END`,
       updated_at: now,
     })
     .where(

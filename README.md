@@ -136,7 +136,24 @@ bun run apps/api/scripts/marketplace-catalog-report.ts --json /tmp/marketplace-r
 
 Add `--refresh` to fetch a new snapshot. Known limits are tracked in
 **DEV-355 through DEV-359**: mount support, multiple domains, configurable
-domain base, `depends_on: condition: service_healthy`, and unsupported fields.
+domain base, and unsupported fields.
+
+Compose dependencies preserve `service_started`, `service_healthy` (an explicit
+usable healthcheck is required), and `service_completed_successfully`. Each
+dependency edge has its own 300-second wait limit, with serial waits: five
+successive waits can therefore take up to 25 minutes. Timeout errors identify
+the dependency and its individual wait budget. Completion jobs preserve explicit
+`restart: on-failure`; a nonzero exit is terminal immediately only with
+`restart: "no"`. Successful existing one-shot jobs are inspected on resume and
+are never restarted; resume is refused if the agent cannot inspect them.
+Swarm dependency inspection requires an active single-node manager. Multi-node
+clusters and unverifiable topologies are explicitly refused because container
+health is available only from the local Docker node. API and agent must be
+updated together for dependency readiness inspection.
+Dependency failures roll back resources created by the deployment. If the
+application deployment loses its lease during a wait, it stops creating services
+and leaves existing services untouched to protect a successor's resources.
+Inspect and reconcile any partial stack before retrying that deployment.
 
 ### Observability
 

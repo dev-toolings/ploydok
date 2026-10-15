@@ -49,6 +49,10 @@ import {
   plannedServiceToSpec,
   removeComposeSwarmServices,
   swarmAgentFromGrpc,
+  waitForDockerContainerCondition,
+  waitForSwarmServiceCondition,
+  DependencyWaitError,
+  type DockerDependencyAgent,
   type ComposeSwarmAgent,
   type PlannedComposeStack,
 } from "../worker/compose-swarm.js"
@@ -64,7 +68,8 @@ export interface OrchestratorDeps {
     | "containerStop"
     | "containerRemove"
     | "listContainers"
-  >
+  > &
+    DockerDependencyAgent
   db: Db
   caddy?: Pick<CaddyClient, "upsertRoute" | "removeRoute">
   swarm?: ComposeSwarmAgent
@@ -326,7 +331,7 @@ export async function resumeServiceCreation(
             "service",
             serviceId,
             token,
-            "service creation compensated"
+            claim.saga.last_error ?? "service creation compensated"
           ))
         )
           throw new Error("service compensation lease lost")
@@ -367,8 +372,83 @@ export async function resumeServiceCreation(
         })
       }
 
+      const containerIdsByComposeName = new Map<string, string>()
+      for (const spec of containers) {
+        const existing = discoveredForService.find(
+          (container) => container.name.replace(/^\//, "") === spec.name
+        )
+        if (existing) containerIdsByComposeName.set(spec.composeName ?? spec.name, existing.id)
+      }
+      const completedDependencies = new Set(
+        containers.flatMap((container) =>
+          Object.entries(container.dependsOnConditions ?? {})
+            .filter(([, condition]) => condition === "service_completed_successfully")
+            .map(([dependency]) => dependency)
+        )
+      )
+
+      async function waitForDockerDependencies(spec: ComposeContainer) {
+        for (const dependency of spec.dependsOn) {
+          const condition =
+            spec.dependsOnConditions?.[dependency] ?? "service_started"
+          const dependencySpec = containers.find(
+            (candidate) => candidate.composeName === dependency
+          )
+          if (!dependencySpec) {
+            throw new DependencyWaitError({
+              dependency,
+              condition,
+              message: `Docker dependency ${dependency} is not present in the deployment plan`,
+            })
+          }
+          if (
+            condition === "service_healthy" &&
+            (!dependencySpec.healthcheck ||
+              dependencySpec.healthcheck.test[0] === "NONE")
+          ) {
+            throw new DependencyWaitError({
+              dependency,
+              condition,
+              message: `Docker dependency ${dependency} declares service_healthy but has no usable healthcheck`,
+            })
+          }
+          const dependencyId = containerIdsByComposeName.get(dependency)
+          if (!dependencyId) {
+            throw new DependencyWaitError({
+              dependency,
+              condition,
+              message: `Docker dependency ${dependency} was not created before ${spec.composeName ?? spec.name}`,
+            })
+          }
+          await waitForDockerContainerCondition(deps.agent, {
+            containerId: dependencyId,
+            dependency,
+            condition,
+            restartPolicy: dependencySpec.restartPolicy,
+            onPoll: fence,
+          })
+          await fence()
+          await db.transaction(async (tx) => {
+            if (
+              !(await recordClaimedCreationSagaStep(
+                tx,
+                "service",
+                serviceId,
+                token,
+                `dependency:${spec.composeName ?? spec.name}:${dependency}:${condition}`
+              ))
+            ) {
+              throw new Error(
+                "service creation saga lease lost while recording dependency readiness"
+              )
+            }
+          })
+        }
+      }
+
       for (const spec of containers) {
         await fence()
+        await waitForDockerDependencies(spec)
         const existing = discoveredForService.find(
           (container) => container.name.replace(/^\//, "") === spec.name
         )
@@ -407,9 +487,60 @@ export async function resumeServiceCreation(
           containerId = created.containerId
         }
         if (!containerId) throw new Error(`container ${spec.name} has no id`)
+        containerIdsByComposeName.set(spec.composeName ?? spec.name, containerId)
         await recordContainer(containerId, spec.name)
         await fence()
-        await deps.agent.containerStart({ containerId })
+        let alreadyCompleted = false
+        const isOneShot =
+          spec.restartPolicy === "no" ||
+          completedDependencies.has(spec.composeName ?? spec.name)
+        if (existing && isOneShot) {
+          if (!deps.agent.inspectContainerHealth) {
+            throw new DependencyWaitError({
+              dependency: spec.composeName ?? spec.name,
+              condition: "service_completed_successfully",
+              message:
+                `Cannot safely resume one-shot Docker dependency ` +
+                `${spec.composeName ?? spec.name}: the agent does not support ` +
+                "container inspection; refusing to restart an already finished container",
+            })
+          }
+          let state
+          try {
+            state = await deps.agent.inspectContainerHealth({ containerId })
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            const wrapped = new DependencyWaitError({
+              dependency: spec.composeName ?? spec.name,
+              condition: "service_completed_successfully",
+              message:
+                `Failed to inspect one-shot Docker dependency ` +
+                `${spec.composeName ?? spec.name}: ${detail}`,
+            })
+            ;(wrapped as Error & { cause?: unknown }).cause = error
+            throw wrapped
+          }
+          if (
+            state.containerMissing ||
+            state.state === undefined ||
+            state.running === undefined ||
+            state.exitCode === undefined
+          ) {
+            throw new DependencyWaitError({
+              dependency: spec.composeName ?? spec.name,
+              condition: "service_completed_successfully",
+              message:
+                `Cannot safely resume one-shot Docker dependency ` +
+                `${spec.composeName ?? spec.name}: container inspection ` +
+                "did not return a complete state; refusing to restart an ambiguous container",
+            })
+          }
+          alreadyCompleted =
+            state.state === "exited" &&
+            state.running === false &&
+            state.exitCode === 0
+        }
+        if (!alreadyCompleted) await deps.agent.containerStart({ containerId })
       }
       if (service.domain && containers.length) {
         await fence()
@@ -458,6 +589,54 @@ export async function resumeServiceCreation(
       await swarm.swarmEnsureSingleNode({})
       for (const spec of plan.services) {
         await fence()
+        for (const dependency of spec.dependsOn) {
+          const condition =
+            spec.dependsOnConditions?.[dependency] ?? "service_started"
+          const dependencyService = plan.services.find(
+            (candidate) => candidate.composeName === dependency
+          )
+          if (!dependencyService) {
+            throw new DependencyWaitError({
+              dependency,
+              condition,
+              message: `Swarm dependency ${dependency} is not present in the deployment plan`,
+            })
+          }
+          if (
+            condition === "service_healthy" &&
+            (!dependencyService.healthcheck ||
+              dependencyService.healthcheck.test[0] === "NONE")
+          ) {
+            throw new DependencyWaitError({
+              dependency,
+              condition,
+              message: `Swarm dependency ${dependency} declares service_healthy but has no usable healthcheck`,
+            })
+          }
+          await waitForSwarmServiceCondition(swarm, {
+            serviceName: dependencyService.name,
+            condition,
+            replicas: dependencyService.replicas,
+            restartPolicy: dependencyService.restartPolicy,
+            onPoll: fence,
+          })
+          await fence()
+          await db.transaction(async (tx) => {
+            if (
+              !(await recordClaimedCreationSagaStep(
+                tx,
+                "service",
+                serviceId,
+                token,
+                `dependency:${spec.composeName}:${dependency}:${condition}`
+              ))
+            ) {
+              throw new Error(
+                "service creation saga lease lost while recording dependency readiness"
+              )
+            }
+          })
+        }
         try {
           await swarm.serviceCreate({ spec: plannedServiceToSpec(spec) })
         } catch (error) {
@@ -502,7 +681,9 @@ export async function resumeServiceCreation(
       error,
       new Date(Date.now() + 5_000),
       new Date(),
-      compensating ? "compensating" : "failed"
+      compensating || error instanceof DependencyWaitError
+        ? "compensating"
+        : "failed"
     )
     throw error
   }
