@@ -381,6 +381,6 @@ describe.skipIf(skip)("workspace storage destination routes", () => {
       .from(storage_destinations)
       .where(eq(storage_destinations.id, failedId))
     expect(failedRow[0]?.last_test_status).toBe("failure")
-    expect(failedRow[0]?.last_test_error).toBe("Storage destination test failed")
+    expect(failedRow[0]?.last_test_error).toBe("unknown")
   })
 })

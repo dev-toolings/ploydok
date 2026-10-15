@@ -3,14 +3,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { apiFetch } from "./api"
 import i18n from "./i18n"
+import type {
+  StorageCredentialsInput,
+  StorageDestinationKind,
+  StorageProviderId,
+} from "@ploydok/shared"
 
-export type StorageDestinationKind = "local" | "s3"
+export type { StorageDestinationKind, StorageProviderId }
 export type StorageDestinationTestStatus = "success" | "failure" | null
 
 export interface StorageDestination {
   id: string
   name: string
   kind: StorageDestinationKind
+  provider: StorageProviderId
   endpoint: string | null
   bucket: string | null
   region: string | null
@@ -25,13 +31,11 @@ export interface StorageDestination {
 export interface StorageDestinationInput {
   name: string
   kind: StorageDestinationKind
-  endpoint?: string
+  provider?: StorageProviderId
+  endpoint?: string | null
   bucket?: string
   region?: string
-  credentials?: {
-    accessKeyId: string
-    secretAccessKey: string
-  }
+  credentials?: StorageCredentialsInput
 }
 
 const storageDestinationsKey = (orgSlug: string) =>
@@ -112,28 +116,68 @@ export function useUpdateStorageDestination(orgSlug: string) {
   })
 }
 
+export interface StorageDestinationTestInput {
+  destinationId: string
+  /** Create the bucket or container when the provider reports it missing. */
+  createBucket?: boolean
+}
+
 export function useTestStorageDestination(orgSlug: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (destinationId: string) =>
-      apiFetch<{ ok: boolean }>(
+    mutationFn: ({
+      destinationId,
+      createBucket,
+    }: StorageDestinationTestInput) =>
+      apiFetch<{ ok: boolean; bucketCreated?: boolean }>(
         `${storageDestinationsPath(orgSlug)}/${destinationId}/test`,
-        { method: "POST" }
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: { createBucket: Boolean(createBucket) },
+        }
       ),
-    onSettled: async () => {
+    onSuccess: async (data) => {
       await queryClient.invalidateQueries({
         queryKey: storageDestinationsKey(orgSlug),
       })
-    },
-    onSuccess: () => {
-      toast.success(i18n.t("storage:toasts.tested"))
-    },
-    onError: (error: Error) => {
-      toast.error(
-        i18n.t("storage:toasts.testFailed", { message: error.message })
+      toast.success(
+        i18n.t(
+          data.bucketCreated
+            ? "storage:toasts.testedBucketCreated"
+            : "storage:toasts.tested"
+        )
       )
     },
+    onError: async (_error: Error, { destinationId }) => {
+      await queryClient.invalidateQueries({
+        queryKey: storageDestinationsKey(orgSlug),
+      })
+      // The API stores a classified reason; read it from the refreshed row
+      // so the toast says what to fix rather than "test failed".
+      const destination = queryClient
+        .getQueryData<Array<StorageDestination>>(
+          storageDestinationsKey(orgSlug)
+        )
+        ?.find((item) => item.id === destinationId)
+      toast.error(i18n.t("storage:toasts.testFailedTitle"), {
+        description: i18n.t(testFailureKey(destination?.lastTestError ?? null)),
+      })
+    },
   })
+}
+
+const TEST_FAILURE_REASONS = new Set([
+  "auth_failed",
+  "bucket_not_found",
+  "endpoint_unreachable",
+  "endpoint_blocked",
+  "timeout",
+])
+
+/** i18n key that explains a stored test failure reason. */
+export function testFailureKey(reason: string | null): string {
+  return `storage:reasons.${reason && TEST_FAILURE_REASONS.has(reason) ? reason : "unknown"}`
 }
 
 export function useDeleteStorageDestination(orgSlug: string) {

@@ -28,14 +28,15 @@ import { childLogger } from "../logger"
 import type { AuthUser } from "../auth/middleware"
 import { requireAnyScope, requireScope } from "../auth/require-scope"
 import {
-  createBackupS3Probe,
+  createBackupStoreProbe,
   deleteBackupArtifact,
   inspectBackupArtifact,
   resolveBackupDestination,
 } from "../backups/storage"
+import { isRemoteLocation, parseRemoteLocation } from "../storage/object-store"
 import type {
   BackupArtifactMetadata,
-  BackupS3Probe,
+  BackupStoreProbe,
   S3BackedConfig,
 } from "../backups/storage"
 
@@ -172,7 +173,7 @@ const RestoreBody = z.object({
 
 type InlineDestinationConfig = {
   destination_id: string | null
-  destination_kind: "s3" | "local"
+  destination_kind: "s3" | "azure" | "local"
   s3_endpoint: string | null
   s3_bucket: string | null
   s3_region: string | null
@@ -438,7 +439,7 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
       !user.token_scopes || tokenHasScope(user.token_scopes, "apps:read")
 
     const entries: BackupInventoryEntry[] = []
-    const s3ProbeByConfig = new Map<string, Promise<BackupS3Probe>>()
+    const s3ProbeByConfig = new Map<string, Promise<BackupStoreProbe>>()
 
     if (canReadDatabases && kind !== "volume" && !appId) {
       const rows = await db
@@ -602,6 +603,10 @@ export function createBackupsRouter(db: Db): Hono<any, any, any> {
         }
       })
       entries.push(...volumeEntries)
+    }
+
+    for (const probe of s3ProbeByConfig.values()) {
+      void probe.then(({ store }) => store.close()).catch(() => {})
     }
 
     entries.sort((a, b) => {
@@ -1533,7 +1538,7 @@ interface BackupInventoryEntry {
   volumeId: string | null
   volumeName: string | null
   configId: string | null
-  destinationKind: "s3" | "local" | null
+  destinationKind: "s3" | "azure" | "local" | null
   location: string
   present: true | false | null
   probeError?: "unreachable"
@@ -1548,7 +1553,7 @@ type InventoryRowBase = {
   backup: {
     id: string
     config_id: string | null
-    destination_kind: "s3" | "local" | null
+    destination_kind: "s3" | "azure" | "local" | null
     location: string
     started_at: Date
     finished_at: Date | null
@@ -1608,7 +1613,7 @@ async function inspectInventoryArtifact(
   backupId: string,
   location: string,
   config: (S3BackedConfig & { id?: string }) | null,
-  s3ProbeByConfig: Map<string, Promise<BackupS3Probe>>
+  s3ProbeByConfig: Map<string, Promise<BackupStoreProbe>>
 ): Promise<InventoryProbeResult> {
   const configId = config?.id ?? null
   const resolvedConfig = config
@@ -1622,12 +1627,13 @@ async function inspectInventoryArtifact(
   const cached = readCachedInventoryProbe(backupId, configId, fingerprint)
   if (cached) return cached
 
-  let s3Probe: Promise<BackupS3Probe> | undefined
-  if (location.startsWith("s3://") && resolvedWithId) {
+  let s3Probe: Promise<BackupStoreProbe> | undefined
+  if (isRemoteLocation(location) && resolvedWithId) {
     const key = configId ?? fingerprint
     s3Probe = s3ProbeByConfig.get(key)
     if (!s3Probe) {
-      s3Probe = createBackupS3Probe(db, resolvedWithId)
+      const { scheme, bucket } = parseRemoteLocation(location)
+      s3Probe = createBackupStoreProbe(db, resolvedWithId, { scheme, bucket })
       s3ProbeByConfig.set(key, s3Probe)
     }
   }

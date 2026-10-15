@@ -3,26 +3,16 @@
   "description": "Create reusable destinations for database and volume backups.",
   "add": "Add destination",
   "edit": "Edit destination",
-  "createTitle": "Create a storage destination",
+  "createTitle": "Add a storage destination",
   "editTitle": "Edit storage destination",
-  "createDescription": "Keep one tested destination for every backup that uses it.",
   "editDescription": "Credentials stay protected. Leave the field blank to keep the current secret.",
   "name": "Name",
-  "namePlaceholder": "Backups R2 (production)",
-  "kind": "Type",
-  "local": "Local filesystem",
-  "s3": "S3-compatible",
   "endpoint": "Endpoint",
-  "endpointPlaceholder": "https://<account>.r2.cloudflarestorage.com",
-  "endpointHint": "Leave empty for the default AWS endpoint.",
   "bucket": "Bucket",
   "bucketPlaceholder": "ploydok-backups",
   "region": "Region",
-  "regionPlaceholder": "auto",
   "accessKeyId": "Access key ID",
-  "accessKeyPlaceholder": "AKIA...",
   "secretAccessKey": "Secret access key",
-  "secretPlaceholder": "Enter a new secret access key",
   "credentialsHint": "Credentials are encrypted and are never displayed here.",
   "credentialsKeepHint": "Leave blank to keep the existing credentials.",
   "credentialsRequired": "Enter both credential fields, or leave both blank.",
@@ -33,9 +23,8 @@
   "creating": "Creating…",
   "loading": "Loading storage destinations",
   "emptyTitle": "No storage destinations yet",
-  "emptyBody": "Create a local or S3-compatible destination before enabling backups.",
-  "nameColumn": "Name",
-  "kindColumn": "Type",
+  "emptyBody": "Connect Amazon S3, Azure, Cloudflare R2 and more, or start with this server's disk.",
+  "nameColumn": "Destination",
   "endpointColumn": "Endpoint",
   "bucketColumn": "Bucket",
   "regionColumn": "Region",
@@ -72,9 +61,140 @@
     "createFailed": "Could not create the destination: {{message}}",
     "updated": "Storage destination updated",
     "updateFailed": "Could not update the destination: {{message}}",
-    "tested": "Storage destination test passed",
-    "testFailed": "Storage destination test failed: {{message}}",
+    "tested": "Destination works: test file written, read and deleted",
     "deleted": "Storage destination deleted",
-    "deleteFailed": "Could not delete the destination: {{message}}"
+    "deleteFailed": "Could not delete the destination: {{message}}",
+    "testedBucketCreated": "Bucket created and destination tested",
+    "testFailedTitle": "Destination test failed"
+  },
+  "createTitleFor": "Connect {{provider}}",
+  "chooseProviderDescription": "Choose where backups go. Ploydok fills in the endpoint and checks the destination for you.",
+  "groupCloud": "Cloud providers",
+  "groupSelfHosted": "Self-hosted",
+  "groupServer": "This server",
+  "changeProvider": "Change",
+  "awsEndpointHint": "Endpoint chosen by AWS from the region.",
+  "container": "Container",
+  "bucketHint": "Lowercase letters, digits and hyphens.",
+  "regionChoose": "Choose a region",
+  "regionRequired": "Choose a region.",
+  "accountInvalid": "Enter a valid identifier: lowercase letters, digits and hyphens.",
+  "endpointRequired": "Enter the endpoint URL.",
+  "credentials": "Access keys",
+  "credentialsHelp": "Create keys on {{provider}}",
+  "credentialsMissing": "Enter the access keys.",
+  "hmacAccessId": "HMAC access ID",
+  "hmacSecret": "HMAC secret",
+  "b2KeyId": "keyID",
+  "b2ApplicationKey": "applicationKey",
+  "accountKey": "Account key",
+  "secretKeepPlaceholder": "Leave blank to keep the current secret",
+  "connectionString": "Connection string",
+  "connectionStringHint": "Optional. Paste it from Access keys in the Azure portal to fill in the fields below.",
+  "connectionStringInvalid": "This connection string has no AccountName or AccountKey.",
+  "createBucket": "Create the bucket if it does not exist",
+  "createContainer": "Create the container if it does not exist",
+  "createBucketHint": "Ploydok then writes, reads and deletes a test file to prove the destination works.",
+  "advancedShow": "Show advanced settings",
+  "advancedHide": "Hide advanced settings",
+  "endpointOverride": "Custom endpoint",
+  "endpointOverrideHint": "Only for a jurisdiction, a private endpoint or an emulator. Leave empty to use the default.",
+  "localHint": "Backups stay on this server. If the server is lost, they are lost with it: use it to get started, then add an off-site destination.",
+  "createAndTest": "Create and test",
+  "reasons": {
+    "auth_failed": "The provider rejected the keys. Check them and their permissions on this bucket.",
+    "bucket_not_found": "The bucket does not exist. Create it, or test again with automatic creation.",
+    "endpoint_unreachable": "The endpoint cannot be reached from this server. Check the URL, DNS and firewall.",
+    "endpoint_blocked": "This endpoint uses a blocked network address.",
+    "timeout": "The provider did not answer in time.",
+    "unknown": "The provider returned an unexpected error."
+  },
+  "providers": {
+    "aws": {
+      "name": "Amazon S3",
+      "short": "AWS object storage, any region.",
+      "defaultName": "Backups S3",
+      "tagline": "The global default object store. Pick the bucket region; the endpoint is set for you."
+    },
+    "cloudflare-r2": {
+      "name": "Cloudflare R2",
+      "short": "No egress fees.",
+      "defaultName": "Backups R2",
+      "tagline": "Paste your account ID and an R2 API token. No egress fees for restores.",
+      "accountLabel": "Account ID",
+      "accountHint": "Shown on the R2 overview page of the Cloudflare dashboard."
+    },
+    "azure-blob": {
+      "name": "Azure Blob Storage",
+      "short": "Native Azure, not S3.",
+      "defaultName": "Backups Azure",
+      "tagline": "Connects natively to Azure Blob Storage. Paste the connection string from the portal, or the account name and key.",
+      "accountLabel": "Storage account name",
+      "accountHint": "The name of the storage account, without .blob.core.windows.net."
+    },
+    "gcs": {
+      "name": "Google Cloud Storage",
+      "short": "Through HMAC interoperability keys.",
+      "defaultName": "Backups GCS",
+      "tagline": "Uses Cloud Storage interoperability: create an HMAC key for a service account."
+    },
+    "backblaze-b2": {
+      "name": "Backblaze B2",
+      "short": "Low-cost cloud storage.",
+      "defaultName": "Backups B2",
+      "tagline": "Use an application key restricted to the bucket."
+    },
+    "wasabi": {
+      "name": "Wasabi",
+      "short": "Hot storage, no egress fees.",
+      "defaultName": "Backups Wasabi",
+      "tagline": "Pick the bucket region; the endpoint is set for you."
+    },
+    "digitalocean-spaces": {
+      "name": "DigitalOcean Spaces",
+      "short": "Spaces object storage.",
+      "defaultName": "Backups Spaces",
+      "tagline": "Pick the Spaces region and use a Spaces access key."
+    },
+    "hetzner": {
+      "name": "Hetzner Object Storage",
+      "short": "Falkenstein, Nuremberg, Helsinki.",
+      "defaultName": "Backups Hetzner",
+      "tagline": "Pick the location and use S3 credentials from the Hetzner Cloud console."
+    },
+    "scaleway": {
+      "name": "Scaleway Object Storage",
+      "short": "Paris, Amsterdam, Warsaw.",
+      "defaultName": "Backups Scaleway",
+      "tagline": "Pick the region and use an API key from Scaleway IAM."
+    },
+    "ovhcloud": {
+      "name": "OVHcloud Object Storage",
+      "short": "European S3 object storage.",
+      "defaultName": "Backups OVHcloud",
+      "tagline": "Pick the region and use S3 credentials from your Public Cloud project."
+    },
+    "minio": {
+      "name": "MinIO / Garage",
+      "short": "Self-hosted S3 server.",
+      "defaultName": "Backups MinIO",
+      "tagline": "Point to your own S3 server. Keep it on another machine than this one.",
+      "endpointHint": "URL of the S3 API, including the port.",
+      "endpointPlaceholder": "https://minio.example.com:9000"
+    },
+    "s3-compatible": {
+      "name": "Other S3-compatible",
+      "short": "Any provider that speaks S3.",
+      "defaultName": "Backups S3",
+      "tagline": "Any S3-compatible service: IDrive e2, Linode, Storj, Exoscale, Ceph...",
+      "endpointHint": "S3 API URL given by your provider.",
+      "endpointPlaceholder": "https://s3.example.com"
+    },
+    "local": {
+      "name": "This server's disk",
+      "short": "Quick start, not off-site.",
+      "defaultName": "Local backups",
+      "tagline": "Backups are written to this server's disk."
+    }
   }
 }

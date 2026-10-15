@@ -24,6 +24,7 @@ import {
   isUnsafeStorageDestinationAddress,
   isUnsafeStorageDestinationEndpoint,
 } from "@ploydok/shared"
+import { S3_LINK_LOCAL_ENDPOINT_ERROR } from "./endpoint-guard"
 
 export interface S3Config {
   endpoint?: string | undefined
@@ -34,8 +35,7 @@ export interface S3Config {
 
 const CHUNK_SIZE = 5 * 1024 * 1024 // S3 multipart minimum: 5 MiB
 
-export const S3_LINK_LOCAL_ENDPOINT_ERROR =
-  "S3 endpoint points to a blocked link-local address"
+export { S3_LINK_LOCAL_ENDPOINT_ERROR }
 
 type LookupAll = (
   hostname: string,

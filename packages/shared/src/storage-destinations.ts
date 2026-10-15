@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from "zod"
+import {
+  STORAGE_ACCOUNT_PATTERN,
+  STORAGE_PROVIDERS,
+  StorageProviderIdSchema,
+} from "./storage-providers"
 
-export const StorageDestinationKindSchema = z.enum(["s3", "local"])
+export const StorageDestinationKindSchema = z.enum(["s3", "azure", "local"])
+export type StorageDestinationKind = z.infer<typeof StorageDestinationKindSchema>
 
 function parseIpv4Address(value: string): [number, number, number, number] | null {
   const parts = value.split(".")
@@ -100,6 +106,16 @@ const S3CredentialInputSchema = z.object({
   secretAccessKey: z.string().min(1).max(4096),
 })
 
+const AzureCredentialInputSchema = z.object({
+  accountName: z.string().trim().toLowerCase().regex(STORAGE_ACCOUNT_PATTERN),
+  accountKey: z.string().trim().min(1).max(4096),
+})
+
+const StorageCredentialInputSchema = z.union([
+  S3CredentialInputSchema.strict(),
+  AzureCredentialInputSchema.strict(),
+])
+
 /** Shared validation for configured S3-compatible endpoint URLs. */
 export const S3EndpointSchema = z
   .string()
@@ -131,38 +147,88 @@ export const CreateStorageDestinationSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     kind: StorageDestinationKindSchema,
+    provider: StorageProviderIdSchema.optional(),
     endpoint: S3EndpointSchema.optional(),
     bucket: z.string().trim().min(1).max(255).optional(),
     region: z.string().trim().min(1).max(255).optional(),
-    credentials: S3CredentialInputSchema.optional(),
+    credentials: StorageCredentialInputSchema.optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.provider && STORAGE_PROVIDERS[value.provider].kind !== value.kind) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["provider"],
+        message: "Provider does not match the destination type",
+      })
+    }
     if (value.kind === "local") {
       if (value.credentials) {
         ctx.addIssue({
           code: "custom",
           path: ["credentials"],
-          message: "Local destinations do not accept S3 credentials",
+          message: "Local destinations do not accept credentials",
         })
       }
       return
     }
     if (!value.bucket) {
-      ctx.addIssue({ code: "custom", path: ["bucket"], message: "Bucket is required for S3 destinations" })
+      ctx.addIssue({
+        code: "custom",
+        path: ["bucket"],
+        message:
+          value.kind === "azure"
+            ? "Container is required for Azure destinations"
+            : "Bucket is required for S3 destinations",
+      })
     }
-    if (!value.credentials) {
-      ctx.addIssue({ code: "custom", path: ["credentials"], message: "S3 credentials are required" })
-    }
+    checkCredentialsShape(value.kind, value.credentials, ctx, true)
   })
 
-export const UpdateStorageDestinationSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120).optional(),
-    endpoint: S3EndpointSchema.optional().nullable(),
-    bucket: z.string().trim().min(1).max(255).optional().nullable(),
-    region: z.string().trim().min(1).max(255).optional().nullable(),
-    credentials: S3CredentialInputSchema.optional().nullable(),
-  })
+function checkCredentialsShape(
+  kind: StorageDestinationKind,
+  credentials: z.infer<typeof StorageCredentialInputSchema> | null | undefined,
+  ctx: z.RefinementCtx,
+  required: boolean
+): void {
+  if (!credentials) {
+    if (required) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["credentials"],
+        message:
+          kind === "azure"
+            ? "Azure account name and key are required"
+            : "S3 credentials are required",
+      })
+    }
+    return
+  }
+  if (!storageCredentialsMatchKind(kind, credentials)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["credentials"],
+      message: "Credentials do not match the destination type",
+    })
+  }
+}
+
+export const UpdateStorageDestinationSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  provider: StorageProviderIdSchema.optional(),
+  endpoint: S3EndpointSchema.optional().nullable(),
+  bucket: z.string().trim().min(1).max(255).optional().nullable(),
+  region: z.string().trim().min(1).max(255).optional().nullable(),
+  credentials: StorageCredentialInputSchema.optional().nullable(),
+})
+
+/** Reject credentials of the wrong shape for an existing destination. */
+export function storageCredentialsMatchKind(
+  kind: StorageDestinationKind,
+  credentials: StorageCredentialsInput
+): boolean {
+  return (kind === "azure") === "accountKey" in credentials
+}
 
 export type CreateStorageDestinationInput = z.infer<typeof CreateStorageDestinationSchema>
+export type StorageCredentialsInput = z.infer<typeof StorageCredentialInputSchema>
 export type UpdateStorageDestinationInput = z.infer<typeof UpdateStorageDestinationSchema>

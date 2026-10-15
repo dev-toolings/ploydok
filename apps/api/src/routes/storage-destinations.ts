@@ -13,13 +13,23 @@ import {
 import type { Db } from "@ploydok/db"
 import {
   CreateStorageDestinationSchema,
+  detectStorageProvider,
+  STORAGE_PROVIDERS,
+  storageCredentialsMatchKind,
+  StorageProviderIdSchema,
   UpdateStorageDestinationSchema,
+  type StorageCredentialsInput,
 } from "@ploydok/shared"
 import type { AuthUser } from "../auth/middleware"
 import { requireRole } from "../auth/require-role"
 import { requireScope } from "../auth/require-scope"
 import { encryptField } from "../github/app-credentials"
-import { createS3Client, deleteObject, downloadStream, putObject } from "../storage/s3"
+import { parseDestinationCredentials } from "../backups/storage"
+import {
+  classifyStorageError,
+  openObjectStore,
+  type StorageFailureReason,
+} from "../storage/object-store"
 import { env } from "../env"
 
 type AppEnv = {
@@ -46,6 +56,7 @@ function destinationSummary(
     orgId: row.org_id,
     name: row.name,
     kind: row.kind,
+    provider: destinationProvider(row),
     endpoint: row.s3_endpoint,
     bucket: row.s3_bucket,
     region: row.s3_region,
@@ -57,6 +68,13 @@ function destinationSummary(
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   }
+}
+
+function destinationProvider(row: typeof storage_destinations.$inferSelect) {
+  const stored = StorageProviderIdSchema.safeParse(row.provider)
+  return stored.success && STORAGE_PROVIDERS[stored.data].kind === row.kind
+    ? stored.data
+    : detectStorageProvider(row.kind, row.s3_endpoint)
 }
 
 async function usageCount(db: Db, destinationId: string): Promise<number> {
@@ -105,7 +123,7 @@ async function createCredentialsSecret(
   db: Pick<Db, "insert">,
   orgId: string,
   destinationId: string,
-  credentials: { accessKeyId: string; secretAccessKey: string }
+  credentials: StorageCredentialsInput
 ): Promise<string> {
   const encrypted = await encryptField(JSON.stringify(credentials))
   const secretId = `storage-destination-secret-${destinationId}`
@@ -203,14 +221,16 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
     }
 
     const input = parsed.data
+    const remote = input.kind !== "local"
     const id = nanoid()
     const destination = {
       id,
       org_id: orgId,
       name: input.name,
       kind: input.kind,
-      s3_endpoint: input.kind === "s3" ? input.endpoint ?? null : null,
-      s3_bucket: input.kind === "s3" ? input.bucket ?? null : null,
+      provider: input.provider ?? null,
+      s3_endpoint: remote ? input.endpoint ?? null : null,
+      s3_bucket: remote ? input.bucket ?? null : null,
       s3_region: input.kind === "s3" ? input.region ?? null : null,
       credentials_secret_id: null as string | null,
       last_test_at: null,
@@ -220,7 +240,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       updated_at: new Date(),
     }
     await db.transaction(async (tx) => {
-      if (input.kind === "s3") {
+      if (remote) {
         destination.credentials_secret_id = await createCredentialsSecret(
           tx,
           orgId,
@@ -263,38 +283,25 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       )
     }
     const input = parsed.data
+    const invalid = (message: string) =>
+      c.json({ error: { code: "VALIDATION_ERROR", message } }, 400)
     if (input.credentials && existing.kind === "local") {
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "Local destinations do not accept S3 credentials",
-          },
-        },
-        400
-      )
+      return invalid("Local destinations do not accept credentials")
     }
-    if (input.credentials === null && existing.kind === "s3") {
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "S3 credentials cannot be cleared while the destination is S3",
-          },
-        },
-        400
-      )
+    if (
+      input.credentials &&
+      !storageCredentialsMatchKind(existing.kind, input.credentials)
+    ) {
+      return invalid("Credentials do not match the destination type")
     }
-    if (input.bucket === null && existing.kind === "s3") {
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "S3 bucket cannot be cleared while the destination is S3",
-          },
-        },
-        400
-      )
+    if (input.provider && STORAGE_PROVIDERS[input.provider].kind !== existing.kind) {
+      return invalid("Provider does not match the destination type")
+    }
+    if (input.credentials === null && existing.kind !== "local") {
+      return invalid("Credentials cannot be cleared on a remote destination")
+    }
+    if (input.bucket === null && existing.kind !== "local") {
+      return invalid("Bucket cannot be cleared on a remote destination")
     }
     const updateResult = await db.transaction(async (tx) => {
       const lockedRows = await tx
@@ -340,6 +347,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
         .update(storage_destinations)
         .set({
           ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.provider !== undefined ? { provider: input.provider } : {}),
           ...(input.endpoint !== undefined ? { s3_endpoint: input.endpoint } : {}),
           ...(input.bucket !== undefined ? { s3_bucket: input.bucket } : {}),
           ...(input.region !== undefined ? { s3_region: input.region } : {}),
@@ -482,9 +490,15 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       )
     }
 
+    const body = (await c.req.json().catch(() => null)) as {
+      createBucket?: unknown
+    } | null
+    const createBucket = body?.createBucket === true
+    let bucketCreated = false
+
     const testedAt = new Date()
     try {
-      if (destination.kind === "s3") {
+      if (destination.kind !== "local") {
         if (!destination.s3_bucket || !destination.credentials_secret_id) {
           throw new Error("incomplete destination")
         }
@@ -500,39 +514,27 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
           secret.value_ciphertext as Buffer,
           secret.nonce as Buffer
         )
-        const credentials = JSON.parse(plaintext) as {
-          accessKeyId: string
-          secretAccessKey: string
-        }
-        const client = createS3Client({
-          ...(destination.s3_endpoint
-            ? { endpoint: destination.s3_endpoint }
-            : {}),
-          region: destination.s3_region ?? "auto",
-          accessKeyId: credentials.accessKeyId,
-          secretAccessKey: credentials.secretAccessKey,
+        const store = await openObjectStore({
+          kind: destination.kind,
+          endpoint: destination.s3_endpoint,
+          bucket: destination.s3_bucket,
+          region: destination.s3_region,
+          credentials: parseDestinationCredentials(destination.kind, plaintext),
         })
         const key = `.ploydok/destination-tests/${destination.id}/${nanoid()}.txt`
         const marker = `ploydok-storage-test:${destination.id}:${nanoid()}`
         try {
+          if (createBucket) {
+            bucketCreated =
+              (await store.ensureBucket(AbortSignal.timeout(15_000))) === "created"
+          }
           // Mark this before PUT so a provider that writes then times out still
-          // gets a best-effort DeleteObject in the cleanup path.
+          // gets a best-effort delete in the cleanup path.
           let witnessCreated = true
           let operationError: unknown
           try {
-            await putObject(
-              client,
-              destination.s3_bucket,
-              key,
-              marker,
-              AbortSignal.timeout(10_000)
-            )
-            const stream = await downloadStream(
-              client,
-              destination.s3_bucket,
-              key,
-              AbortSignal.timeout(10_000)
-            )
+            await store.put(key, marker, AbortSignal.timeout(10_000))
+            const stream = await store.download(key, AbortSignal.timeout(10_000))
             const chunks: Buffer[] = []
             let size = 0
             const bodyTimeout = setTimeout(() => {
@@ -559,12 +561,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
           }
           if (witnessCreated) {
             try {
-              await deleteObject(
-                client,
-                destination.s3_bucket,
-                key,
-                AbortSignal.timeout(10_000)
-              )
+              await store.delete(key, AbortSignal.timeout(10_000))
               witnessCreated = false
             } catch (error) {
               operationError ??= error
@@ -574,7 +571,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
             throw operationError
           }
         } finally {
-          client.destroy()
+          store.close()
         }
       } else {
         const root = path.join(
@@ -622,16 +619,20 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       }
       return c.json({
         ok: true,
+        bucketCreated,
         testedAt: testedAt.toISOString(),
         destination: destinationSummary(updatedRows[0] ?? destination, await usageCount(db, destinationId)),
       })
-    } catch {
+    } catch (error) {
+      // Only the classified reason is stored and returned: provider messages
+      // can echo endpoints or key identifiers.
+      const reason: StorageFailureReason = classifyStorageError(error)
       const failedRows = await db
         .update(storage_destinations)
         .set({
           last_test_at: testedAt,
           last_test_status: "failure",
-          last_test_error: "Storage destination test failed",
+          last_test_error: reason,
           updated_at: new Date(),
         })
         .where(
@@ -654,6 +655,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
           error: {
             code: "DESTINATION_TEST_FAILED",
             message: "Storage destination test failed",
+            reason,
           },
         },
         502

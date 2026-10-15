@@ -217,6 +217,47 @@ describe("S3 destination witness testing", () => {
       expect.objectContaining({ last_test_status: "failure" })
     )
   })
+
+  it("stores a classified reason instead of the provider message", async () => {
+    putObject.mockRejectedValueOnce(
+      Object.assign(new Error("key AKIA... rejected"), { name: "InvalidAccessKeyId" })
+    )
+    const { db, state } = fakeDb()
+    const response = await testApp(db).request(testRequest())
+
+    expect(response.status).toBe(502)
+    expect(await response.json()).toMatchObject({
+      error: { code: "DESTINATION_TEST_FAILED", reason: "auth_failed" },
+    })
+    expect(state.updated).toContainEqual(
+      expect.objectContaining({ last_test_error: "auth_failed" })
+    )
+  })
+
+  it("creates a missing bucket before writing the witness when asked", async () => {
+    const send = mock(async (command: { constructor: { name: string } }) => {
+      if (command.constructor.name === "HeadBucketCommand") {
+        throw Object.assign(new Error("missing"), {
+          name: "NotFound",
+          $metadata: { httpStatusCode: 404 },
+        })
+      }
+      return {}
+    })
+    createS3Client.mockReturnValue({ send, destroy: mock(() => undefined) } as never)
+    const { db } = fakeDb()
+    const response = await testApp(db).request(
+      new Request(testRequest(), { body: JSON.stringify({ createBucket: true }) })
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, bucketCreated: true })
+    expect(send.mock.calls.map(([command]) => command.constructor.name)).toEqual([
+      "HeadBucketCommand",
+      "CreateBucketCommand",
+    ])
+    expect(putObject).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("storage destination route boundaries", () => {

@@ -98,8 +98,6 @@
     "chooseDestination": "Choose a destination",
     "destinationHint": "Choose a destination created in workspace Storage.",
     "noDestinations": "Create a destination in Storage first.",
-    "local": "Local filesystem",
-    "s3Option": "S3-compatible · R2 / AWS / Scaleway / OVH",
     "endpoint": "S3 endpoint",
     "endpointHint": "Leave empty for AWS default, or use a provider endpoint for R2, Scaleway, OVH, Backblaze, Wasabi, or any S3-compatible storage.",
     "bucket": "Bucket",
