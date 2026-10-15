@@ -7,6 +7,14 @@ import { getSharedAgent } from "../debug/singletons"
 import { buildHealthReport } from "./health"
 import { counter, gauge } from "./metrics"
 import type { HealthReport } from "./health"
+import {
+  backupAgeSeconds,
+  backupFreshnessKey,
+  backupDeadlineTimestampSeconds,
+  listBackupFreshness,
+  timestampSeconds,
+  type BackupFreshnessRow,
+} from "../backups/freshness"
 
 interface OperationalCounts extends Record<string, unknown> {
   deployments_total_15m: string | number
@@ -14,7 +22,6 @@ interface OperationalCounts extends Record<string, unknown> {
   stuck_builds: string | number
   stuck_jobs: string | number
   backup_failures_24h: string | number
-  stale_backup_resources: string | number
   outbox_pending: string | number
   outbox_stuck: string | number
   outbox_dead_lettered: string | number
@@ -55,7 +62,23 @@ const backupFailures = gauge(
 )
 const staleBackupResources = gauge(
   "ploydok_stale_backup_resources",
-  "Enabled backup resources without a successful backup during the last 24 hours."
+  "Enabled backup resources whose latest successful backup exceeds their schedule-derived age window."
+)
+const backupConfiguredAt = gauge(
+  "ploydok_backup_configured_at_timestamp_seconds",
+  "Unix timestamp when an enabled database or application-volume backup config was created."
+)
+const backupLastSuccess = gauge(
+  "ploydok_backup_last_success_timestamp_seconds",
+  "Unix timestamp of the latest successful backup for an enabled database or application-volume config, or zero when absent."
+)
+const backupAge = gauge(
+  "ploydok_backup_age_seconds",
+  "Age in seconds of the latest successful backup for an enabled database or application-volume config."
+)
+const backupDeadline = gauge(
+  "ploydok_backup_deadline_timestamp_seconds",
+  "Unix timestamp after which an enabled database or application-volume backup config is considered stale."
 )
 const controlPlaneBackupLastSuccess = gauge(
   "ploydok_control_plane_backup_last_success_timestamp_seconds",
@@ -133,6 +156,67 @@ function number(value: string | number): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
 }
+
+function setBackupFreshnessMetrics(
+  rows: BackupFreshnessRow[],
+  now: Date
+): void {
+  const seen = new Set<string>()
+
+  for (const row of rows) {
+    if (
+      (row.resource_type !== "database" && row.resource_type !== "volume") ||
+      !row.config_id ||
+      !row.resource_id
+    ) {
+      continue
+    }
+
+    const labels = {
+      resource_type: row.resource_type,
+      resource_id: row.resource_id,
+      config_id: row.config_id,
+    }
+    const key = backupFreshnessKey(row)
+    seen.add(key)
+    const configuredAt = timestampSeconds(row.configured_at)
+    const lastSuccess = timestampSeconds(row.last_success_at)
+    const age = backupAgeSeconds(now, row.last_success_at)
+
+    backupConfiguredAt.set(labels, configuredAt)
+    backupLastSuccess.set(labels, lastSuccess)
+    backupAge.set(labels, age)
+    backupDeadline.set(labels, backupDeadlineTimestampSeconds(row) ?? 0)
+  }
+
+  for (const key of backupFreshnessSeries.keys()) {
+    if (seen.has(key)) continue
+    const labels = backupFreshnessSeries.get(key)!
+    backupConfiguredAt.remove(labels)
+    backupLastSuccess.remove(labels)
+    backupAge.remove(labels)
+    backupDeadline.remove(labels)
+    backupFreshnessSeries.delete(key)
+  }
+
+  for (const row of rows) {
+    if (
+      (row.resource_type !== "database" && row.resource_type !== "volume") ||
+      !row.config_id ||
+      !row.resource_id
+    ) continue
+    backupFreshnessSeries.set(backupFreshnessKey(row), {
+      resource_type: row.resource_type,
+      resource_id: row.resource_id,
+      config_id: row.config_id,
+    })
+  }
+}
+
+const backupFreshnessSeries = new Map<
+  string,
+  { resource_type: string; resource_id: string; config_id: string }
+>()
 
 export type DeploymentOutcome =
   | "succeeded"
@@ -232,24 +316,6 @@ export async function collectOperationalMetrics(
           + (SELECT count(*) FROM volume_backups
             WHERE status = 'failed'
               AND started_at >= now() - interval '24 hours')) AS backup_failures_24h,
-        ((SELECT count(*) FROM backup_configs config
-            WHERE config.enabled = true
-              AND config.created_at < now() - interval '24 hours'
-              AND NOT EXISTS (
-                SELECT 1 FROM backups backup
-                WHERE backup.config_id = config.id
-                  AND backup.status = 'succeeded'
-                  AND backup.finished_at >= now() - interval '24 hours'
-              ))
-          + (SELECT count(*) FROM volume_backup_configs config
-            WHERE config.enabled = true
-              AND config.created_at < now() - interval '24 hours'
-              AND NOT EXISTS (
-                SELECT 1 FROM volume_backups backup
-                WHERE backup.config_id = config.id
-                  AND backup.status = 'succeeded'
-                  AND backup.finished_at >= now() - interval '24 hours'
-              ))) AS stale_backup_resources,
         (SELECT count(*) FROM outbox_events
           WHERE delivered_at IS NULL AND dead_lettered_at IS NULL) AS outbox_pending,
         (SELECT count(*) FROM outbox_events
@@ -274,7 +340,6 @@ export async function collectOperationalMetrics(
     stuckBuilds.set(undefined, number(row.stuck_builds))
     stuckJobs.set(undefined, number(row.stuck_jobs))
     backupFailures.set(undefined, number(row.backup_failures_24h))
-    staleBackupResources.set(undefined, number(row.stale_backup_resources))
     outboxPending.set(undefined, number(row.outbox_pending))
     outboxStuck.set(undefined, number(row.outbox_stuck))
     outboxDeadLettered.set(undefined, number(row.outbox_dead_lettered))
@@ -296,6 +361,23 @@ export async function collectOperationalMetrics(
     )
   } catch (error) {
     console.error("[operational-metrics] SQL collection failed", error)
+    failed = true
+  }
+
+  try {
+    const freshnessRows = await listBackupFreshness(db)
+    const now = new Date()
+    setBackupFreshnessMetrics(freshnessRows, now)
+    const nowSeconds = now.getTime() / 1_000
+    staleBackupResources.set(
+      undefined,
+      freshnessRows.filter((row) => {
+        const deadline = backupDeadlineTimestampSeconds(row)
+        return deadline !== null && deadline > 0 && nowSeconds > deadline
+      }).length
+    )
+  } catch (error) {
+    console.error("[operational-metrics] backup freshness collection failed", error)
     failed = true
   }
 

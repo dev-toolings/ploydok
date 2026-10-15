@@ -1,7 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it, mock } from "bun:test"
+import { afterEach, describe, expect, it, mock, test } from "bun:test"
 import { Hono } from "hono"
-import type { Db } from "@ploydok/db"
+import {
+  app_volumes,
+  apps,
+  backups,
+  createDb,
+  databases,
+  memberships,
+  projects,
+  users,
+  volume_backups,
+  type Db,
+} from "@ploydok/db"
+import { eq } from "drizzle-orm"
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { nanoid } from "nanoid"
+
+const testPgUrl = Bun.env.PLOYDOK_TEST_PG_URL ?? Bun.env.DATABASE_URL
 
 mock.module("@ploydok/db/queries", () => ({
   getAppForUser: mock(async () => ({
@@ -18,8 +36,8 @@ mock.module("@ploydok/db/queries", () => ({
 }))
 
 mock.module("../auth/second-factor", () => ({
-  requireTotpVerified:
-    () => async (_c: unknown, next: () => Promise<void>) => next(),
+  requireTotpVerified: () => async (_c: unknown, next: () => Promise<void>) =>
+    next(),
 }))
 
 mock.module("../logger", () => ({
@@ -44,6 +62,7 @@ function makeChain(results: unknown[]) {
   const chain: Record<string, unknown> = {
     from: () => chain,
     innerJoin: () => chain,
+    leftJoin: () => chain,
     where: () => chain,
     orderBy: () => chain,
     limit: () => Promise.resolve(result),
@@ -52,6 +71,14 @@ function makeChain(results: unknown[]) {
   }
   return chain
 }
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))
+  )
+})
 
 function buildDb(selectResults: unknown[]) {
   const inserts: unknown[] = []
@@ -238,6 +265,548 @@ describe("volume backup routes", () => {
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe("FORBIDDEN")
   })
+})
+
+describe("backup inventory route", () => {
+  it("lists present database and volume artifacts with age and destination size", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ploydok-backup-inventory-"))
+    tempDirs.push(dir)
+    const databaseLocation = path.join(dir, "database.dump")
+    const volumeLocation = path.join(dir, "volume.tar")
+    const missingLocation = path.join(dir, "missing.dump")
+    const artifactDate = new Date(Date.now() - 90_000)
+    await writeFile(databaseLocation, "database backup")
+    await writeFile(volumeLocation, "volume backup")
+    await utimes(databaseLocation, artifactDate, artifactDate)
+    await utimes(volumeLocation, artifactDate, artifactDate)
+
+    const databaseStartedAt = new Date("2026-04-28T10:00:00.000Z")
+    const volumeStartedAt = new Date("2026-04-28T09:00:00.000Z")
+    const { db } = buildDb([
+      [
+        {
+          backup: {
+            id: "inventory-db-1",
+            database_id: "db-1",
+            config_id: "db-config-1",
+            destination_kind: "local",
+            location: databaseLocation,
+            size_bytes: 1,
+            age_encrypted: false,
+            status: "succeeded",
+            error: null,
+            started_at: databaseStartedAt,
+            finished_at: databaseStartedAt,
+          },
+          database: { id: "db-1", name: "primary" },
+          config: null,
+          project: { id: "project-1" },
+        },
+        {
+          backup: {
+            id: "inventory-missing",
+            database_id: "db-1",
+            config_id: "db-config-2",
+            destination_kind: "local",
+            location: missingLocation,
+            size_bytes: 999,
+            age_encrypted: false,
+            status: "succeeded",
+            error: null,
+            started_at: databaseStartedAt,
+            finished_at: databaseStartedAt,
+          },
+          database: { id: "db-1", name: "primary" },
+          config: null,
+          project: { id: "project-1" },
+        },
+      ],
+      [
+        {
+          backup: {
+            id: "inventory-volume-1",
+            app_id: "app-1",
+            volume_id: "vol-1",
+            config_id: "volume-config-1",
+            destination_kind: "local",
+            location: volumeLocation,
+            size_bytes: 1,
+            age_encrypted: false,
+            status: "succeeded",
+            error: null,
+            started_at: volumeStartedAt,
+            finished_at: volumeStartedAt,
+          },
+          app: { id: "app-1", name: "demo-app" },
+          volume: { id: "vol-1", name: "data" },
+          config: null,
+          project: { id: "project-1" },
+        },
+      ],
+    ])
+
+    const res = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      backups: Array<{
+        id: string
+        kind: string
+        present: boolean | null
+        probeError?: string
+        sizeBytes: number | null
+        ageSeconds: number | null
+        databaseId: string | null
+        volumeId: string | null
+      }>
+    }
+    expect(body.backups).toHaveLength(3)
+    expect(body.backups.map((backup) => backup.id).sort()).toEqual([
+      "inventory-db-1",
+      "inventory-missing",
+      "inventory-volume-1",
+    ])
+    expect(body.backups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "inventory-db-1",
+          kind: "database",
+          present: true,
+          sizeBytes: Buffer.byteLength("database backup"),
+          databaseId: "db-1",
+          volumeId: null,
+        }),
+        expect.objectContaining({
+          id: "inventory-volume-1",
+          kind: "volume",
+          present: true,
+          sizeBytes: Buffer.byteLength("volume backup"),
+          databaseId: null,
+          volumeId: "vol-1",
+        }),
+      ])
+    )
+    expect(
+      body.backups
+        .filter((backup) => backup.present)
+        .every((backup) => (backup.ageSeconds ?? 0) >= 60)
+    ).toBe(true)
+    expect(body.backups).toContainEqual(
+      expect.objectContaining({
+        id: "inventory-missing",
+        present: false,
+        sizeBytes: null,
+        ageSeconds: null,
+      })
+    )
+  })
+
+  it("filters inventory queries by the token scopes that were granted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ploydok-backup-inventory-"))
+    tempDirs.push(dir)
+    const location = path.join(dir, "volume.tar")
+    await writeFile(location, "volume backup")
+
+    const { db } = buildDb([
+      [
+        {
+          backup: {
+            id: "inventory-volume-scoped",
+            app_id: "app-1",
+            volume_id: "vol-1",
+            config_id: "volume-config-1",
+            destination_kind: "local",
+            location,
+            status: "succeeded",
+            started_at: new Date("2026-04-28T09:00:00.000Z"),
+            finished_at: new Date("2026-04-28T09:00:00.000Z"),
+          },
+          app: { id: "app-1", name: "demo-app" },
+          volume: { id: "vol-1", name: "data" },
+          config: null,
+          project: { id: "project-1" },
+        },
+      ],
+    ])
+
+    const res = await wrapRouter(db, {
+      ...fakeUser,
+      token_scopes: ["apps:read"],
+    }).fetch(req("GET", "/backups/inventory"))
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      backups: Array<{ id: string; kind: string }>
+    }
+    expect(body.backups).toEqual([
+      expect.objectContaining({
+        id: "inventory-volume-scoped",
+        kind: "volume",
+      }),
+    ])
+  })
+
+  it("keeps healthy inventory rows when another destination probe fails", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ploydok-backup-inventory-"))
+    tempDirs.push(dir)
+    const location = path.join(dir, "available.dump")
+    await writeFile(location, "available backup")
+
+    const { db } = buildDb([
+      [
+        {
+          backup: {
+            id: "inventory-available",
+            database_id: "db-1",
+            config_id: "local-config",
+            destination_kind: "local",
+            location,
+            status: "succeeded",
+            started_at: new Date("2026-10-15T10:00:00.000Z"),
+            finished_at: new Date("2026-10-15T10:01:00.000Z"),
+          },
+          database: { id: "db-1", name: "primary" },
+          config: null,
+          project: { id: "project-1" },
+        },
+        {
+          backup: {
+            id: "inventory-unavailable",
+            database_id: "db-1",
+            config_id: "s3-config",
+            destination_kind: "s3",
+            location: "s3://missing-bucket/backup.dump",
+            status: "succeeded",
+            started_at: new Date("2026-10-15T09:00:00.000Z"),
+            finished_at: new Date("2026-10-15T09:01:00.000Z"),
+          },
+          database: { id: "db-1", name: "primary" },
+          config: null,
+          project: { id: "project-1" },
+        },
+      ],
+      [],
+    ])
+
+    const res = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { backups: Array<{ id: string }> }
+    expect(body.backups.map((backup) => backup.id).sort()).toEqual([
+      "inventory-available",
+      "inventory-unavailable",
+    ])
+    expect(body.backups).toContainEqual(
+      expect.objectContaining({
+        id: "inventory-available",
+        present: true,
+      })
+    )
+    expect(body.backups).toContainEqual(
+      expect.objectContaining({
+        id: "inventory-unavailable",
+        present: null,
+        probeError: "unreachable",
+        sizeBytes: null,
+        ageSeconds: null,
+      })
+    )
+  })
+
+  it("reuses a successful destination probe within the 60-second cache window", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ploydok-backup-inventory-"))
+    tempDirs.push(dir)
+    const location = path.join(dir, "cached.dump")
+    await writeFile(location, "cached backup")
+
+    const row = {
+      backup: {
+        id: "inventory-cache-hit",
+        database_id: "db-1",
+        config_id: "local-config",
+        destination_kind: "local",
+        location,
+        status: "succeeded",
+        started_at: new Date("2026-10-15T10:00:00.000Z"),
+        finished_at: new Date("2026-10-15T10:01:00.000Z"),
+      },
+      database: { id: "db-1", name: "primary" },
+      config: null,
+      project: { id: "project-1" },
+    }
+    const db = {
+      select: mock(() => makeChain([[row], []])),
+    } as unknown as Db
+
+    const first = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+    expect(first.status).toBe(200)
+    expect(
+      ((await first.json()) as { backups: Array<{ present: boolean }> })
+        .backups[0]?.present
+    ).toBe(true)
+
+    await rm(location)
+    const second = await wrapRouter(db).fetch(req("GET", "/backups/inventory"))
+    expect(second.status).toBe(200)
+    expect(
+      ((await second.json()) as { backups: Array<{ present: boolean }> })
+        .backups[0]?.present
+    ).toBe(true)
+  })
+
+  test.skipIf(!testPgUrl)(
+    "isolates inventory to projects where the current user is an accepted member",
+    async () => {
+      const db = createDb(testPgUrl!)
+      const dir = await mkdtemp(
+        path.join(tmpdir(), "ploydok-backup-inventory-")
+      )
+      tempDirs.push(dir)
+      const suffix = nanoid(8)
+      const now = new Date()
+      const userA = `inventory-user-a-${suffix}`
+      const userB = `inventory-user-b-${suffix}`
+      const projectA = `inventory-project-a-${suffix}`
+      const projectB = `inventory-project-b-${suffix}`
+      const databaseA = `inventory-database-a-${suffix}`
+      const databaseB = `inventory-database-b-${suffix}`
+      const appA = `inventory-app-a-${suffix}`
+      const appB = `inventory-app-b-${suffix}`
+      const volumeA = `inventory-volume-a-${suffix}`
+      const volumeB = `inventory-volume-b-${suffix}`
+
+      const createArtifact = async (name: string, contents: string) => {
+        const location = path.join(dir, name)
+        await writeFile(location, contents)
+        return location
+      }
+
+      try {
+        await db.insert(users).values([
+          {
+            id: userA,
+            email: `${userA}@example.test`,
+            display_name: "Inventory user A",
+            created_at: now,
+            updated_at: now,
+            recovery_token_hash: null,
+            recovery_expires_at: null,
+          },
+          {
+            id: userB,
+            email: `${userB}@example.test`,
+            display_name: "Inventory user B",
+            created_at: now,
+            updated_at: now,
+            recovery_token_hash: null,
+            recovery_expires_at: null,
+          },
+        ])
+        await db.insert(projects).values([
+          {
+            id: projectA,
+            owner_id: userA,
+            name: "Inventory project A",
+            slug: `inventory-a-${suffix}`,
+            created_at: now,
+          },
+          {
+            id: projectB,
+            owner_id: userB,
+            name: "Inventory project B",
+            slug: `inventory-b-${suffix}`,
+            created_at: now,
+          },
+        ])
+        await db.insert(memberships).values({
+          id: `inventory-membership-${suffix}`,
+          org_id: projectA,
+          user_id: userA,
+          role: "owner",
+          invited_at: now,
+          accepted_at: now,
+        })
+        await db.insert(databases).values([
+          {
+            id: databaseA,
+            project_id: projectA,
+            kind: "postgres",
+            version: "16",
+            name: "Visible database",
+            plan: "small",
+            management_mode: "managed",
+            volume_name: `db-volume-a-${suffix}`,
+            container_id: `db-container-a-${suffix}`,
+            status: "running",
+            health_status: "healthy",
+            created_at: now,
+          },
+          {
+            id: databaseB,
+            project_id: projectB,
+            kind: "postgres",
+            version: "16",
+            name: "Hidden database",
+            plan: "small",
+            management_mode: "managed",
+            volume_name: `db-volume-b-${suffix}`,
+            container_id: `db-container-b-${suffix}`,
+            status: "running",
+            health_status: "healthy",
+            created_at: now,
+          },
+        ])
+        await db.insert(apps).values([
+          {
+            id: appA,
+            project_id: projectA,
+            name: "Visible app",
+            slug: `inventory-app-a-${suffix}`,
+            created_at: now,
+            updated_at: now,
+          },
+          {
+            id: appB,
+            project_id: projectB,
+            name: "Hidden app",
+            slug: `inventory-app-b-${suffix}`,
+            created_at: now,
+            updated_at: now,
+          },
+        ])
+        await db.insert(app_volumes).values([
+          {
+            id: volumeA,
+            app_id: appA,
+            name: "data",
+            mount_path: "/data",
+            created_at: now,
+          },
+          {
+            id: volumeB,
+            app_id: appB,
+            name: "data",
+            mount_path: "/data",
+            created_at: now,
+          },
+        ])
+
+        const [
+          databaseLocationA,
+          databaseLocationB,
+          volumeLocationA,
+          volumeLocationB,
+        ] = await Promise.all([
+          createArtifact("database-a.dump", "visible database"),
+          createArtifact("database-b.dump", "hidden database"),
+          createArtifact("volume-a.tar", "visible volume"),
+          createArtifact("volume-b.tar", "hidden volume"),
+        ])
+        await db.insert(backups).values([
+          {
+            id: `inventory-backup-database-a-${suffix}`,
+            database_id: databaseA,
+            config_id: null,
+            destination_kind: "local",
+            location: databaseLocationA,
+            status: "succeeded",
+            started_at: now,
+            finished_at: now,
+          },
+          {
+            id: `inventory-backup-database-b-${suffix}`,
+            database_id: databaseB,
+            config_id: null,
+            destination_kind: "local",
+            location: databaseLocationB,
+            status: "succeeded",
+            started_at: now,
+            finished_at: now,
+          },
+        ])
+        await db.insert(volume_backups).values([
+          {
+            id: `inventory-backup-volume-a-${suffix}`,
+            app_id: appA,
+            volume_id: volumeA,
+            config_id: null,
+            destination_kind: "local",
+            location: volumeLocationA,
+            status: "succeeded",
+            started_at: now,
+            finished_at: now,
+          },
+          {
+            id: `inventory-backup-volume-b-${suffix}`,
+            app_id: appB,
+            volume_id: volumeB,
+            config_id: null,
+            destination_kind: "local",
+            location: volumeLocationB,
+            status: "succeeded",
+            started_at: now,
+            finished_at: now,
+          },
+        ])
+
+        const res = await wrapRouter(db, {
+          ...fakeUser,
+          id: userA,
+        }).fetch(req("GET", "/backups/inventory"))
+
+        expect(res.status).toBe(200)
+        const body = (await res.json()) as {
+          backups: Array<{ id: string; resourceName: string }>
+        }
+        expect(body.backups.map((backup) => backup.id).sort()).toEqual([
+          `inventory-backup-database-a-${suffix}`,
+          `inventory-backup-volume-a-${suffix}`,
+        ])
+        expect(body.backups.map((backup) => backup.resourceName)).not.toContain(
+          "Hidden database"
+        )
+        expect(body.backups.map((backup) => backup.resourceName)).not.toContain(
+          "Hidden app:data"
+        )
+
+        const scopedRouter = wrapRouter(db, { ...fakeUser, id: userA })
+        const databaseOnly = await scopedRouter.fetch(
+          req("GET", `/backups/inventory?kind=database&resourceId=${databaseA}`)
+        )
+        expect(
+          (
+            (await databaseOnly.json()) as { backups: Array<{ id: string }> }
+          ).backups.map((backup: { id: string }) => backup.id)
+        ).toEqual([`inventory-backup-database-a-${suffix}`])
+        const volumeOnly = await scopedRouter.fetch(
+          req(
+            "GET",
+            `/backups/inventory?kind=volume&resourceId=${volumeA}&appId=${appA}`
+          )
+        )
+        expect(
+          (
+            (await volumeOnly.json()) as { backups: Array<{ id: string }> }
+          ).backups.map((backup: { id: string }) => backup.id)
+        ).toEqual([`inventory-backup-volume-a-${suffix}`])
+        const mismatchedApp = await scopedRouter.fetch(
+          req(
+            "GET",
+            `/backups/inventory?kind=volume&resourceId=${volumeA}&appId=${appB}`
+          )
+        )
+        expect(
+          ((await mismatchedApp.json()) as { backups: unknown[] }).backups
+        ).toEqual([])
+      } finally {
+        await db.delete(projects).where(eq(projects.id, projectA))
+        await db.delete(projects).where(eq(projects.id, projectB))
+        await db.delete(users).where(eq(users.id, userA))
+        await db.delete(users).where(eq(users.id, userB))
+        await db.$client.end()
+      }
+    }
+  )
 })
 
 describe("database backup routes", () => {

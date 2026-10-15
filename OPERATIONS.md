@@ -47,7 +47,7 @@ maintenance window.
 | Agent authenticated RPC | 99.5% successful probes                                             | rolling 30 days                     |
 | Deployment completion   | 95% finish without platform failure                                 | rolling 30 days, minimum 20 deploys |
 | Queue latency           | 95% of builds claimed within 5 minutes                              | rolling 7 days                      |
-| Backup freshness        | every protected resource has a successful backup under 24 hours old | continuous                          |
+| Backup freshness        | every protected application resource meets its configured freshness age | continuous                       |
 
 Evaluate the objectives from Prometheus with these initial SLIs:
 
@@ -147,6 +147,134 @@ response sentinel and a managed-database data sentinel. Record archive age and e
 promotion fails above the 24-hour RPO or four-hour RTO. Run this drill for every
 release candidate. A code path or dry run alone is not release evidence.
 
+### Application backup inventory and freshness
+
+Database backup tabs and application-volume backup lists show whether each
+archive is present at its configured destination, its verified size, and its
+snapshot age. The inventory endpoint is `GET /backups/inventory`, with optional
+`kind=database|volume`, `resourceId`, and volume `appId` filters. It requires
+accepted project membership and the corresponding `databases:read` or
+`apps:read` token scope. A response contains at most 200 recent successful
+backup candidates. Local `stat` and S3 `HEAD` probes confirm presence; a missing
+object is distinct from an unavailable destination. Probe errors leave the UI
+in the unavailable state. Copying an old archive does not reset its displayed
+age, which uses the older of the snapshot start and destination modification.
+The API caches each destination probe for 60 seconds per backup and invalidates
+that cache when the backup or destination configuration changes.
+The web inventory query is cached and refreshed every five minutes. An explicit
+Refresh action fetches the backup rows and destination inventory immediately.
+The endpoint supports limit-only pagination: callers may request a bounded
+result set up to 200 entries, but there is no offset or cursor. Resource-scoped
+queries keep the UI response bounded while the cache avoids repeating probes.
+
+Each enabled database or volume backup config is checked against a
+schedule-derived deadline, including resources that are stopped. For a valid
+UTC cron schedule, use the latest successful backup as the reference, or the
+config creation timestamp when there is no successful backup. Find the first
+scheduled occurrence strictly after that reference, then the second occurrence
+after the first. The deadline is the first occurrence plus a tolerance of
+`max(60 seconds, 0.5 * (second - first))`: the 60-second floor covers the
+30-second scheduler scan and its 30-second grace. Invalid legacy expressions
+use the reference plus 24 hours. The API exposes `backup_deadline_at` to the
+database list, and Prometheus exports
+`ploydok_backup_deadline_timestamp_seconds` for each config. The UI
+does not infer a fixed freshness window. The protection badge uses the newest
+enabled config and successful backups from that same config. A recent failed or
+running job does not reset the reference to the last successful backup. A
+config with no success becomes stale when its configured deadline has elapsed.
+The `BackupFailureOrStale` alert evaluates only positive deadline values and
+keeps the existing `ploydok_backup_failures_24h > 0` failure path. It retains
+its ten-minute hold. API channels that subscribe to `backup.stale` receive the
+same condition through the resource's project owner, with a four-hour repeat
+window per stale episode. An episode changes when a new successful backup is
+recorded.
+
+The checked-in Prometheus deadline scenarios can be replayed from the test
+directory:
+
+```bash
+cd installer/tests
+promtool test rules backup-freshness.rules.test.yml
+```
+
+### Application backup restore drill
+
+The application backup drill downloads one plain `pg_dumpall` object from an
+S3-compatible destination, starts a new PostgreSQL container, restores the
+dump, and checks an operator-supplied row-count manifest. It measures RPO from
+the source snapshot timestamp and measures RTO from before the download until
+all row counts pass. The remote object is never changed.
+
+Garage is the local S3-compatible destination for development. Start only the
+task-owned Garage project when it is absent; do not replace or reset shared
+`infra-*` services. Prepare a source fixture, record its UTC snapshot timestamp, upload its
+plain SQL dump, and remove the source before the drill starts. For an existing
+application backup, use its recorded snapshot timestamp and independently
+recorded expected table counts.
+
+```bash
+set -a
+source /path/to/restore-drill.env
+set +a
+export SOURCE_SNAPSHOT_AT="${SOURCE_SNAPSHOT_AT:?set to the fixture UTC timestamp}"
+export VERIFY_DATABASE=dev333_fixture
+export EXPECT_ROWS=public.tenants:17,public.events:257
+scripts/restore-postgres-drill.sh
+```
+
+The environment file must provide `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`,
+`S3_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
+`TARGET_POSTGRES_PASSWORD`. Destination and verification settings also have
+command-line options; credentials and the target password remain environment
+variables. The command accepts repeated `--expect-rows schema.table:count`
+options. `SOURCE_SNAPSHOT_AT` must come from the source fixture creation or
+dump timestamp, never from the S3 upload timestamp. An object ending in `.age`
+also requires `--age-identity` and a local `age` binary.
+
+The script uses the short-lived `amazon/aws-cli` image for the download and
+the `postgres:16-alpine` image for the fresh target. It tolerates only the
+expected `postgres` role or database already-exists messages from a plain
+`pg_dumpall`; any other SQL error fails the drill. By default it removes the
+target container and temporary files on exit. `--keep-target` is available for
+post-drill inspection and still requires the task-owned container name prefix.
+The script passes secret environment names to Docker without placing their
+values in the `docker run` argument list. Docker still stores those values in
+the target container environment, which Docker daemon operators can inspect;
+this drill does not provide secret-manager storage.
+
+Measured local drill on 2026-10-15 UTC, with Garage v1.0.1 on loopback
+and cached `postgres:16-alpine` and `amazon/aws-cli:2.17.65` images. The
+task-owned source was removed before the drill and the downloaded object was
+checked against the uploaded bytes:
+
+```text
+ROW_COUNT table=public.tenants expected=17 actual=17
+ROW_COUNT table=public.events expected=257 actual=257
+S3_OBJECT=s3://dev333-fix-drill/fixture/application.dump
+SOURCE_SNAPSHOT_AT=2026-10-15T16:29:22.754Z
+RPO_SECONDS=12
+RTO_SECONDS=4
+RESTORE_STATUS=verified
+```
+
+The source was a task-owned PostgreSQL 16 fixture with two related tables.
+Its 6,400-byte plain `pg_dumpall` object was uploaded and downloaded with an
+exact byte comparison. The source container was removed before the drill.
+The restore target had fresh storage and received only the S3 object. The
+measured RTO includes download, target startup, SQL restore and row-count
+verification. Source, target and Garage were isolated task resources; existing
+`infra-*` containers were not modified.
+
+This proves the S3 recovery path on a fresh container, not recovery from loss
+of this physical host: local Garage shares the same failure domain. Repeat
+the command on a second host with independently stored credentials and a
+remote S3 destination before claiming the production off-host recovery target.
+This run used an unencrypted fixture; the optional age-decryption path was
+not exercised. Image pulls, DNS changes and full platform recovery are outside
+this four-second measurement. Task-owned fixtures were removed after the run;
+repeat runs must create or select an independently stored backup and record
+new timestamps, row counts, RPO and RTO rather than reuse these measurements.
+
 ## Paging alerts and runbooks
 
 All commands below are diagnostic unless a remediation step explicitly says
@@ -221,11 +349,12 @@ that an ordinary running deployment is stuck without a heartbeat signal.
 
 ### BackupFailureOrStale
 
-Trigger: `ploydok_backup_failures_24h > 0`, no successful protected-resource
-backup exists within the 24-hour RPO, the control-plane success stamp is older
-than 24 hours, or its failure stamp is newer than its success stamp. The
-control-plane rule is gated by `ploydok_control_plane_backup_configured`, so a
-fresh installation does not page before its backup timer is configured.
+Trigger: `ploydok_backup_failures_24h > 0`, or an enabled application backup
+config has a positive `ploydok_backup_deadline_timestamp_seconds` value and
+`time()` is beyond that deadline. The control-plane success stamp is older than
+24 hours, or its failure stamp is newer than its success stamp. The control-plane
+rule is gated by `ploydok_control_plane_backup_configured`, so a fresh
+installation does not page before its backup timer is configured.
 
 1. Verify destination connectivity, free space, credentials and encryption
    recipient without printing secrets.
@@ -233,7 +362,11 @@ fresh installation does not page before its backup timer is configured.
    object existence.
 3. A successful upload is not closure: schedule a restore verification and
    record its duration against the four-hour RTO.
-4. For the control plane, compare the timestamps exported by
+4. For an application or volume config, compare
+   `ploydok_backup_last_success_timestamp_seconds` with its labelled
+   `ploydok_backup_deadline_timestamp_seconds`; a positive deadline that has
+   passed remains actionable until a subsequent success refreshes the series.
+5. For the control plane, compare the timestamps exported by
    `ploydok_control_plane_backup_last_success_timestamp_seconds` and
    `ploydok_control_plane_backup_last_failure_timestamp_seconds`; a newer
    failure remains actionable until a subsequent success refreshes the stamp.

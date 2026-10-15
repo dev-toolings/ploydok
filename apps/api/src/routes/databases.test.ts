@@ -350,8 +350,12 @@ describe("GET /databases", () => {
 
   function buildListDb(rows: unknown[]) {
     const backupProtectionWhere = mock(() => backupProtectionQuery)
+    const latestBackupWhere = mock(() => latestBackupQuery)
     const latestBackupLimit = mock(() => latestBackupQuery)
     const latestBackupOrderBy = mock(() => latestBackupQuery)
+    const lastSuccessfulBackupWhere = mock(() => lastSuccessfulBackupQuery)
+    const lastSuccessfulBackupLimit = mock(() => lastSuccessfulBackupQuery)
+    const lastSuccessfulBackupOrderBy = mock(() => lastSuccessfulBackupQuery)
     const backupProtectionQuery = {
       from: () => backupProtectionQuery,
       where: backupProtectionWhere,
@@ -359,9 +363,16 @@ describe("GET /databases", () => {
     }
     const latestBackupQuery = {
       from: () => latestBackupQuery,
-      where: () => latestBackupQuery,
+      where: latestBackupWhere,
       orderBy: latestBackupOrderBy,
       limit: latestBackupLimit,
+      as: () => ({}),
+    }
+    const lastSuccessfulBackupQuery = {
+      from: () => lastSuccessfulBackupQuery,
+      where: lastSuccessfulBackupWhere,
+      orderBy: lastSuccessfulBackupOrderBy,
+      limit: lastSuccessfulBackupLimit,
       as: () => ({}),
     }
     const linkedAppsJoin = mock(() => linkedAppsQuery)
@@ -389,7 +400,8 @@ describe("GET /databases", () => {
           selectCalls += 1
           if (selectCalls === 1) return backupProtectionQuery
           if (selectCalls === 2) return latestBackupQuery
-          if (selectCalls === 3) return linkedAppsQuery
+          if (selectCalls === 3) return lastSuccessfulBackupQuery
+          if (selectCalls === 4) return linkedAppsQuery
           return listQuery
         }),
         insert: mock(() => ({ values: mock(async () => {}) })),
@@ -401,6 +413,10 @@ describe("GET /databases", () => {
       {
         latestBackupLimit,
         latestBackupOrderBy,
+        latestBackupWhere,
+        lastSuccessfulBackupLimit,
+        lastSuccessfulBackupOrderBy,
+        lastSuccessfulBackupWhere,
         backupProtectionWhere,
         linkedAppsJoin,
         listLeftJoinLateral,
@@ -413,8 +429,10 @@ describe("GET /databases", () => {
       {
         db: mockDatabaseRow,
         backup_enabled: null,
+        backup_schedule_cron: null,
         latest_backup_status: null,
         latest_backup_at: null,
+        last_successful_backup_at: null,
         linked_apps: null,
       },
     ])
@@ -425,6 +443,7 @@ describe("GET /databases", () => {
     expect(await res.json()).toEqual([
       expect.objectContaining({
         backup_enabled: false,
+        backup_deadline_at: null,
         latest_backup_status: null,
         latest_backup_at: null,
         linked_apps: [],
@@ -438,8 +457,11 @@ describe("GET /databases", () => {
       {
         db: mockDatabaseRow,
         backup_enabled: true,
+        backup_schedule_cron: "0 3 * * *",
+        backup_configured_at: new Date("2026-02-01T03:00:00.000Z"),
         latest_backup_status: "succeeded",
         latest_backup_at: latestBackupAt,
+        last_successful_backup_at: new Date("2026-03-02T03:05:06.000Z"),
         linked_apps: null,
       },
     ])
@@ -450,8 +472,10 @@ describe("GET /databases", () => {
     expect(await res.json()).toEqual([
       expect.objectContaining({
         backup_enabled: true,
+        backup_deadline_at: "2026-03-03T15:00:00.000Z",
         latest_backup_status: "succeeded",
         latest_backup_at: latestBackupAt.toISOString(),
+        last_successful_backup_at: "2026-03-02T03:05:06.000Z",
         linked_apps: [],
       }),
     ])
@@ -468,7 +492,16 @@ describe("GET /databases", () => {
       expect.anything()
     )
     expect(db.latestBackupLimit).toHaveBeenCalledWith(1)
-    expect(db.listLeftJoinLateral).toHaveBeenCalledTimes(3)
+    expect(db.latestBackupWhere).toHaveBeenCalledWith(expect.anything())
+    expect(db.lastSuccessfulBackupOrderBy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything()
+    )
+    expect(db.lastSuccessfulBackupLimit).toHaveBeenCalledWith(1)
+    expect(db.lastSuccessfulBackupWhere).toHaveBeenCalledWith(
+      expect.anything()
+    )
+    expect(db.listLeftJoinLateral).toHaveBeenCalledTimes(4)
     const protectionScope = (
       db.backupProtectionWhere.mock.calls as unknown as Array<[SQL]>
     )[0]?.[0]
@@ -476,6 +509,22 @@ describe("GET /databases", () => {
     expect(new PgDialect().sqlToQuery(protectionScope).sql).toContain(
       '"backup_configs"."database_id" = "databases"."id"'
     )
+    const latestBackupScope = (
+      db.latestBackupWhere.mock.calls as unknown as Array<[SQL]>
+    )[0]?.[0]
+    if (!latestBackupScope) throw new Error("Missing latest-backup scope")
+    expect(new PgDialect().sqlToQuery(latestBackupScope).sql).toContain(
+      '"backups"."config_id"'
+    )
+    const successfulBackupScope = (
+      db.lastSuccessfulBackupWhere.mock.calls as unknown as Array<[SQL]>
+    )[0]?.[0]
+    if (!successfulBackupScope) throw new Error("Missing successful-backup scope")
+    const successfulBackupQuery = new PgDialect().sqlToQuery(
+      successfulBackupScope
+    )
+    expect(successfulBackupQuery.sql).toContain('"backups"."config_id"')
+    expect(successfulBackupQuery.sql).toContain('"backups"."status"')
   })
 
   it("returns linked apps with their names, slugs, and count", async () => {
@@ -483,8 +532,10 @@ describe("GET /databases", () => {
       {
         db: mockDatabaseRow,
         backup_enabled: false,
+        backup_schedule_cron: null,
         latest_backup_status: null,
         latest_backup_at: null,
+        last_successful_backup_at: null,
         linked_apps: [
           {
             app_id: "app-api",

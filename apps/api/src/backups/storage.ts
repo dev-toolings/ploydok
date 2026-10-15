@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createWriteStream } from "node:fs"
-import { mkdir } from "node:fs/promises"
+import { mkdir, stat } from "node:fs/promises"
 import path from "node:path"
 import { Transform, type Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
@@ -9,9 +9,15 @@ import { secrets } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { BackupConfigRow, VolumeBackupConfigRow } from "@ploydok/db"
 import { decryptSecret } from "../secrets/crypto"
-import { createS3Client, deleteObject, uploadStream } from "../storage/s3"
+import {
+  createS3Client,
+  deleteObject,
+  headObject,
+  uploadStream,
+} from "../storage/s3"
+import type { S3Client } from "@aws-sdk/client-s3"
 
-type S3BackedConfig = Pick<
+export type S3BackedConfig = Pick<
   BackupConfigRow,
   "s3_endpoint" | "s3_region" | "s3_credentials_secret_id"
 > &
@@ -39,6 +45,16 @@ type BackupDestinationConfig = Pick<
 export interface S3Credentials {
   accessKeyId: string
   secretAccessKey: string
+}
+
+export interface BackupS3Probe {
+  client: S3Client
+  credentials: S3Credentials
+}
+
+export interface BackupArtifactMetadata {
+  sizeBytes: number
+  lastModifiedAt: Date
 }
 
 class ByteCounter extends Transform {
@@ -111,6 +127,72 @@ export async function deleteBackupArtifact(
   await unlink(location).catch(() => {})
 }
 
+/**
+ * Confirm that a backup artifact still exists and return metadata from the
+ * destination itself. The database row is deliberately not used as proof of
+ * presence because retention, manual deletion, and external lifecycle rules
+ * can remove the object independently.
+ */
+export async function inspectBackupArtifact(
+  db: Db,
+  location: string,
+  config: S3BackedConfig | null,
+  probe?: BackupS3Probe,
+): Promise<BackupArtifactMetadata | null> {
+  if (location.startsWith("s3://")) {
+    if (!config) {
+      throw new Error("S3 backup configuration is unavailable")
+    }
+
+    const resources = probe ?? (await createBackupS3Probe(db, config))
+    const { bucket, key } = parseS3Location(location)
+    let object
+    try {
+      object = await headObject(resources.client, bucket, key)
+    } catch (error) {
+      if (isMissingS3ObjectError(error)) return null
+      throw error
+    }
+    if (!object.lastModified) return null
+    return {
+      sizeBytes: object.size,
+      lastModifiedAt: object.lastModified,
+    }
+  }
+
+  const metadata = await stat(location).catch((error: unknown) => {
+    if (isMissingLocalArtifactError(error)) return null
+    throw error
+  })
+  if (!metadata?.isFile()) return null
+  return {
+    sizeBytes: metadata.size,
+    lastModifiedAt: metadata.mtime,
+  }
+}
+
+function isMissingLocalArtifactError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  return code === "ENOENT" || code === "ENOTDIR"
+}
+
+function isMissingS3ObjectError(error: unknown): boolean {
+  const candidate = error as
+    | {
+        name?: string
+        Code?: string
+        $metadata?: { httpStatusCode?: number }
+      }
+    | undefined
+  return (
+    candidate?.$metadata?.httpStatusCode === 404 ||
+    candidate?.name === "NotFound" ||
+    candidate?.name === "NoSuchKey" ||
+    candidate?.Code === "NotFound" ||
+    candidate?.Code === "NoSuchKey"
+  )
+}
+
 export async function resolveS3Credentials(
   db: Db,
   config: S3BackedConfig
@@ -141,6 +223,23 @@ export async function resolveS3Credentials(
     )
   }
   return creds
+}
+
+/** Resolve credentials and build one destination client for a request scope. */
+export async function createBackupS3Probe(
+  db: Db,
+  config: S3BackedConfig
+): Promise<BackupS3Probe> {
+  const credentials = await resolveS3Credentials(db, config)
+  return {
+    credentials,
+    client: createS3Client({
+      ...(config.s3_endpoint ? { endpoint: config.s3_endpoint } : {}),
+      region: config.s3_region ?? "auto",
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+    }),
+  }
 }
 
 export function buildBackupFilename(

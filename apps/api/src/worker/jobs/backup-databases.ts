@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { and, eq, sql } from "drizzle-orm"
+import { and, eq, isNull, or, sql } from "drizzle-orm"
 import { CronExpressionParser } from "cron-parser"
 import {
   apps,
   databases,
+  notification_channels,
+  projects,
   backup_configs,
   volume_backup_configs,
   createRedis,
@@ -14,9 +16,18 @@ import { runBackupOnce, type BackupRunResult } from "../../databases/backup"
 import { runVolumeBackupOnce } from "../../backups/volume"
 import { dispatch } from "../../notify/index"
 import { env } from "../../env"
+import {
+  backupAgeSeconds,
+  backupIsStale,
+  backupFreshnessKey,
+  listBackupFreshness,
+  timestampSeconds,
+  type BackupFreshnessRow,
+} from "../../backups/freshness"
 
 const log = childLogger("backup.cron")
 let interval: ReturnType<typeof setInterval> | null = null
+const STALE_NOTIFICATION_REPEAT_SECONDS = 4 * 60 * 60
 
 /** Coalesce missed executions into the latest due UTC occurrence. */
 export function latestBackupOccurrence(
@@ -81,7 +92,8 @@ async function notifyBackup(
   result: BackupRunResult,
   appId: string,
   appName: string,
-  projectId: string
+  projectId: string,
+  ownerId: string
 ) {
   const redis = createRedis(env.REDIS_URL)
   try {
@@ -94,13 +106,96 @@ async function notifyBackup(
         appName,
         commitSha: result.backupId,
       },
-      { userId: projectId, projectId }
+      { userId: ownerId, projectId }
     )
   } catch (err) {
     log.warn({ err, appId }, "backup notification dispatch failed")
   } finally {
     redis.disconnect()
   }
+}
+
+async function notifyStaleBackupConfigs(db: Db, now: Date): Promise<void> {
+  const rows = await listBackupFreshness(db)
+  const redis = createRedis(env.REDIS_URL)
+
+  try {
+    for (const row of rows) {
+      if (!isBackupFreshnessRow(row)) continue
+
+      const lastSuccess = timestampSeconds(row.last_success_at)
+      if (!backupIsStale(row, now)) continue
+
+      const channels = await db
+        .select({ events: notification_channels.events })
+        .from(notification_channels)
+        .where(
+          and(
+            eq(notification_channels.owner_id, row.owner_id),
+            or(
+              isNull(notification_channels.project_id),
+              eq(notification_channels.project_id, row.project_id)
+            ),
+            eq(notification_channels.enabled, true)
+          )
+        )
+      if (
+        !channels.some((channel) => channel.events.includes("backup.stale"))
+      ) {
+        continue
+      }
+
+      const lastSuccessKey = String(lastSuccess)
+      const dedupKey = [
+        "notify",
+        "backup-stale",
+        row.owner_id,
+        row.project_id,
+        row.resource_type,
+        row.config_id,
+        row.resource_status ?? "unknown",
+        lastSuccessKey,
+      ].join(":")
+      const claimed = await redis.set(
+        dedupKey,
+        "1",
+        "EX",
+        STALE_NOTIFICATION_REPEAT_SECONDS,
+        "NX"
+      )
+      if (claimed === null) continue
+
+      await dispatch(
+        db,
+        redis,
+        "backup.stale",
+        {
+          appId: row.resource_id,
+          appName: row.resource_name,
+          commitSha: `stale:${backupFreshnessKey(row)}:${lastSuccessKey}`,
+          errorMessage:
+            row.resource_status === "stopped"
+              ? "Resource is stopped; scheduled backups cannot run"
+              : lastSuccess === 0
+              ? "No successful backup has been recorded"
+              : `The last successful backup is ${backupAgeSeconds(now, row.last_success_at)} seconds old`,
+        },
+        { userId: row.owner_id, projectId: row.project_id }
+      )
+    }
+  } finally {
+    redis.disconnect()
+  }
+}
+
+function isBackupFreshnessRow(row: BackupFreshnessRow): boolean {
+  return Boolean(
+    row.owner_id &&
+      row.project_id &&
+      row.resource_id &&
+      row.resource_name &&
+      row.config_id
+  )
 }
 
 export async function runScheduledBackups(
@@ -110,13 +205,14 @@ export async function runScheduledBackups(
   let queued = 0
   let skipped = 0
   const configs = await db
-    .select({ config: backup_configs, db: databases })
+    .select({ config: backup_configs, db: databases, ownerId: projects.owner_id })
     .from(backup_configs)
     .innerJoin(databases, eq(backup_configs.database_id, databases.id))
+    .innerJoin(projects, eq(databases.project_id, projects.id))
     .where(
       and(eq(backup_configs.enabled, true), eq(databases.status, "running"))
     )
-  for (const { config, db: database } of configs) {
+  for (const { config, db: database, ownerId } of configs) {
     try {
       const result = await runScheduledBackupConfig(
         db,
@@ -132,7 +228,8 @@ export async function runScheduledBackups(
           result,
           database.id,
           database.name,
-          database.project_id
+          database.project_id,
+          ownerId
         )
       } else skipped++
     } catch (err) {
@@ -143,11 +240,12 @@ export async function runScheduledBackups(
     }
   }
   const volumeConfigs = await db
-    .select({ config: volume_backup_configs, app: apps })
+    .select({ config: volume_backup_configs, app: apps, ownerId: projects.owner_id })
     .from(volume_backup_configs)
     .innerJoin(apps, eq(volume_backup_configs.app_id, apps.id))
+    .innerJoin(projects, eq(apps.project_id, projects.id))
     .where(eq(volume_backup_configs.enabled, true))
-  for (const { config, app } of volumeConfigs) {
+  for (const { config, app, ownerId } of volumeConfigs) {
     try {
       const result = await runScheduledBackupConfig(
         db,
@@ -163,7 +261,8 @@ export async function runScheduledBackups(
           result,
           app.id,
           `${app.name}:${config.volume_id}`,
-          app.project_id
+          app.project_id,
+          ownerId
         )
       } else skipped++
     } catch (err) {
@@ -172,6 +271,11 @@ export async function runScheduledBackups(
         "scheduled volume backup interrupted; occurrence remains due"
       )
     }
+  }
+  try {
+    await notifyStaleBackupConfigs(db, now)
+  } catch (err) {
+    log.warn({ err }, "stale backup notification scan failed")
   }
   return { queued, skipped }
 }

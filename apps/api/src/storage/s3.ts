@@ -9,6 +9,7 @@ import {
   S3Client,
   GetObjectCommand,
   DeleteObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   type S3ClientConfig,
 } from "@aws-sdk/client-s3"
@@ -78,6 +79,22 @@ export async function downloadStream(
   const res = await client.send(cmd)
   if (!res.Body) throw new Error(`S3 object ${bucket}/${key} returned empty body`)
   return res.Body as Readable
+}
+
+/** Read metadata for one object without downloading its contents. */
+export async function headObject(
+  client: S3Client,
+  bucket: string,
+  key: string,
+): Promise<{ size: number; lastModified: Date | undefined }> {
+  const res = await client.send(
+    new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    { abortSignal: AbortSignal.timeout(5_000) }
+  )
+  return {
+    size: res.ContentLength ?? 0,
+    lastModified: res.LastModified,
+  }
 }
 
 /**

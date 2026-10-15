@@ -22,6 +22,9 @@ export type ChannelEvent =
   | "deploy.succeeded"
   | "deploy.failed"
   | "webhook.rotated"
+  | "backup.succeeded"
+  | "backup.failed"
+  | "backup.stale"
   | "app.autohealed"
   | "app.autoheal_failed"
   | "image.auto_updated"
@@ -258,6 +261,9 @@ export const ALL_EVENTS: ReadonlyArray<ChannelEvent> = [
   "deploy.succeeded",
   "deploy.failed",
   "webhook.rotated",
+  "backup.succeeded",
+  "backup.failed",
+  "backup.stale",
   "app.autohealed",
   "app.autoheal_failed",
   "image.auto_updated",
