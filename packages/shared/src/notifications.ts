@@ -11,6 +11,7 @@ export const NotificationEventEnum = z.enum([
   "db.rotated",
   "backup.succeeded",
   "backup.failed",
+  "backup.stale",
   "cve.detected",
   "app.autohealed",
   "app.autoheal_failed",

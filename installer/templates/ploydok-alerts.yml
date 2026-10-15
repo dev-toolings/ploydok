@@ -75,7 +75,7 @@ groups:
           runbook_url: https://github.com/dev-toolings/ploydok/blob/main/OPERATIONS.md#stuckjobs
 
       - alert: BackupFailureOrStale
-        expr: ploydok_backup_failures_24h > 0 or ploydok_stale_backup_resources > 0
+        expr: ploydok_backup_failures_24h > 0 or ploydok_stale_backup_resources > 0 or ((ploydok_backup_last_success_timestamp_seconds == 0 and time() - ploydok_backup_configured_at_timestamp_seconds > ploydok_backup_max_age_seconds) or (ploydok_backup_last_success_timestamp_seconds > 0 and ploydok_backup_age_seconds > ploydok_backup_max_age_seconds))
         for: 10m
         labels:
           severity: page

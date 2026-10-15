@@ -227,6 +227,11 @@
       "webhook": {
         "rotated": "Webhook secret rotated"
       },
+      "backup": {
+        "succeeded": "Backup succeeded",
+        "failed": "Backup failed",
+        "stale": "Backup is stale"
+      },
       "app": {
         "autohealed": "App auto-healed",
         "autoheal_failed": "Auto-heal abandoned"

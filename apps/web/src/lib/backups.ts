@@ -24,6 +24,24 @@ export interface Backup {
   finishedAt: string | null
 }
 
+export interface BackupInventoryItem {
+  id: string
+  kind: "database" | "volume"
+  resourceId: string
+  resourceName: string
+  databaseId: string | null
+  appId: string | null
+  volumeId: string | null
+  destinationKind: "s3" | "local" | null
+  location: string
+  present: boolean
+  sizeBytes: number | null
+  ageSeconds: number | null
+  artifactModifiedAt: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
 export interface BackupConfig {
   id: string
   databaseId?: string
@@ -117,6 +135,22 @@ export function useTargetBackups(target: BackupTarget) {
 
 export function useBackups(databaseId: string) {
   return useTargetBackups({ kind: "database", databaseId })
+}
+
+export function useTargetBackupInventory(target: BackupTarget) {
+  const params =
+    target.kind === "database"
+      ? `kind=database&resourceId=${encodeURIComponent(target.databaseId)}`
+      : `kind=volume&resourceId=${encodeURIComponent(target.volumeId)}&appId=${encodeURIComponent(target.appId)}`
+  return useQuery({
+    queryKey: ["backups", "inventory", target],
+    queryFn: () =>
+      apiFetch<{ backups: Array<BackupInventoryItem> }>(
+        `/backups/inventory?${params}`
+      ).then((data) => data.backups),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  })
 }
 
 export function useTargetBackupConfig(target: BackupTarget) {

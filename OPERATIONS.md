@@ -147,6 +147,98 @@ response sentinel and a managed-database data sentinel. Record archive age and e
 promotion fails above the 24-hour RPO or four-hour RTO. Run this drill for every
 release candidate. A code path or dry run alone is not release evidence.
 
+### Application backup inventory and freshness
+
+Database backup tabs and application-volume backup lists show whether each
+archive is present at its configured destination, its verified size, and its
+snapshot age. The inventory endpoint is `GET /backups/inventory`, with optional
+`kind=database|volume`, `resourceId`, and volume `appId` filters. It requires
+accepted project membership and the corresponding `databases:read` or
+`apps:read` token scope. A response contains at most 200 recent successful
+backup candidates. Local `stat` and S3 `HEAD` probes confirm presence; a missing
+object is distinct from an unavailable destination. Probe errors leave the UI
+in the unavailable state. Copying an old archive does not reset its displayed
+age, which uses the older of the snapshot start and destination modification.
+
+Each enabled database or volume backup config is checked against the existing
+24-hour RPO, including resources that are stopped. A recent failed or running
+job does not reset the age of the last successful backup. A config with no
+success becomes stale after its first 24 hours. Per-config Prometheus series
+feed `BackupFailureOrStale` after its existing ten-minute hold. API channels
+that subscribe to `backup.stale` receive the same condition through the
+resource's project owner, with a four-hour repeat window per stale episode.
+An episode changes when a new successful backup is recorded.
+
+### Application backup restore drill
+
+The application backup drill downloads one plain `pg_dumpall` object from an
+S3-compatible destination, starts a new PostgreSQL container, restores the
+dump, and checks an operator-supplied row-count manifest. It measures RPO from
+the source snapshot timestamp and measures RTO from before the download until
+all row counts pass. The remote object is never changed.
+
+Garage is the local S3-compatible destination for development. Start only the
+task-owned Garage project when it is absent; do not replace or reset shared
+`infra-*` services. Prepare a source fixture, record its UTC snapshot timestamp, upload its
+plain SQL dump, and remove the source before the drill starts. For an existing
+application backup, use its recorded snapshot timestamp and independently
+recorded expected table counts.
+
+```bash
+set -a
+source /path/to/restore-drill.env
+set +a
+export SOURCE_SNAPSHOT_AT="${SOURCE_SNAPSHOT_AT:?set to the fixture UTC timestamp}"
+export VERIFY_DATABASE=dev333_fixture
+export EXPECT_ROWS=public.tenants:17,public.events:257
+scripts/restore-postgres-drill.sh
+```
+
+The environment file must provide `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`,
+`S3_KEY`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. Destination and verification settings also have command-line options;
+credentials remain environment variables. The command accepts repeated `--expect-rows schema.table:count`
+options. `SOURCE_SNAPSHOT_AT` must come from the source fixture creation or
+dump timestamp, never from the S3 upload timestamp. An object ending in `.age`
+also requires `--age-identity` and a local `age` binary.
+
+The script uses the short-lived `amazon/aws-cli` image for the download and
+the `postgres:16-alpine` image for the fresh target. It tolerates only the
+expected `postgres` role or database already-exists messages from a plain
+`pg_dumpall`; any other SQL error fails the drill. By default it removes the
+target container and temporary files on exit. `--keep-target` is available for
+post-drill inspection and still requires the task-owned container name prefix.
+
+Measured local drill on 2026-10-15 UTC, with Garage v1.0.1 on loopback
+and cached `postgres:16-alpine` and `amazon/aws-cli:2.17.65` images:
+
+```text
+ROW_COUNT table=public.tenants expected=17 actual=17
+ROW_COUNT table=public.events expected=257 actual=257
+S3_OBJECT=s3://dev333-drill/fixture/application.dump
+SOURCE_SNAPSHOT_AT=2026-10-15T15:56:43.959Z
+RPO_SECONDS=325
+RTO_SECONDS=4
+RESTORE_STATUS=verified
+```
+
+The source was a task-owned PostgreSQL 16 fixture with two related tables.
+Its 12,439-byte plain `pg_dumpall` object was uploaded and downloaded with an
+exact byte comparison. The source container was removed before the drill.
+The restore target had fresh storage and received only the S3 object. The
+measured RTO includes download, target startup, SQL restore and row-count
+verification. Source, target and Garage were isolated task resources; existing
+`infra-*` containers were not modified.
+
+This proves the S3 recovery path on a fresh container, not recovery from loss
+of this physical host: local Garage shares the same failure domain. Repeat
+the command on a second host with independently stored credentials and a
+remote S3 destination before claiming the production off-host recovery target.
+This run used an unencrypted fixture; the optional age-decryption path was
+not exercised. Image pulls, DNS changes and full platform recovery are outside
+this four-second measurement. Task-owned fixtures were removed after the run;
+repeat runs must create or select an independently stored backup and record
+new timestamps, row counts, RPO and RTO rather than reuse these measurements.
+
 ## Paging alerts and runbooks
 
 All commands below are diagnostic unless a remediation step explicitly says

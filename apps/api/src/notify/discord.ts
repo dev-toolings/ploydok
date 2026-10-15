@@ -16,6 +16,7 @@ const EVENT_COLORS: Record<NotificationEvent, number> = {
   "db.rotated": 0x5865f2,
   "backup.succeeded": 0x57f287,
   "backup.failed": 0xed4245,
+  "backup.stale": 0xf0a500,
   "cve.detected": 0xed4245,
   "app.autohealed": 0xf0a500,
   "app.autoheal_failed": 0xed4245,

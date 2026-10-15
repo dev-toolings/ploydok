@@ -7,6 +7,14 @@ import { getSharedAgent } from "../debug/singletons"
 import { buildHealthReport } from "./health"
 import { counter, gauge } from "./metrics"
 import type { HealthReport } from "./health"
+import {
+  backupAgeSeconds,
+  backupFreshnessKey,
+  backupMaxAgeSeconds,
+  listBackupFreshness,
+  timestampSeconds,
+  type BackupFreshnessRow,
+} from "../backups/freshness"
 
 interface OperationalCounts extends Record<string, unknown> {
   deployments_total_15m: string | number
@@ -56,6 +64,22 @@ const backupFailures = gauge(
 const staleBackupResources = gauge(
   "ploydok_stale_backup_resources",
   "Enabled backup resources without a successful backup during the last 24 hours."
+)
+const backupConfiguredAt = gauge(
+  "ploydok_backup_configured_at_timestamp_seconds",
+  "Unix timestamp when an enabled database or application-volume backup config was created."
+)
+const backupLastSuccess = gauge(
+  "ploydok_backup_last_success_timestamp_seconds",
+  "Unix timestamp of the latest successful backup for an enabled database or application-volume config, or zero when absent."
+)
+const backupAge = gauge(
+  "ploydok_backup_age_seconds",
+  "Age in seconds of the latest successful backup for an enabled database or application-volume config."
+)
+const backupMaxAge = gauge(
+  "ploydok_backup_max_age_seconds",
+  "Maximum tolerated age in seconds for an enabled database or application-volume backup config."
 )
 const controlPlaneBackupLastSuccess = gauge(
   "ploydok_control_plane_backup_last_success_timestamp_seconds",
@@ -133,6 +157,67 @@ function number(value: string | number): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
 }
+
+function setBackupFreshnessMetrics(
+  rows: BackupFreshnessRow[],
+  now: Date
+): void {
+  const seen = new Set<string>()
+
+  for (const row of rows) {
+    if (
+      (row.resource_type !== "database" && row.resource_type !== "volume") ||
+      !row.config_id ||
+      !row.resource_id
+    ) {
+      continue
+    }
+
+    const labels = {
+      resource_type: row.resource_type,
+      resource_id: row.resource_id,
+      config_id: row.config_id,
+    }
+    const key = backupFreshnessKey(row)
+    seen.add(key)
+    const configuredAt = timestampSeconds(row.configured_at)
+    const lastSuccess = timestampSeconds(row.last_success_at)
+    const age = backupAgeSeconds(now, row.last_success_at)
+
+    backupConfiguredAt.set(labels, configuredAt)
+    backupLastSuccess.set(labels, lastSuccess)
+    backupAge.set(labels, age)
+    backupMaxAge.set(labels, backupMaxAgeSeconds())
+  }
+
+  for (const key of backupFreshnessSeries.keys()) {
+    if (seen.has(key)) continue
+    const labels = backupFreshnessSeries.get(key)!
+    backupConfiguredAt.remove(labels)
+    backupLastSuccess.remove(labels)
+    backupAge.remove(labels)
+    backupMaxAge.remove(labels)
+    backupFreshnessSeries.delete(key)
+  }
+
+  for (const row of rows) {
+    if (
+      (row.resource_type !== "database" && row.resource_type !== "volume") ||
+      !row.config_id ||
+      !row.resource_id
+    ) continue
+    backupFreshnessSeries.set(backupFreshnessKey(row), {
+      resource_type: row.resource_type,
+      resource_id: row.resource_id,
+      config_id: row.config_id,
+    })
+  }
+}
+
+const backupFreshnessSeries = new Map<
+  string,
+  { resource_type: string; resource_id: string; config_id: string }
+>()
 
 export type DeploymentOutcome =
   | "succeeded"
@@ -296,6 +381,14 @@ export async function collectOperationalMetrics(
     )
   } catch (error) {
     console.error("[operational-metrics] SQL collection failed", error)
+    failed = true
+  }
+
+  try {
+    const freshnessRows = await listBackupFreshness(db)
+    setBackupFreshnessMetrics(freshnessRows, new Date())
+  } catch (error) {
+    console.error("[operational-metrics] backup freshness collection failed", error)
     failed = true
   }
 

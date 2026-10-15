@@ -61,6 +61,7 @@ export function gauge(
   help: string
 ): {
   set: (labels: Labels | undefined, value: number) => void
+  remove: (labels?: Labels) => void
 } {
   let m = registry.get(name) as Gauge | undefined
   if (!m) {
@@ -71,6 +72,9 @@ export function gauge(
     set(labels: Labels | undefined = {}, value: number) {
       const k = labelKey(labels ?? {})
       m!.values.set(k, value)
+    },
+    remove(labels: Labels = {}) {
+      m!.values.delete(labelKey(labels))
     },
   }
 }

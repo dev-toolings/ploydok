@@ -4,7 +4,11 @@ import { useTranslation } from "react-i18next"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
-import { useDeleteBackup, useTargetBackups } from "../../lib/backups"
+import {
+  useDeleteBackup,
+  useTargetBackupInventory,
+  useTargetBackups,
+} from "../../lib/backups"
 import { RestoreDialog } from "./RestoreDialog"
 import type { Backup, BackupTarget } from "../../lib/backups"
 
@@ -15,16 +19,34 @@ interface BackupsListProps {
   backupNowLoading?: boolean
 }
 
-function formatSize(bytes: number | null): string {
-  if (bytes === null) return "—"
+function formatSize(bytes: number | null, unavailable: string): string {
+  if (bytes === null) return unavailable
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function formatDate(iso: string | null, lng: string): string {
-  if (!iso) return "—"
+function formatDate(
+  iso: string | null,
+  lng: string,
+  unavailable: string
+): string {
+  if (!iso) return unavailable
   return new Date(iso).toLocaleString(lng)
+}
+
+function formatAge(
+  ageSeconds: number | null,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  if (ageSeconds === null) return t("common:unavailable")
+  const seconds = Math.max(0, Math.floor(ageSeconds))
+  if (seconds < 60) return t("backupsList.ageSeconds", { count: seconds })
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return t("backupsList.ageMinutes", { count: minutes })
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t("backupsList.ageHours", { count: hours })
+  return t("backupsList.ageDays", { count: Math.floor(hours / 24) })
 }
 
 function StatusBadge({ status }: { status: Backup["status"] }) {
@@ -50,9 +72,18 @@ export function BackupsList({
 }: BackupsListProps): React.JSX.Element {
   const { t, i18n } = useTranslation("databases")
   const { data: backups, isLoading } = useTargetBackups(target)
+  const inventory = useTargetBackupInventory(target)
   const deleteBackup = useDeleteBackup(target)
   const [restoreBackup, setRestoreBackup] = React.useState<Backup | null>(null)
   const restoreEnabled = target.kind === "database"
+  const inventoryUnavailable = inventory.isError || inventory.isPending
+  const inventoryById = React.useMemo(
+    () =>
+      new Map(
+        (inventory.data ?? []).map((entry) => [entry.id, entry] as const)
+      ),
+    [inventory.data]
+  )
 
   if (isLoading) {
     return (
@@ -70,13 +101,18 @@ export function BackupsList({
   if (!backups || backups.length === 0) {
     return (
       <div className="py-4 text-sm text-muted-foreground">
+        {inventory.isError && (
+          <p className="mb-2 text-destructive">
+            {t("backupsList.inventoryUnavailable")}
+          </p>
+        )}
         {t("backupsList.empty")}{" "}
         {onBackupNow && (
           <Button
             variant="link"
             className="h-auto px-0"
             onClick={onBackupNow}
-            disabled={backupNowLoading}
+            loading={backupNowLoading}
           >
             {t("backupsList.createNow")}
           </Button>
@@ -93,6 +129,12 @@ export function BackupsList({
             <tr>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                 {t("backupsList.date")}
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                {t("backupsList.presence")}
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                {t("backupsList.age")}
               </th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                 {t("backupsList.destination")}
@@ -112,58 +154,98 @@ export function BackupsList({
             </tr>
           </thead>
           <tbody className="divide-y">
-            {backups.map((backup) => (
-              <tr key={backup.id} className="hover:bg-muted/30">
-                <td className="px-3 py-2 tabular-nums">
-                  {formatDate(backup.startedAt, i18n.language)}
-                </td>
-                <td className="px-3 py-2">
-                  {backup.destinationKind === "s3"
-                    ? t("backupsList.s3")
-                    : t("backupsList.local")}
-                </td>
-                <td className="px-3 py-2 tabular-nums">
-                  {formatSize(backup.sizeBytes)}
-                </td>
-                <td className="px-3 py-2">
-                  <StatusBadge status={backup.status} />
-                  {backup.error && (
-                    <span
-                      className="ml-2 text-xs text-destructive"
-                      title={backup.error}
+            {backups.map((backup) => {
+              const artifact = inventoryById.get(backup.id)
+              const verified =
+                artifact?.present === true && !inventoryUnavailable
+              return (
+                <tr key={backup.id} className="hover:bg-muted/30">
+                  <td className="px-3 py-2 tabular-nums">
+                    {formatDate(
+                      backup.startedAt,
+                      i18n.language,
+                      t("common:unavailable")
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge
+                      variant={
+                        inventoryUnavailable || backup.status !== "succeeded"
+                          ? "secondary"
+                          : verified
+                            ? "default"
+                            : "destructive"
+                      }
                     >
-                      {backup.error.slice(0, 60)}
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  {backup.ageEncrypted ? "age" : "—"}
-                </td>
-                <td className="flex items-center gap-2 px-3 py-2">
-                  {restoreEnabled && backup.status === "succeeded" && (
+                      {inventoryUnavailable || backup.status !== "succeeded"
+                        ? t("backupsList.unavailable")
+                        : verified
+                          ? t("backupsList.present")
+                          : t("backupsList.missing")}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {formatAge(
+                      verified ? (artifact?.ageSeconds ?? null) : null,
+                      t
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {backup.destinationKind === "s3"
+                      ? t("backupsList.s3")
+                      : t("backupsList.local")}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {formatSize(
+                      verified ? (artifact?.sizeBytes ?? null) : null,
+                      t("common:unavailable")
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <StatusBadge status={backup.status} />
+                    {backup.error && (
+                      <span
+                        className="ml-2 text-xs text-destructive"
+                        title={backup.error}
+                      >
+                        {backup.error.slice(0, 60)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {backup.ageEncrypted ? "age" : t("common:unavailable")}
+                  </td>
+                  <td className="flex items-center gap-2 px-3 py-2">
+                    {restoreEnabled && backup.status === "succeeded" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRestoreBackup(backup)}
+                      >
+                        {t("backupsList.restore")}
+                      </Button>
+                    )}
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      onClick={() => setRestoreBackup(backup)}
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => deleteBackup.mutate(backup.id)}
+                      loading={deleteBackup.isPending}
                     >
-                      {t("backupsList.restore")}
+                      {t("common:delete")}
                     </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => deleteBackup.mutate(backup.id)}
-                    loading={deleteBackup.isPending}
-                  >
-                    {t("common:delete")}
-                  </Button>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
+      {inventory.isError && (
+        <p className="mt-2 text-xs text-destructive" role="status">
+          {t("backupsList.inventoryUnavailable")}
+        </p>
+      )}
 
       {restoreBackup && (
         <RestoreDialog
