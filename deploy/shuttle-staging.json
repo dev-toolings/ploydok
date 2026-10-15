@@ -46,7 +46,7 @@
       },
       "caddy": {
         "context": "infra/caddy",
-        "dockerfile": "Dockerfile",
+        "dockerfile": "infra/caddy/Dockerfile",
         "services": [
           "caddy",
           "caddy-admin"
@@ -54,7 +54,7 @@
       },
       "adminer": {
         "context": "infra/adminer",
-        "dockerfile": "Dockerfile",
+        "dockerfile": "infra/adminer/Dockerfile",
         "services": [
           "adminer"
         ]
