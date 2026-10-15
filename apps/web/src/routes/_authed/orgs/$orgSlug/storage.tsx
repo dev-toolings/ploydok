@@ -12,13 +12,6 @@ import { useTranslation } from "react-i18next"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@workspace/ui/components/card"
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -96,7 +89,12 @@ function destinationDate(
   locale: string,
   unavailable: string
 ): string {
-  return value ? new Date(value).toLocaleString(locale) : unavailable
+  return value
+    ? new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(value))
+    : unavailable
 }
 
 function DestinationFormDialog({
@@ -329,6 +327,9 @@ function DestinationFormDialog({
   )
 }
 
+const DESTINATION_COLUMNS =
+  "xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.7fr)_minmax(0,0.8fr)_minmax(0,1.2fr)_9rem]"
+
 function DestinationRow({
   destination,
   locale,
@@ -351,36 +352,27 @@ function DestinationRow({
   const { t } = useTranslation("storage")
   const usage = destinationUsage(destination)
   const used = usage > 0
-  const lastTest = destination.lastTestStatus
-    ? destination.lastTestStatus === "success"
-      ? t("testSucceeded", {
-          date: destinationDate(
-            destination.lastTestAt,
-            locale,
-            t("neverTested")
-          ),
-        })
-      : t("testFailed", {
-          date: destinationDate(
-            destination.lastTestAt,
-            locale,
-            t("neverTested")
-          ),
-        })
-    : t("neverTested")
+  const lastTest =
+    destination.lastTestStatus === "success"
+      ? t("testSucceeded")
+      : destination.lastTestStatus === "failure"
+        ? t("testFailed")
+        : t("neverTested")
 
   return (
-    <li className="grid gap-4 border-b border-border p-4 last:border-b-0 md:grid-cols-[minmax(12rem,1.3fr)_minmax(8rem,0.7fr)_minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(9rem,1fr)_auto] md:items-center">
+    <li
+      className={`grid min-w-0 grid-cols-2 gap-4 border-b border-border p-4 last:border-b-0 xl:items-center ${DESTINATION_COLUMNS}`}
+    >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">
+        <p className="text-sm font-medium break-words text-foreground">
           {destination.name}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground md:hidden">
-          {destination.kind === "s3" ? t("s3") : t("local")}
-        </p>
       </div>
-      <div className="hidden md:block">
-        <Badge variant="secondary" className="gap-1.5">
+      <div className="min-w-0">
+        <Badge
+          variant="secondary"
+          className="max-w-full gap-1.5 whitespace-normal"
+        >
           {destination.kind === "s3" ? (
             <RiCloudLine className="size-3.5" aria-hidden="true" />
           ) : (
@@ -390,44 +382,45 @@ function DestinationRow({
         </Badge>
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:hidden">
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:sr-only">
           {t("endpointColumn")}
         </p>
-        <p className="truncate font-mono text-xs text-foreground">
-          {destination.endpoint ?? t("local")}
+        <p className="font-mono text-xs break-all text-foreground">
+          {destination.kind === "local"
+            ? t("notApplicable")
+            : destination.endpoint || t("notApplicable")}
         </p>
       </div>
-      <div>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:hidden">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:sr-only">
           {t("bucketColumn")}
         </p>
-        <p className="truncate text-sm text-foreground">
-          {destination.bucket ?? t("local")}
+        <p className="text-sm break-words text-foreground">
+          {destination.kind === "local"
+            ? t("notApplicable")
+            : destination.bucket || t("notApplicable")}
         </p>
       </div>
-      <div>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:hidden">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:sr-only">
           {t("regionColumn")}
         </p>
-        <p className="text-sm text-foreground">
-          {destination.region ?? t("local")}
+        <p className="text-sm break-words text-foreground">
+          {destination.kind === "local"
+            ? t("notApplicable")
+            : destination.region || t("notApplicable")}
         </p>
       </div>
-      <div>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:hidden">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:sr-only">
           {t("usageColumn")}
         </p>
-        <p className="text-sm text-foreground">
+        <p className="text-sm break-words text-foreground">
           {used ? t("usedBy", { count: usage }) : t("unused")}
         </p>
-        {used ? (
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("deleteDisabled")}
-          </p>
-        ) : null}
       </div>
-      <div>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:hidden">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:sr-only">
           {t("lastTestColumn")}
         </p>
         <Badge
@@ -438,48 +431,63 @@ function DestinationRow({
                 ? "default"
                 : "secondary"
           }
+          className="max-w-full whitespace-normal"
         >
-          {lastTest}
+          {testing ? t("testRunning") : lastTest}
         </Badge>
+        {destination.lastTestAt ? (
+          <time
+            dateTime={destination.lastTestAt}
+            className="mt-1 block text-xs text-muted-foreground"
+          >
+            {destinationDate(destination.lastTestAt, locale, t("neverTested"))}
+          </time>
+        ) : null}
       </div>
-      {canManage ? (
-        <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            loading={testing}
-            onClick={onTest}
-            className="gap-1.5"
-          >
-            <RiTestTubeLine aria-hidden="true" />
-            {testing ? t("testing") : t("test")}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onEdit}
-            className="gap-1.5"
-          >
-            <RiEditLine aria-hidden="true" />
-            {t("editAction")}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            loading={deleting}
-            disabled={used}
-            title={used ? t("deleteDisabled") : undefined}
-            onClick={onDelete}
-            className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            <RiDeleteBinLine aria-hidden="true" />
-            {deleting ? t("deleting") : t("deleteAction")}
-          </Button>
-        </div>
-      ) : null}
+      <div className="col-span-2 flex flex-nowrap items-center justify-end gap-1 xl:col-span-1">
+        {canManage ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              loading={testing}
+              disabled={deleting}
+              onClick={onTest}
+              aria-label={testing ? t("testing") : t("test")}
+              title={t("test")}
+              className="shrink-0"
+            >
+              <RiTestTubeLine aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-lg"
+              onClick={onEdit}
+              disabled={testing || deleting}
+              aria-label={t("editAction")}
+              title={t("editAction")}
+              className="shrink-0"
+            >
+              <RiEditLine aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-lg"
+              loading={deleting}
+              disabled={used || testing}
+              title={used ? t("deleteDisabled") : t("deleteAction")}
+              aria-label={deleting ? t("deleting") : t("deleteAction")}
+              onClick={onDelete}
+              className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <RiDeleteBinLine aria-hidden="true" />
+            </Button>
+          </>
+        ) : null}
+      </div>
     </li>
   )
 }
@@ -528,9 +536,9 @@ function StorageDestinationsPage(): React.JSX.Element {
     setFormOpen(false)
   }
 
-  const handleDelete = async (): Promise<void> => {
+  const handleDelete = (): void => {
     if (!deleting) return
-    await deleteDestination.mutateAsync(deleting.id)
+    deleteDestination.mutate(deleting.id)
     setDeleting(null)
   }
 
@@ -548,84 +556,85 @@ function StorageDestinationsPage(): React.JSX.Element {
         ) : null
       }
     >
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("title")}</CardTitle>
-          <CardDescription>{t("description")}</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div
-              className="space-y-3 p-4"
-              aria-busy="true"
-              aria-label={t("loading")}
-            >
-              <Skeleton className="h-16 w-full rounded-lg" />
-              <Skeleton className="h-16 w-full rounded-lg" />
-            </div>
-          ) : error ? (
-            <p className="p-5 text-sm text-destructive" role="alert">
-              {error.message}
+      <section
+        className="min-w-0 rounded-[10px] bg-panel-inset shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
+        aria-label={t("title")}
+      >
+        {isLoading ? (
+          <div
+            className="space-y-3 p-4"
+            aria-busy="true"
+            aria-label={t("loading")}
+          >
+            <Skeleton className="h-16 w-full rounded-lg" />
+            <Skeleton className="h-16 w-full rounded-lg" />
+          </div>
+        ) : error ? (
+          <p className="p-5 text-sm text-destructive" role="alert">
+            {error.message}
+          </p>
+        ) : destinations.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 p-10 text-center">
+            <RiHardDrive3Line
+              className="size-6 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <p className="text-sm font-medium text-foreground">
+              {t("emptyTitle")}
             </p>
-          ) : destinations.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <RiHardDrive3Line
-                className="size-6 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <p className="text-sm font-medium text-foreground">
-                {t("emptyTitle")}
-              </p>
-              <p className="max-w-md text-sm text-muted-foreground">
-                {t("emptyBody")}
-              </p>
-              {isOwner ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={openCreate}
-                  className="mt-2"
-                >
-                  {t("add")}
-                </Button>
-              ) : null}
+            <p className="max-w-md text-sm text-muted-foreground">
+              {t("emptyBody")}
+            </p>
+            {isOwner ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={openCreate}
+                className="mt-2"
+              >
+                {t("add")}
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            <div
+              className={`hidden gap-4 border-b border-border px-4 py-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase xl:grid ${DESTINATION_COLUMNS}`}
+              aria-hidden="true"
+            >
+              <span>{t("nameColumn")}</span>
+              <span>{t("kindColumn")}</span>
+              <span>{t("endpointColumn")}</span>
+              <span>{t("bucketColumn")}</span>
+              <span>{t("regionColumn")}</span>
+              <span>{t("usageColumn")}</span>
+              <span>{t("lastTestColumn")}</span>
+              <span className="text-right">{t("actionsColumn")}</span>
             </div>
-          ) : (
-            <>
-              <div className="hidden border-b border-border px-4 py-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:grid md:grid-cols-[minmax(12rem,1.3fr)_minmax(8rem,0.7fr)_minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(9rem,1fr)_auto] md:gap-4">
-                <span>{t("nameColumn")}</span>
-                <span>{t("kindColumn")}</span>
-                <span>{t("endpointColumn")}</span>
-                <span>{t("bucketColumn")}</span>
-                <span>{t("regionColumn")}</span>
-                <span>{t("usageColumn")}</span>
-                <span>{t("actionsColumn")}</span>
-              </div>
-              <ul>
-                {destinations.map((destination) => (
-                  <DestinationRow
-                    key={destination.id}
-                    destination={destination}
-                    locale={i18n.language}
-                    onEdit={() => openEdit(destination)}
-                    onDelete={() => setDeleting(destination)}
-                    onTest={() => testDestination.mutate(destination.id)}
-                    testing={
-                      testDestination.isPending &&
-                      testDestination.variables === destination.id
-                    }
-                    deleting={
-                      deleteDestination.isPending &&
-                      deleteDestination.variables === destination.id
-                    }
-                    canManage={Boolean(isOwner)}
-                  />
-                ))}
-              </ul>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            <ul>
+              {destinations.map((destination) => (
+                <DestinationRow
+                  key={destination.id}
+                  destination={destination}
+                  locale={i18n.resolvedLanguage ?? i18n.language}
+                  onEdit={() => openEdit(destination)}
+                  onDelete={() => setDeleting(destination)}
+                  onTest={() => testDestination.mutate(destination.id)}
+                  testing={
+                    testDestination.isPending &&
+                    testDestination.variables === destination.id
+                  }
+                  deleting={
+                    deleteDestination.isPending &&
+                    deleteDestination.variables === destination.id
+                  }
+                  canManage={Boolean(isOwner)}
+                />
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
 
       <DestinationFormDialog
         open={formOpen}
@@ -657,14 +666,13 @@ function StorageDestinationsPage(): React.JSX.Element {
               {t("cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
-              loading={deleteDestination.isPending}
               onClick={(event) => {
                 event.preventDefault()
-                void handleDelete()
+                handleDelete()
               }}
               className="bg-destructive bg-none text-white hover:bg-destructive/90"
             >
-              {deleteDestination.isPending ? t("deleting") : t("deleteConfirm")}
+              {t("deleteConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
