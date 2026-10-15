@@ -113,7 +113,7 @@ jobs:
           docker exec ploydok-ci-redis redis-cli ping | grep -q PONG
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       # The Caddy image is an xcaddy build with nine plugins; rebuilding it from
       # scratch costs about 90s per run, so cache the layers between runs.
