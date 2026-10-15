@@ -74,8 +74,16 @@ export interface AppDetail extends AppListItem {
   builds?: Array<Build>
 }
 
+export interface RawAppListItem extends Omit<
+  AppListItem,
+  "createdAt" | "updatedAt"
+> {
+  createdAt: number | string
+  updatedAt: number | string
+}
+
 export interface AppsResponse {
-  apps: Array<AppListItem>
+  apps: Array<RawAppListItem>
 }
 
 export interface BuildsResponse {
@@ -87,6 +95,8 @@ export interface BuildsResponse {
 // and `app.healthcheckPort` directly).
 export interface RawAppDetail extends Omit<
   AppDetail,
+  | "createdAt"
+  | "updatedAt"
   | "healthcheckPath"
   | "healthcheckPort"
   | "healthcheckIntervalS"
@@ -94,6 +104,8 @@ export interface RawAppDetail extends Omit<
   | "healthcheckRetries"
   | "healthcheckStartPeriodS"
 > {
+  createdAt: number | string
+  updatedAt: number | string
   healthcheck?: {
     path?: string | null
     port?: number | null
