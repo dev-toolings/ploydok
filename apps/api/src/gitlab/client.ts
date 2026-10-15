@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { GitBranchSchema, GitRepoSchema } from "@ploydok/shared"
+import {
+  GitBranchSchema,
+  GitRepoSchema,
+  ManifestTooLargeError,
+} from "@ploydok/shared"
 import type {
   CommitStatusInput,
   GitBranch,
@@ -145,14 +149,14 @@ export class GitLabProvider implements GitProvider {
 
     const contentLength = Number(res.headers.get("content-length") ?? "0")
     if (contentLength > 64 * 1024) {
-      throw new Error(
+      throw new ManifestTooLargeError(
         `GitLab /projects/${fullName}/repository/files/${filePath}/raw is too large`
       )
     }
 
     const content = await res.text()
     if (content.length > 64 * 1024) {
-      throw new Error(
+      throw new ManifestTooLargeError(
         `GitLab /projects/${fullName}/repository/files/${filePath}/raw is too large`
       )
     }

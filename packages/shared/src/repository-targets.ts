@@ -10,6 +10,14 @@ import type {
   StackClassification,
 } from "./stack-classifier"
 
+/** Thrown by manifest readers when a file exceeds the inspection size cap. */
+export class ManifestTooLargeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ManifestTooLargeError"
+  }
+}
+
 export interface RepositoryTarget {
   rootDir: string
   classification: StackClassification
@@ -84,8 +92,13 @@ export async function discoverRepositoryTargets(
     }
     const manifests: ManifestContents = {}
     for (const key of MANIFEST_FILE_PROBE_KEYS) {
-      if (files.has(`${prefix}${key}`))
+      if (!files.has(`${prefix}${key}`)) continue
+      try {
         manifests[key] = await readFile(`${prefix}${key}`)
+      } catch (error) {
+        // An oversized optional manifest must not abort detection.
+        if (!(error instanceof ManifestTooLargeError)) throw error
+      }
     }
     // A metadata/workspace package is not an executable application by itself.
     if (probes["package.json"] && manifests["package.json"]) {

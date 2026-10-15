@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { ManifestTooLargeError } from "@ploydok/shared";
 import { GitHubCache } from "./cache";
 import { GitHubProvider } from "./client";
 import * as installationTokens from "./installation-tokens";
@@ -274,5 +275,25 @@ describe("GitHub repository discovery", () => {
         "main"
       )
     ).toEqual(["custom/service/go.mod"])
+  })
+
+  it("reports a >64 KiB file as too large before checking the encoding", async () => {
+    using _token = spyOn(
+      installationTokens,
+      "getInstallationToken"
+    ).mockResolvedValue(FAKE_TOKEN)
+    using _fetch = spyOn(globalThis, "fetch").mockImplementation(
+      makeFetch(async () =>
+        makeResponse({ type: "file", encoding: "none", content: "", size: 2_000_000 })
+      )
+    )
+    await expect(
+      new GitHubProvider(new GitHubCache()).readFile(
+        FAKE_INSTALL_ID,
+        "owner/repo",
+        "composer.lock",
+        "main"
+      )
+    ).rejects.toBeInstanceOf(ManifestTooLargeError)
   })
 })
