@@ -582,6 +582,34 @@
       "when": 1791980773550,
       "tag": "0083_service_declared_entrypoint",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792083139711,
+      "tag": "0084_domain_routing_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792083139712,
+      "tag": "0085_routing_dns_tls_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792086469785,
+      "tag": "0086_domain_routing_drift_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792086901332,
+      "tag": "0087_runtime_healthcheck_truth",
+      "breakpoints": true
     }
   ]
 }

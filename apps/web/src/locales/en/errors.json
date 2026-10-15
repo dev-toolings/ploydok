@@ -24,7 +24,14 @@
     "BACKEND_UNAVAILABLE": "Unable to reach the service. Check your connection and try again.",
     "INVALID_CREDENTIALS": "Invalid email or password.",
     "RATE_LIMITED": "Too many attempts. Try again in a few minutes.",
-    "CSRF_MISMATCH": "Your security token has expired. Reload the page and try again."
+    "CSRF_MISMATCH": "Your security token has expired. Reload the page and try again.",
+    "INVALID_DOMAIN": "Enter a valid hostname without a path, port, or credentials.",
+    "DOMAIN_CONFLICT": "This hostname is already used by another resource.",
+    "CONFLICT": "This action conflicts with an existing resource.",
+    "VALIDATION_ERROR": "Some values are invalid. Review the form and try again.",
+    "rate_limited": "Too many requests. Try again shortly.",
+    "replay_limit_reached": "This delivery has reached its replay limit.",
+    "REPLAY_LIMIT_REACHED": "This delivery has reached its replay limit."
   },
   "networkDiagnostic": "No HTTP response for {{method}} {{url}} ({{reason}}). Check the API process, network, CORS and browser console. The browser does not reveal the exact cause to JavaScript.",
   "httpDiagnostic": "{{method}} {{url}} : HTTP {{status}} [{{code}}]. {{message}}",

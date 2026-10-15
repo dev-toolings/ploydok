@@ -29,6 +29,10 @@ import {
   buildPublicOrigin,
   deriveDefaultAppDomainBase,
 } from "../domains/app-domain"
+import {
+  assertDomainAvailable,
+  lockDomain,
+} from "../domains/availability"
 import { enqueueWithDbRow } from "../worker/queue-enqueue"
 import { serviceInstallQueue } from "../worker/queues"
 import { isAlreadyExists, isNotFound, toAgentError } from "../agent"
@@ -224,6 +228,11 @@ export async function installFromTemplate(
     queue: serviceInstallQueue,
     jobName: "service.install.requested",
     insertRow: async (tx) => {
+      const txDb = tx as unknown as Db
+      if (domain) {
+        await lockDomain(txDb, domain)
+        await assertDomainAvailable(txDb, domain)
+      }
       const row = await insertService(tx, {
         id: serviceId,
         project_id: input.projectId,

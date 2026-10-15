@@ -12,6 +12,7 @@ import {
   organizationPath,
   useCurrentOrganizationSlug,
 } from "../../lib/organizations"
+import { useRecheckAppRouting } from "../../lib/apps"
 import { AppHeaderActions } from "./AppHeaderActions"
 import { AppIcon } from "./AppIcon"
 import { AppStatusBadge } from "./AppStatusBadge"
@@ -73,6 +74,8 @@ export function AppBar({ app }: { app: AppDetail }): React.JSX.Element {
     ? organizationPath(currentOrgSlug, `apps/${app.id}/shell`)
     : `/apps/${app.id}/shell`
   const shellDisabled = displayedApp.status !== "running"
+  const routingActionRequired = app.routing?.status === "action_required"
+  const routingCheck = useRecheckAppRouting(app.id)
 
   return (
     <div className="flex w-full shrink-0 flex-col gap-4 px-4 py-4 md:px-8">
@@ -106,6 +109,14 @@ export function AppBar({ app }: { app: AppDetail }): React.JSX.Element {
         </div>
       </div>
 
+      {routingActionRequired ? (
+        <RoutingActionBanner
+          app={app}
+          checking={routingCheck.isPending}
+          onCheck={() => routingCheck.mutate()}
+        />
+      ) : null}
+
       <Tabs value={activeValue}>
         <TabsList>
           {resolvedItems.map((item) =>
@@ -128,6 +139,66 @@ export function AppBar({ app }: { app: AppDetail }): React.JSX.Element {
           )}
         </TabsList>
       </Tabs>
+    </div>
+  )
+}
+
+function RoutingActionBanner({
+  app,
+  checking,
+  onCheck,
+}: {
+  app: AppDetail
+  checking: boolean
+  onCheck: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation("apps")
+  const issue = app.routing?.issue
+  const details = [
+    app.routing?.dnsStatus
+      ? t("routing.dns", { status: t(`routing.dnsStatus.${app.routing.dnsStatus}`) })
+      : null,
+    app.routing?.tlsStatus
+      ? t("routing.tls", { status: t(`routing.tlsStatus.${app.routing.tlsStatus}`) })
+      : null,
+  ].filter((value): value is string => Boolean(value))
+
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-foreground sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        <span aria-hidden className="mt-1.5 size-2 shrink-0 rounded-full bg-amber-500" />
+        <div className="min-w-0">
+          <p className="font-medium">
+            {issue === "dns"
+              ? t("routing.dnsActionRequired")
+              : issue === "tls"
+                ? t("routing.tlsActionRequired")
+                : t("routing.actionRequired")}
+          </p>
+          {details.length > 0 ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              {details.join(" · ")}
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("routing.actionHint")}
+            </p>
+          )}
+        </div>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        loading={checking}
+        onClick={onCheck}
+        className="min-h-11 shrink-0 border-amber-500/40 text-xs hover:bg-amber-500/10"
+      >
+        {checking ? t("routing.checking") : t("routing.checkAgain")}
+      </Button>
     </div>
   )
 }

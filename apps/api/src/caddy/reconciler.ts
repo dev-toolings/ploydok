@@ -6,9 +6,20 @@
 // apps `running`/`restarting` vers l'Admin API Caddy. Idempotent via
 // `setUpstream` (PATCH si route existe, POST sinon).
 import { swarmComposeServiceName } from "../worker/compose-swarm.js"
-import { and, eq, inArray, isNotNull } from "drizzle-orm"
 import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  notExists,
+  or,
+} from "drizzle-orm"
+import {
+  app_deploy_leases,
   apps as appsTable,
+  builds,
   databases as databasesTable,
   services as servicesTable,
   type Db,
@@ -18,16 +29,46 @@ import type { Logger } from "pino"
 import { caddyStaticRootForApp } from "../worker/handlers/build-static.js"
 import { composeToContainers } from "../marketplace/compose-to-containers.js"
 import { upsertServiceRoute } from "./service-routes.js"
+import { ContainerHealthStatus } from "@ploydok/agent-proto"
+import type { Agent } from "../agent/index.js"
+import { isNotFound, toAgentError } from "../agent/errors.js"
+import { listSwarmTasks, taskIsHealthy } from "../worker/swarm-runner.js"
+import {
+  publishHealthyAppRoute,
+  syncAppDomainAliases,
+} from "../domains/routing.js"
+import {
+  runtimeContainerNameCandidates,
+  type RuntimeContainerColor,
+} from "../services/runtime-containers.js"
+import {
+  DeployLeaseLostError,
+  fenceDeploySideEffect,
+  withAppDeployLease,
+} from "../worker/app-deploy-lock.js"
 export { applyCdnHandlers, type CdnAppConfig } from "./cdn.js"
 
 export interface AppForReconcile {
   id: string
+  slug?: string
+  domain_source?: string
+  routing_status?: string
+  routing_dns_status?: string | null
+  current_build_id?: string | null
+  updated_at?: Date | null
   domain: string | null
   container_id: string | null
   runtime_mode: "docker" | "swarm"
   swarm_service_name: string | null
+  replicas?: number | null
   runtime_port: number | null
   healthcheck_port: number | null
+  healthcheck_path?: string | null
+  healthcheck_interval_s?: number | null
+  healthcheck_timeout_s?: number | null
+  healthcheck_retries?: number | null
+  healthcheck_start_period_s?: number | null
+  runtime_has_healthcheck?: boolean | null
   build_method: string | null
   static_spa_fallback: boolean | null
   cdn_mode: "off" | "internal" | "external"
@@ -65,18 +106,43 @@ export interface DatabaseProxyForReconcile {
   public_port: number | null
 }
 
+/** Reconciliation may restore a verified route, but cannot authorize a new custom host. */
+export function canRestoreAppRoute(app: {
+  domain_source: string
+  routing_status: string
+  routing_dns_status: string | null
+}): boolean {
+  return (
+    app.domain_source === "generated" ||
+    app.routing_status === "ready" ||
+    app.routing_dns_status === "valid"
+  )
+}
+
 export async function fetchRunningAppsForCaddy(
   db: Db
 ): Promise<AppForReconcile[]> {
-  return db
+  const rows = await db
     .select({
       id: appsTable.id,
+      slug: appsTable.slug,
+      domain_source: appsTable.domain_source,
+      routing_status: appsTable.routing_status,
+      routing_dns_status: appsTable.routing_dns_status,
       domain: appsTable.domain,
       container_id: appsTable.container_id,
       runtime_mode: appsTable.runtime_mode,
       swarm_service_name: appsTable.swarm_service_name,
+      updated_at: appsTable.updated_at,
+      replicas: appsTable.replicas,
       runtime_port: appsTable.runtime_port,
       healthcheck_port: appsTable.healthcheck_port,
+      healthcheck_path: appsTable.healthcheck_path,
+      healthcheck_interval_s: appsTable.healthcheck_interval_s,
+      healthcheck_timeout_s: appsTable.healthcheck_timeout_s,
+      healthcheck_retries: appsTable.healthcheck_retries,
+      healthcheck_start_period_s: appsTable.healthcheck_start_period_s,
+      runtime_has_healthcheck: appsTable.runtime_has_healthcheck,
       build_method: appsTable.build_method,
       static_spa_fallback: appsTable.static_spa_fallback,
       cdn_mode: appsTable.cdn_mode,
@@ -91,9 +157,44 @@ export async function fetchRunningAppsForCaddy(
     .where(
       and(
         inArray(appsTable.status, ["running", "restarting", "serving"]),
-        isNotNull(appsTable.domain)
+        isNotNull(appsTable.domain),
+        notExists(
+          db
+            .select({ app_id: app_deploy_leases.app_id })
+            .from(app_deploy_leases)
+            .where(
+              and(
+                eq(app_deploy_leases.app_id, appsTable.id),
+                gt(app_deploy_leases.lease_until, new Date())
+              )
+            )
+        )
       )
     )
+  return Promise.all(
+    rows.map(async (row) => {
+      const buildFilter = row.container_id
+        ? and(
+            eq(builds.app_id, row.id),
+            inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
+            or(
+              eq(builds.container_id, row.container_id),
+              eq(builds.runtime_ref, row.container_id)
+            )
+          )
+        : and(
+            eq(builds.app_id, row.id),
+            inArray(builds.status, ["succeeded", "succeeded_with_warning"])
+          )
+      const buildRows = await db
+        .select({ id: builds.id })
+        .from(builds)
+        .where(buildFilter)
+        .orderBy(desc(builds.created_at), desc(builds.id))
+        .limit(1)
+      return { ...row, current_build_id: buildRows[0]?.id ?? null }
+    })
+  )
 }
 
 export async function fetchRunningServicesForCaddy(
@@ -140,12 +241,211 @@ export interface ReconcileOptions {
   caddy: CaddyClient
   logger: Logger
   apps: AppForReconcile[]
+  /** Production reconciliation needs the DB to reuse the domain proof gate. */
+  db?: Db
+  /** Production reconciliation needs the agent to health-gate a new runtime. */
+  agent?: Agent
+  /** Production ingress passes this to serialize route changes with deploys. */
+  enableDeployLease?: boolean
   defaultPort?: number
   bootstrapRetries?: number
   bootstrapBackoffMs?: number
 }
 
-function normalizeDatabaseRuntimeToken(dbId: string, maxLength: number): string {
+function runtimeSlotNames(
+  row: AppForReconcile,
+  color: RuntimeContainerColor
+): Set<string> {
+  if (!row.slug) return new Set()
+  return new Set(
+    runtimeContainerNameCandidates({ id: row.id, slug: row.slug }, color)
+  )
+}
+
+function isOwnedRuntimeSlot(row: AppForReconcile, host: string): boolean {
+  return (
+    runtimeSlotNames(row, "blue").has(host) ||
+    runtimeSlotNames(row, "green").has(host)
+  )
+}
+
+function appHasConfiguredHealthcheck(row: AppForReconcile): boolean {
+  if (row.runtime_has_healthcheck === undefined) return false
+  if (row.runtime_has_healthcheck !== null) return row.runtime_has_healthcheck
+  if (row.build_method !== "compose") return true
+  return [
+    row.healthcheck_path,
+    row.healthcheck_port,
+    row.healthcheck_interval_s,
+    row.healthcheck_timeout_s,
+    row.healthcheck_retries,
+    row.healthcheck_start_period_s,
+  ].some((value) => value !== null && value !== undefined)
+}
+
+async function healthGateDockerRuntime(
+  agent: Agent,
+  db: Db | undefined,
+  row: AppForReconcile,
+  targetHost: string
+): Promise<void> {
+  if (row.build_method === "static") return
+  if (row.runtime_mode === "swarm") {
+    if (!db) return
+    const tasks = await listSwarmTasks(row.id, db)
+    const healthy = tasks.filter((task) =>
+      taskIsHealthy(task, appHasConfiguredHealthcheck(row))
+    )
+    if (healthy.length < Math.max(1, row.replicas ?? 1)) {
+      throw new Error(`Runtime ${targetHost} is not healthy`)
+    }
+    return
+  }
+
+  const health = await agent.inspectContainerHealth({ containerId: targetHost })
+  const running = health.running === true || health.state === "running"
+  const ready =
+    health.status === ContainerHealthStatus.CONTAINER_HEALTH_STATUS_HEALTHY ||
+    (health.status === ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE &&
+      !appHasConfiguredHealthcheck(row))
+  if (health.containerMissing || !running || !ready) {
+    throw new Error(`Runtime ${targetHost} is not healthy`)
+  }
+}
+
+async function cleanupReplacedRuntimeSlot(opts: {
+  agent: Agent
+  logger: Logger
+  row: AppForReconcile
+  previousUpstream: { host: string; port: number } | null
+  currentUpstream: { host: string; port: number }
+}): Promise<boolean> {
+  const { agent, logger, row, previousUpstream, currentUpstream } = opts
+  // A deterministic slot name is necessary but not sufficient ownership
+  // proof. Verify the agent label before removing anything from Docker.
+  const listed = await agent.listContainers({ kindFilter: "app" })
+  const ownedNames = new Set([
+    ...runtimeSlotNames(row, "blue"),
+    ...runtimeSlotNames(row, "green"),
+  ])
+  const retained = listed.containers.filter(
+    (container) =>
+      container.appId === row.id &&
+      ownedNames.has(container.name) &&
+      container.name !== currentUpstream.host
+  )
+  if (retained.length === 0) {
+    if (previousUpstream && isOwnedRuntimeSlot(row, previousUpstream.host)) {
+      logger.debug(
+        { appId: row.id, host: previousUpstream.host },
+        "caddy reconcile: retained runtime is already gone"
+      )
+    }
+    return true
+  }
+
+  let ok = true
+  for (const previous of retained) {
+    try {
+      await fenceDeploySideEffect()
+      await agent.containerStop({
+        containerId: previous.id,
+        timeoutSeconds: 10,
+      })
+    } catch (err) {
+      if (isNotFound(toAgentError(err))) continue
+      ok = false
+      logger.warn(
+        { err, appId: row.id, containerId: previous.id },
+        "caddy reconcile: failed to stop retained runtime"
+      )
+    }
+    try {
+      await fenceDeploySideEffect()
+      await agent.containerRemove({
+        containerId: previous.id,
+        force: true,
+        removeVolumes: false,
+      })
+    } catch (err) {
+      if (isNotFound(toAgentError(err))) continue
+      ok = false
+      logger.warn(
+        { err, appId: row.id, containerId: previous.id },
+        "caddy reconcile: failed to remove retained runtime"
+      )
+    }
+  }
+  return ok
+}
+
+async function hasActiveDeployLease(db: Db, appId: string): Promise<boolean> {
+  const rows = await db
+    .select({ app_id: app_deploy_leases.app_id })
+    .from(app_deploy_leases)
+    .where(
+      and(
+        eq(app_deploy_leases.app_id, appId),
+        gt(app_deploy_leases.lease_until, new Date())
+      )
+    )
+    .limit(1)
+  return rows.length > 0
+}
+
+async function withReconcileDeployLease<T>(opts: {
+  db: Db
+  app: AppForReconcile
+  enabled: boolean
+  task: () => Promise<T>
+}): Promise<T | null> {
+  if (!opts.enabled) return opts.task()
+  if (!opts.app.current_build_id) return null
+  try {
+    return await withAppDeployLease(
+      opts.db,
+      opts.app.id,
+      opts.app.current_build_id,
+      opts.task
+    )
+  } catch (error) {
+    if (error instanceof DeployLeaseLostError) return null
+    throw error
+  }
+}
+
+async function reconcileSnapshotIsCurrent(
+  db: Db,
+  row: AppForReconcile
+): Promise<boolean> {
+  const current = await db
+    .select({
+      container_id: appsTable.container_id,
+      domain: appsTable.domain,
+      status: appsTable.status,
+      runtime_mode: appsTable.runtime_mode,
+      swarm_service_name: appsTable.swarm_service_name,
+      updated_at: appsTable.updated_at,
+    })
+    .from(appsTable)
+    .where(eq(appsTable.id, row.id))
+    .limit(1)
+  const snapshot = current[0]
+  return Boolean(
+    snapshot &&
+    snapshot.container_id === row.container_id &&
+    snapshot.domain === row.domain &&
+    ["running", "serving", "restarting"].includes(snapshot.status) &&
+    snapshot.runtime_mode === row.runtime_mode &&
+    snapshot.swarm_service_name === row.swarm_service_name &&
+    snapshot.updated_at?.getTime() === row.updated_at?.getTime()
+  )
+}
+
+function normalizeDatabaseRuntimeToken(
+  dbId: string,
+  maxLength: number
+): string {
   const normalized = dbId
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
@@ -338,28 +638,144 @@ export async function reconcileCaddyRoutes(
       continue
     }
     try {
-      if (row.build_method === "static") {
-        await caddy.upsertStaticRoute({
-          appId: row.id,
-          host: row.domain,
-          root: caddyStaticRootForApp(row.id),
-          spaFallback: row.static_spa_fallback ?? true,
-          cdn: row,
-        })
-      } else {
-        const upstreamHost =
-          row.runtime_mode === "swarm" ? row.swarm_service_name : row.container_id
-        if (!upstreamHost) {
-          result.skipped++
-          continue
-        }
-        const port = row.runtime_port ?? row.healthcheck_port ?? defaultPort
-        await caddy.setUpstream(
-          row.id,
-          row.domain,
-          { host: upstreamHost, port },
-          { cdn: row }
+      if (opts.db && (await hasActiveDeployLease(opts.db, row.id))) {
+        result.skipped++
+        logger.debug(
+          { appId: row.id },
+          "caddy reconcile: deployment lease is active"
         )
+        continue
+      }
+      const reconcileOne = async (): Promise<boolean> => {
+        if (
+          opts.db &&
+          opts.enableDeployLease === true &&
+          !(await reconcileSnapshotIsCurrent(opts.db, row))
+        ) {
+          return false
+        }
+        const isStatic = row.build_method === "static"
+        const upstreamHost = isStatic
+          ? null
+          : row.runtime_mode === "swarm"
+            ? row.swarm_service_name
+            : row.container_id
+        if (!isStatic && !upstreamHost) return false
+        const port = row.runtime_port ?? row.healthcheck_port ?? defaultPort
+        const upstream = upstreamHost ? { host: upstreamHost, port } : null
+
+        // A Caddy read is part of the safety boundary: it identifies the
+        // retained runtime that can be removed after the new route is proven.
+        // If it fails, fail this app closed rather than overwrite an unknown
+        // active route.
+        const previousUpstream =
+          opts.db && upstream ? await caddy.getUpstream(row.id) : null
+
+        const applyRoute = async () => {
+          if (isStatic) {
+            await fenceDeploySideEffect()
+            await caddy.upsertStaticRoute({
+              appId: row.id,
+              host: row.domain!,
+              root: caddyStaticRootForApp(row.id),
+              spaFallback: row.static_spa_fallback ?? true,
+              cdn: row,
+            })
+            return
+          }
+          if (opts.agent && upstream) {
+            await healthGateDockerRuntime(
+              opts.agent,
+              opts.db,
+              row,
+              upstream.host
+            )
+          }
+          await fenceDeploySideEffect()
+          await caddy.setUpstream(row.id, row.domain!, upstream!, { cdn: row })
+        }
+
+        let routeApplied = false
+        if (opts.db) {
+          const routeResult = await publishHealthyAppRoute({
+            db: opts.db,
+            appId: row.id,
+            ...(row.current_build_id ? { buildId: row.current_build_id } : {}),
+            hostname: row.domain!,
+            getCurrentRouteHost: () => caddy.getRouteHost(row.id),
+            proxied: row.cdn_mode === "external",
+            beforePersist: fenceDeploySideEffect,
+            applyRoute,
+            afterRoute: async () => {
+              const aliases = isStatic
+                ? await syncAppDomainAliases({
+                    db: opts.db!,
+                    appId: row.id,
+                    static: {
+                      root: caddyStaticRootForApp(row.id),
+                      spaFallback: row.static_spa_fallback ?? true,
+                    },
+                    caddy,
+                    beforeSideEffect: fenceDeploySideEffect,
+                  })
+                : await syncAppDomainAliases({
+                    db: opts.db!,
+                    appId: row.id,
+                    upstream: upstream!,
+                    caddy,
+                    beforeSideEffect: fenceDeploySideEffect,
+                  })
+              if (aliases.errors.length) {
+                throw new Error("Alias routing requires attention")
+              }
+            },
+          })
+          routeApplied = routeResult.routeApplied
+        } else {
+          // Unit callers without a DB use the historical stored authorization
+          // gate. Production always takes the proof-backed branch above.
+          if (
+            row.domain_source &&
+            row.routing_status &&
+            !canRestoreAppRoute({
+              domain_source: row.domain_source,
+              routing_status: row.routing_status,
+              routing_dns_status: row.routing_dns_status ?? null,
+            })
+          ) {
+            return false
+          }
+          await applyRoute()
+          routeApplied = true
+        }
+        if (!routeApplied) return false
+
+        if (opts.agent && upstream) {
+          const cleaned = await cleanupReplacedRuntimeSlot({
+            agent: opts.agent,
+            logger,
+            row,
+            previousUpstream,
+            currentUpstream: upstream,
+          })
+          if (!cleaned) {
+            throw new Error("Retained runtime cleanup requires attention")
+          }
+        }
+        return true
+      }
+
+      const reconciled = opts.db
+        ? await withReconcileDeployLease({
+            db: opts.db,
+            app: row,
+            enabled: opts.enableDeployLease === true,
+            task: reconcileOne,
+          })
+        : await reconcileOne()
+      if (!reconciled) {
+        result.skipped++
+        continue
       }
       result.synced++
       logger.info({ appId: row.id, host: row.domain }, "caddy route reconciled")

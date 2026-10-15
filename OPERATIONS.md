@@ -393,6 +393,62 @@ series is absent for 5 minutes.
 3. Cross-check `/health/ready`; resolve the dependency and require the metric to
    return to zero.
 
+## Application domain readiness
+
+The application creation wizard checks the selected generated or custom hostname
+against application, alias and service ownership before continuing. Creation
+checks ownership again under a database lock. A successful preview is not a
+reservation, and missing DNS does not prevent creating the application.
+
+Use the records displayed by the wizard to point the hostname at the instance.
+DNS readiness is based on a real lookup. TLS is reported as issued only after
+a verified certificate handshake; HTTP instances report TLS as not required.
+The final URL follows the instance public scheme and port.
+
+Workers apply routing only after the new runtime passes its health gate.
+Failure to apply the primary Caddy route aborts the switch and compensates the
+new runtime. DNS, certificate and alias problems leave the healthy application
+running with a separate `action_required` routing state. A blocked Docker
+switch retains the previous container until routing can be rechecked.
+Periodic ingress reconciliation retries the healthy pending runtime under the
+application deployment lease. After applying its route, it removes inactive
+Docker slots only when both their names and app labels match this app. Failed
+removals are retried on later passes. Manual rollbacks use the same deployment lease to avoid racing reconciliation.
+A later deployment chooses its replacement
+slot from Caddy's live upstream, preserving the retained runtime until the switch.
+If Caddy cannot be inspected, the deployment stops before replacing a slot.
+
+New custom primary hosts require matching DNS or the application's verified TXT
+ownership proof before route registration and certificate provisioning. A host
+already served by the same app remains authorized for redeploy and rollback,
+including behind a CDN. Serving evidence belongs to that app and does not
+transfer with a hostname claim to another app. Successful builds record a
+hostname as serving evidence only after the primary route was applied.
+CDN addresses are reported as unknown rather than mismatched. Generated hosts
+under the instance base and `.localhost` hosts skip this DNS gate and report DNS
+as unknown. Check the domain from the application banner after fixing DNS or
+certificate provisioning.
+
+The preview never opens a TLS connection with the proposed hostname as SNI.
+Only an authorized, healthy runtime with a registered route can trigger a TLS
+probe, preventing previews from initiating on-demand ACME issuance.
+
+Successful builds retain their primary hostname for rollback. A restored
+container or service must become healthy before routing switches to it. Legacy
+builds without a hostname snapshot retain the application's current hostname.
+Existing installed application domains are not rewritten by the migration.
+Migration 0086 backfills their source using the configured instance base and
+marks legacy running apps for a routing recheck instead of inventing DNS/TLS
+evidence. Only the latest successful build receives a missing hostname snapshot.
+The migration preflight refuses case-insensitive duplicate app domains with
+the affected app IDs. Choose one owner, change or clear the other domains, and
+rerun `bun --env-file=apps/api/.env.local run db:migrate`; no loser is selected
+automatically. Both API startup and the migration CLI run this read-only check.
+Migration 0087 records whether the published runtime actually has a healthcheck.
+Compose preserves the entrypoint's declared check instead of injecting shell
+commands. A runtime without one is ready when running; configured checks must
+report healthy, including during a routing recheck.
+
 ## Monitoring upgrades
 
 The signed installer is the migration mechanism for runtime descriptors,

@@ -29,6 +29,9 @@ import type { Domain, TlsStatus } from "../../lib/domains"
 
 function TlsBadge({ status }: { status: TlsStatus }): React.JSX.Element {
   const { t } = useTranslation("apps")
+  if (status === "not_required") {
+    return <span className="text-xs text-muted-foreground">{t("routing.tlsStatus.not_required")}</span>
+  }
   if (status === "issued") {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
@@ -119,7 +122,7 @@ export function DomainCard({
         <div className="flex shrink-0 items-center gap-1 self-start">
           <TlsBadge status={domain.tlsStatus} />
 
-          {domain.tlsStatus !== "issued" && (
+          {(domain.tlsStatus !== "issued" && domain.tlsStatus !== "not_required") && (
             <Button
               size="sm"
               variant="ghost"
@@ -202,7 +205,7 @@ export function DomainCard({
         </div>
       )}
 
-      {domain.verifyError && domain.tlsStatus !== "issued" && (
+      {domain.verifyError && (domain.tlsStatus !== "issued" && domain.tlsStatus !== "not_required") && (
         <p className="text-xs text-destructive">{domain.verifyError}</p>
       )}
     </div>

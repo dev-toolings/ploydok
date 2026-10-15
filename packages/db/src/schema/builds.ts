@@ -57,6 +57,9 @@ export const builds = pgTable(
     error_message: text("error_message"),
     // Set when post-deploy hook fails (build is still considered succeeded)
     post_deploy_error: text("post_deploy_error"),
+    // Primary hostname selected for this healthy build, including DNS/TLS
+    // actions still required. Restored with the runtime during rollback.
+    routing_domain: text("routing_domain"),
     started_at: timestamp("started_at", { withTimezone: true, mode: "date" }),
     finished_at: timestamp("finished_at", { withTimezone: true, mode: "date" }),
     created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
