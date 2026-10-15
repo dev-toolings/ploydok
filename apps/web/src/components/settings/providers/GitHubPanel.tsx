@@ -2,7 +2,13 @@
 import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
-import { RiAddLine, RiExternalLinkLine, RiMore2Line } from "@remixicon/react"
+import {
+  RiAddLine,
+  RiExternalLinkLine,
+  RiLoader4Line,
+  RiMore2Line,
+  RiRefreshLine,
+} from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
@@ -39,10 +45,11 @@ import { useMe } from "../../../lib/auth"
 import { useGitProviderStatus } from "../../../lib/git-providers"
 import { apiBaseUrl } from "../../../lib/api/base"
 import { usePendingAction } from "../../../lib/hooks/use-pending-action"
-import { CachedReposPanel } from "./CachedReposPanel"
+import { CachedReposPanel, StatusPill, formatAge } from "./CachedReposPanel"
 import { GitHubAppSetupCard, GitHubIcon } from "./GitHubAppSetupCard"
 import { SyncProgressDialog } from "./SyncProgressDialog"
 import { useSyncWithProgress } from "./useSyncWithProgress"
+import type { CachedReposEntry } from "./CachedReposPanel"
 import type {
   AppInstallation,
   GitHubAppCredentialsStatus,
@@ -300,6 +307,9 @@ export function GitHubPanel(): React.JSX.Element {
       )
     : providerStatus.data?.github.configured === true
   const installations = useInstallations({ enabled: installationsEnabled })
+  const cacheStatus = useGitHubCacheStatus({
+    enabled: isAdmin && installationsEnabled,
+  })
   const createApp = useCreateGitHubAppFlow("/settings/git-providers/github")
   const resetApp = useResetGitHubApp()
   const [resettingAppId, setResettingAppId] = React.useState<string | null>(
@@ -314,7 +324,8 @@ export function GitHubPanel(): React.JSX.Element {
   if (
     meLoading ||
     providerStatus.isLoading ||
-    (isAdmin && (appLoading || credentialsStatus.isLoading)) ||
+    (isAdmin &&
+      (appLoading || credentialsStatus.isLoading || cacheStatus.isLoading)) ||
     installations.isLoading
   ) {
     return <GitHubPanelSkeleton />
@@ -576,12 +587,14 @@ export function InstallationsCard({
     return () => clearTimeout(timer)
   }, [refetch, t])
 
+  // The dialog closes at once; the row keeps a loader until the refreshed
+  // list no longer shows the installation (the mutation awaits the refetch).
   const handleRemove = async (installation: AppInstallation): Promise<void> => {
     setRevokeError(null)
+    setSelectedInstallation(undefined)
     setPendingId(installation.id)
     try {
       await remove.mutateAsync(installation.id)
-      setSelectedInstallation(undefined)
     } catch (err) {
       setRevokeError(
         err instanceof Error
@@ -604,6 +617,29 @@ export function InstallationsCard({
 
   const hasInstallation =
     Boolean(justInstalled) || Boolean(data && data.installations.length > 0)
+  const autoSync = React.useMemo(
+    () =>
+      justInstalled?.syncId
+        ? { installationId: justInstalled.id, syncId: justInstalled.syncId }
+        : null,
+    [justInstalled]
+  )
+  // Admin accounts fold the repository cache into each account row.
+  const cacheSync = useGitHubCacheSync(
+    accounts ? autoSync : null,
+    accounts?.installationsEnabled ?? false
+  )
+  const cacheEntries = cacheSync.cache.data?.installations ?? []
+  const cacheEntryFor = (
+    installation: AppInstallation | null
+  ): CachedReposEntry | undefined =>
+    installation
+      ? cacheEntries.find(
+          (entry) =>
+            entry.id === `github:${installation.id}` ||
+            entry.id === String(installation.id)
+        )
+      : undefined
 
   return (
     <>
@@ -624,18 +660,38 @@ export function InstallationsCard({
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:justify-end">
-          <Button
-            className="w-full sm:w-auto"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setRefreshing(true)
-              void refetch().finally(() => setRefreshing(false))
-            }}
-            loading={refreshing}
-          >
-            {refreshing ? t("github.refreshing") : t("common:refresh")}
-          </Button>
+          {accounts ? (
+            hasInstallation && (
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void cacheSync.startSync({}).catch(() => undefined)
+                }
+                loading={cacheSync.isSyncing && cacheSync.scope === "all"}
+                disabled={cacheSync.isSyncing}
+              >
+                <RiRefreshLine aria-hidden="true" />
+                {cacheSync.isSyncing && cacheSync.scope === "all"
+                  ? t("cache.syncing")
+                  : t("cache.syncAll")}
+              </Button>
+            )
+          ) : (
+            <Button
+              className="w-full sm:w-auto"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setRefreshing(true)
+                void refetch().finally(() => setRefreshing(false))
+              }}
+              loading={refreshing}
+            >
+              {refreshing ? t("github.refreshing") : t("common:refresh")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -665,14 +721,34 @@ export function InstallationsCard({
                 <GitHubAccountRow
                   key={account.key}
                   account={account}
+                  cacheEntry={cacheEntryFor(account.installation)}
+                  syncing={
+                    cacheSync.isSyncing &&
+                    account.installation !== null &&
+                    (cacheSync.scope === "all" ||
+                      cacheSync.scope === String(account.installation.id) ||
+                      cacheSync.scope === `github:${account.installation.id}`)
+                  }
+                  syncDisabled={cacheSync.isSyncing}
+                  onSync={() => {
+                    if (!account.installation) return
+                    void cacheSync
+                      .startSync({
+                        installationId: String(account.installation.id),
+                      })
+                      .catch(() => undefined)
+                  }}
                   installPending={
                     install.pending && installingAppId === account.app?.id
                   }
-                  menuPending={
-                    (account.installation !== null &&
-                      pendingId === account.installation.id) ||
-                    (account.app !== null &&
-                      accounts.resettingAppId === account.app.id)
+                  removing={
+                    account.app !== null &&
+                    accounts.resettingAppId === account.app.id
+                      ? "remove"
+                      : account.installation !== null &&
+                          pendingId === account.installation.id
+                        ? "revoke"
+                        : null
                   }
                   onInstall={() => account.app && handleInstall(account.app)}
                   onRevoke={() => {
@@ -726,18 +802,10 @@ export function InstallationsCard({
         </div>
       )}
 
-      {role === "admin" && hasInstallation && (
-        <GitHubCacheSection
-          autoSync={
-            justInstalled?.syncId
-              ? {
-                  installationId: justInstalled.id,
-                  syncId: justInstalled.syncId,
-                }
-              : null
-          }
-        />
-      )}
+      {accounts
+        ? cacheSync.dialog
+        : role === "admin" &&
+          hasInstallation && <GitHubCacheSection autoSync={autoSync} />}
 
       <AlertDialog
         open={selectedInstallation !== undefined}
@@ -835,15 +903,23 @@ export function InstallationsCard({
 
 function GitHubAccountRow({
   account,
+  cacheEntry,
+  syncing,
+  syncDisabled,
+  onSync,
   installPending,
-  menuPending,
+  removing,
   onInstall,
   onRevoke,
   onReset,
 }: {
   account: GitHubAccount
+  cacheEntry: CachedReposEntry | undefined
+  syncing: boolean
+  syncDisabled: boolean
+  onSync: () => void
   installPending: boolean
-  menuPending: boolean
+  removing: "revoke" | "remove" | null
   onInstall: () => void
   onRevoke: () => void
   onReset: () => void
@@ -854,8 +930,8 @@ function GitHubAccountRow({
     installation?.accountLogin || app?.owner_login || app?.name || ""
   const type = installation?.accountType || app?.owner_type || null
   const count = installation?.repositoryCount ?? null
-  const status = !installation
-    ? t("github.accounts.notInstalled")
+  const selection = !installation
+    ? null
     : installation.repositorySelection === "all"
       ? t("github.allRepositories")
       : count === null
@@ -863,7 +939,13 @@ function GitHubAccountRow({
         : t("github.repository", { count })
 
   return (
-    <li className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:gap-4">
+    <li
+      aria-busy={removing !== null}
+      className={cn(
+        "flex flex-col gap-3 py-4 transition-opacity first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:gap-4",
+        removing && "pointer-events-none opacity-60"
+      )}
+    >
       <div className="flex min-w-0 flex-1 items-center gap-4">
         {installation?.avatarUrl ? (
           <img
@@ -886,88 +968,123 @@ function GitHubAccountRow({
                   : t("github.accounts.personal")}
               </span>
             )}
+            {cacheEntry && (
+              <StatusPill status={syncing ? "syncing" : cacheEntry.status} />
+            )}
           </p>
           <p className="truncate text-xs text-muted-foreground">
-            <span
-              className={cn(
-                !installation && "text-amber-700 dark:text-amber-400"
-              )}
-            >
-              {status}
-            </span>
+            {!installation ? (
+              <span className="text-amber-700 dark:text-amber-400">
+                {t("github.accounts.notInstalled")}
+              </span>
+            ) : cacheEntry ? (
+              t("cache.repoCount", {
+                count: cacheEntry.repoCount,
+                age: formatAge(cacheEntry.ageMs),
+              })
+            ) : (
+              selection
+            )}
             {installation?.suspendedAt && (
               <span className="ml-1 text-destructive">
                 · {t("github.suspended")}
               </span>
             )}
-            {app && (
-              <>
-                {" · "}
-                <span className="font-mono">{app.slug}</span>
-              </>
-            )}
           </p>
         </div>
       </div>
       <div className="flex items-center gap-2 sm:shrink-0">
-        {app && !installation && (
-          <Button size="sm" loading={installPending} onClick={onInstall}>
-            {t("github.accounts.install")}
-          </Button>
-        )}
-        {installation?.htmlUrl && (
-          <Button size="sm" variant="outline" asChild>
-            <a href={installation.htmlUrl} target="_blank" rel="noreferrer">
-              {t("github.accounts.manage")}
-              <RiExternalLinkLine aria-hidden="true" />
-            </a>
-          </Button>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              loading={menuPending}
-              aria-label={t("github.accounts.more", { login })}
-            >
-              <RiMore2Line aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-auto">
+        {removing ? (
+          <span
+            role="status"
+            className="inline-flex h-8 items-center gap-1.5 text-sm text-muted-foreground"
+          >
+            <RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />
+            {removing === "revoke"
+              ? t("github.revoking")
+              : t("github.accounts.removing")}
+          </span>
+        ) : (
+          <>
+            {app && !installation && (
+              <Button size="sm" loading={installPending} onClick={onInstall}>
+                {t("github.accounts.install")}
+              </Button>
+            )}
             {installation && (
-              <DropdownMenuItem
-                className="whitespace-nowrap"
-                onSelect={onRevoke}
+              <Button
+                size="sm"
+                variant="outline"
+                loading={syncing}
+                disabled={syncDisabled}
+                onClick={onSync}
               >
-                {t("github.accounts.revokeInstallation")}
-              </DropdownMenuItem>
+                <RiRefreshLine aria-hidden="true" />
+                {syncing ? t("cache.syncing") : t("cache.sync")}
+              </Button>
             )}
-            {app && (
-              <DropdownMenuItem
-                className="whitespace-nowrap"
-                variant="destructive"
-                onSelect={onReset}
-              >
-                {t("github.accounts.deleteApp")}
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t("github.accounts.more", { login })}
+                >
+                  <RiMore2Line aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-auto">
+                {installation?.htmlUrl && (
+                  <DropdownMenuItem className="whitespace-nowrap" asChild>
+                    <a
+                      href={installation.htmlUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {t("github.accounts.manage")}
+                      <RiExternalLinkLine aria-hidden="true" />
+                    </a>
+                  </DropdownMenuItem>
+                )}
+                {installation && (
+                  <DropdownMenuItem
+                    className="whitespace-nowrap"
+                    onSelect={onRevoke}
+                  >
+                    {t("github.accounts.revokeInstallation")}
+                  </DropdownMenuItem>
+                )}
+                {app && (
+                  <DropdownMenuItem
+                    className="whitespace-nowrap"
+                    variant="destructive"
+                    onSelect={onReset}
+                  >
+                    {t("github.accounts.deleteApp")}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
       </div>
     </li>
   )
 }
 
-function GitHubCacheSection({
-  autoSync,
-}: {
-  autoSync: { installationId: string; syncId: string } | null
-}): React.JSX.Element {
+/**
+ * Repository cache status plus the sync flow (trigger, progress dialog,
+ * per-installation scope). An `autoSync` started by the install callback is
+ * followed once.
+ */
+function useGitHubCacheSync(
+  autoSync: { installationId: string; syncId: string } | null,
+  enabled: boolean
+) {
   const { t } = useTranslation("settings")
   const queryClient = useQueryClient()
   const sync = useSyncGitHubInstallations()
-  const cache = useGitHubCacheStatus({})
+  const cache = useGitHubCacheStatus({ enabled })
   const progress = useSyncWithProgress()
   const [scope, setScope] = React.useState<"all" | string | undefined>(
     undefined
@@ -982,6 +1099,9 @@ function GitHubCacheSection({
     if (progress.status === "done" && previousStatus !== "done") {
       void cache.refetch()
       void queryClient.invalidateQueries({ queryKey: ["github", "repos"] })
+      void queryClient.invalidateQueries({
+        queryKey: ["github", "installations"],
+      })
       setScope(undefined)
     }
     if (progress.status === "error" || progress.status === "idle") {
@@ -1008,25 +1128,12 @@ function GitHubCacheSection({
     }
   }
 
-  return (
-    <>
-      <CachedReposPanel
-        title={t("github.cachedTitle")}
-        description={t("github.cachedHint")}
-        entries={cache.data?.installations ?? []}
-        isLoading={cache.isLoading}
-        isError={cache.isError}
-        errorMessage={cache.error?.message}
-        isSyncing={sync.isPending || progress.status === "running"}
-        syncingScope={progress.status === "running" ? scope : undefined}
-        onSyncOne={(installationId) => startSync({ installationId })}
-        onSyncAll={() => startSync({})}
-        emptyState={
-          <p className="text-sm text-muted-foreground">
-            {t("github.cachedEmpty")}
-          </p>
-        }
-      />
+  return {
+    cache,
+    scope,
+    startSync,
+    isSyncing: sync.isPending || progress.status === "running",
+    dialog: (
       <SyncProgressDialog
         open={progress.open}
         onClose={progress.close}
@@ -1037,6 +1144,41 @@ function GitHubCacheSection({
         errorMessage={progress.errorMessage}
         providerLabel={t("github.title")}
       />
+    ),
+  }
+}
+
+function GitHubCacheSection({
+  autoSync,
+}: {
+  autoSync: { installationId: string; syncId: string } | null
+}): React.JSX.Element {
+  const { t } = useTranslation("settings")
+  const { cache, scope, startSync, isSyncing, dialog } = useGitHubCacheSync(
+    autoSync,
+    true
+  )
+
+  return (
+    <>
+      <CachedReposPanel
+        title={t("github.cachedTitle")}
+        description={t("github.cachedHint")}
+        entries={cache.data?.installations ?? []}
+        isLoading={cache.isLoading}
+        isError={cache.isError}
+        errorMessage={cache.error?.message}
+        isSyncing={isSyncing}
+        syncingScope={isSyncing ? scope : undefined}
+        onSyncOne={(installationId) => startSync({ installationId })}
+        onSyncAll={() => startSync({})}
+        emptyState={
+          <p className="text-sm text-muted-foreground">
+            {t("github.cachedEmpty")}
+          </p>
+        }
+      />
+      {dialog}
     </>
   )
 }

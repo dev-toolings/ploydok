@@ -224,7 +224,7 @@ function CacheRow({
   )
 }
 
-function StatusPill({
+export function StatusPill({
   status,
 }: {
   status: "fresh" | "stale" | "syncing"
@@ -259,7 +259,7 @@ function StatusPill({
 // to keep this pure and SSR-safe.
 // ---------------------------------------------------------------------------
 
-function formatAge(ms: number): string {
+export function formatAge(ms: number): string {
   const sec = Math.max(0, Math.floor(ms / 1000))
   if (sec < 60) return i18n.t("settings:cache.ageSeconds", { count: sec })
   const min = Math.floor(sec / 60)
