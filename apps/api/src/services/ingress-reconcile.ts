@@ -56,7 +56,14 @@ export async function reconcileIngressOnce(opts: {
   ])
   const [appRoutes, serviceRoutes, databaseProxies, attachments] =
     await Promise.all([
-      reconcileCaddyRoutes({ caddy, logger, apps }),
+      reconcileCaddyRoutes({
+        caddy,
+        logger,
+        apps,
+        db,
+        agent,
+        enableDeployLease: true,
+      }),
       reconcileServiceRoutes({ caddy, logger, services }),
       reconcileDatabaseTcpProxies({ caddy, logger, databases }),
       reconcileCaddyAttachments(agent, db),

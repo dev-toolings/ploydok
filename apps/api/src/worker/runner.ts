@@ -33,8 +33,14 @@ import { ContainerHealthStatus } from "@ploydok/agent-proto"
 import { apps, builds, projects } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { CaddyClient } from "../caddy/client.js"
-import { publishHealthyAppRoute, syncAppDomainAliases } from "../domains/routing.js"
-import { assertDomainAvailable, withDomainLock } from "../domains/availability.js"
+import {
+  publishHealthyAppRoute,
+  syncAppDomainAliases,
+} from "../domains/routing.js"
+import {
+  assertDomainAvailable,
+  withDomainLock,
+} from "../domains/availability.js"
 import { logBus } from "./log-bus.js"
 import { eventBus } from "./event-bus.js"
 import { workerLog } from "./logger.js"
@@ -323,8 +329,23 @@ export async function pollHealthcheck(opts: {
   return false
 }
 
-/** Determine the current color from the most recent succeeded build that has a container_id. */
-async function getCurrentColor(db: Db, appId: string): Promise<ContainerColor> {
+/**
+ * Determine the active color from Caddy when available, then fall back to the
+ * persisted app/build state. A DNS-gated deploy may persist a healthy pending
+ * slot before Caddy can serve it, so the DB color is not authoritative for the
+ * next blue-green replacement.
+ */
+async function getCurrentColor(
+  db: Db,
+  appId: string,
+  caddy?: Pick<CaddyClient, "getUpstream">
+): Promise<ContainerColor> {
+  if (caddy) {
+    const upstream = await caddy.getUpstream(appId)
+    const activeColor = inferContainerColor(upstream?.host)
+    if (activeColor) return activeColor
+  }
+
   // Look at the app row first (container_id).
   const appRows = await db
     .select({ container_id: apps.container_id })
@@ -649,6 +670,21 @@ export async function createContainerWithStaleSlotRecovery(opts: {
       throw err
     }
 
+    // A legacy/canonical name mismatch can make the active Caddy container
+    // differ from the requested name while still occupying the same color.
+    // Never remove or replace that active color during stale-slot recovery.
+    if (
+      upstream &&
+      inferContainerColor(upstream.host) ===
+        inferContainerColor(opts.containerName)
+    ) {
+      logBus.publish(
+        opts.channel,
+        `[runner] refusing to replace active Caddy color ${upstream.host} while creating ${opts.containerName}`
+      )
+      throw err
+    }
+
     workerLog.warn(
       {
         appId: opts.appId,
@@ -746,7 +782,10 @@ export async function runBlueGreen(
   const domain = appRow.domain ?? `${appId}.ploydok.local`
 
   // -- Determine colors -------------------------------------------------------
-  const currentColor = await getCurrentColor(db, appId)
+  // Caddy is authoritative when a route exists. This keeps a DNS-gated
+  // pending slot from making the next deploy target the live old runtime.
+  const caddyClient = new CaddyClient(opts.caddyBaseUrl)
+  const currentColor = await getCurrentColor(db, appId, caddyClient)
   const newColor = oppositeColor(currentColor)
   const newName = runtimeContainerName(appRow, newColor)
   const oldNames = runtimeContainerNameCandidates(appRow, currentColor)
@@ -774,10 +813,10 @@ export async function runBlueGreen(
 
   // -- Agent client ----------------------------------------------------------
   const agent = createAgentClient(opts.agentSocketPath)
-  const caddyClient = new CaddyClient(opts.caddyBaseUrl)
-
   let newContainerId: string | undefined
   let caddySwitched = false
+  let previousCaddyUpstream: { host: string; port: number } | null = null
+  let previousCaddyHost: string | null = null
 
   try {
     // 0. Pull image — host daemon's cache is separate from the registry storage.
@@ -921,8 +960,22 @@ export async function runBlueGreen(
 
     // 4. Switch Caddy upstream.
     await fenceDeploySideEffect()
+    // Capture the route target before changing it. The DB may already point
+    // at a healthy pending slot while Caddy still serves the previous color.
+    // Compensation must restore this observed target, never the DB value.
+    ;[previousCaddyUpstream, previousCaddyHost] = await Promise.all([
+      caddyClient.getUpstream(appId),
+      caddyClient.getRouteHost(appId),
+    ])
+    const deployLease = currentDeployLease()
     const routeResult = await publishHealthyAppRoute({
-      db, appId, hostname: domain,
+      db,
+      appId,
+      ...(deployLease?.appId === appId && deployLease.buildId
+        ? { buildId: deployLease.buildId }
+        : {}),
+      hostname: domain,
+      getCurrentRouteHost: () => caddyClient.getRouteHost(appId),
       proxied: appRow.cdn_mode === "external",
       beforePersist: fenceDeploySideEffect,
       applyRoute: async () => {
@@ -968,7 +1021,12 @@ export async function runBlueGreen(
     await fenceDeploySideEffect()
     const appUpdates = await db
       .update(apps)
-      .set({ container_id: newName, status: "running", runtime_has_healthcheck: true, updated_at: new Date() })
+      .set({
+        container_id: newName,
+        status: "running",
+        runtime_has_healthcheck: true,
+        updated_at: new Date(),
+      })
       .where(and(eq(apps.id, appId), currentDeployLeaseCondition()))
       .returning({ id: apps.id })
     if (!appUpdates[0]) {
@@ -1010,19 +1068,22 @@ export async function runBlueGreen(
     // Reconcile a target slot created before cancellation/lease loss. Never
     // touch the previously-live color here.
     if (caddySwitched) {
-      const restoreCaddy =
-        appRow.container_id !== null
-          ? caddyClient.setUpstream(appId, domain, {
-              host: appRow.container_id!,
-              port: runtimePort,
-            })
-          : caddyClient.removeUpstream(appId)
       await runOwnedDeployReconciliation(async () => {
-        await restoreCaddy
-        if (appRow.container_id) {
+        if (previousCaddyUpstream) {
+          await caddyClient.setUpstream(
+            appId,
+            previousCaddyHost ?? domain,
+            previousCaddyUpstream
+          )
+        } else {
+          await caddyClient.removeUpstream(appId)
+        }
+        if (previousCaddyUpstream) {
           await syncAppDomainAliases({
-            db, appId, caddy: caddyClient,
-            upstream: { host: appRow.container_id, port: runtimePort },
+            db,
+            appId,
+            caddy: caddyClient,
+            upstream: previousCaddyUpstream,
           })
         }
         await purgeCloudflareForApp(db, appId)
@@ -1168,8 +1229,10 @@ export async function rollbackApp(
     `[runner] rollback to image ${previousBuild.image_tag}`
   )
 
-  // Determine the current color (to know which old container to stop).
-  const currentColor = await getCurrentColor(db, appId)
+  // Determine the current color from the live Caddy route when present. A
+  // DNS-gated deploy can leave the DB one slot ahead of that route.
+  const caddyClient = new CaddyClient(opts?.caddyBaseUrl)
+  const currentColor = await getCurrentColor(db, appId, caddyClient)
   const rollbackColor = oppositeColor(currentColor)
 
   const agent = createAgentClient(opts?.agentSocketPath)
@@ -1221,9 +1284,8 @@ export async function rollbackApp(
   const hcTimeoutS = appRow.healthcheck_timeout_s ?? 3
   const hcRetries = appRow.healthcheck_retries ?? 6
   const hcStartPeriodS = appRow.healthcheck_start_period_s ?? 30
-  const domain = previousBuild.routing_domain ?? appRow.domain ?? `${appId}.ploydok.local`
-  const caddyClient = new CaddyClient(opts?.caddyBaseUrl)
-
+  const domain =
+    previousBuild.routing_domain ?? appRow.domain ?? `${appId}.ploydok.local`
   const containerEnv = containerEnvWithPort(
     await loadRuntimeEnv(db, appId),
     runtimePort
@@ -1231,6 +1293,8 @@ export async function rollbackApp(
 
   let rollbackContainerId: string | undefined
   let caddySwitched = false
+  let previousCaddyUpstream: { host: string; port: number } | null = null
+  let previousCaddyHost: string | null = null
 
   try {
     // Pull image first — host daemon cache ≠ registry storage.
@@ -1325,19 +1389,35 @@ export async function rollbackApp(
     await withDomainLock(db, domain, async (tx, hostname) => {
       await assertDomainAvailable(tx, hostname, { excludeAppId: appId })
     })
+    ;[previousCaddyUpstream, previousCaddyHost] = await Promise.all([
+      caddyClient.getUpstream(appId),
+      caddyClient.getRouteHost(appId),
+    ])
     const routeResult = await publishHealthyAppRoute({
-      db, appId, hostname: domain,
+      db,
+      appId,
+      hostname: domain,
+      getCurrentRouteHost: () => caddyClient.getRouteHost(appId),
       proxied: appRow.cdn_mode === "external",
+      beforePersist: fenceDeploySideEffect,
       applyRoute: async () => {
-        await caddyClient.setUpstream(appId, domain, {
-          host: rollbackName, port: runtimePort,
-        }, { cdn: appRow })
+        await fenceDeploySideEffect()
+        await caddyClient.setUpstream(
+          appId,
+          domain,
+          {
+            host: rollbackName,
+            port: runtimePort,
+          },
+          { cdn: appRow }
+        )
         caddySwitched = true
       },
       afterRoute: async () => {
         const aliases = await syncAppDomainAliases({
           db, appId, caddy: caddyClient,
           upstream: { host: rollbackName, port: runtimePort },
+          beforeSideEffect: fenceDeploySideEffect,
         })
         if (aliases.errors.length) throw new Error("Alias routing requires attention")
       },
@@ -1355,6 +1435,7 @@ export async function rollbackApp(
 
     if (routeApplied) {
       // Stop old container.
+      await fenceDeploySideEffect()
       await stopContainerCandidates(agent, oldNames)
       logBus.publish(channel, `[runner] old container stopped`)
     } else {
@@ -1365,34 +1446,46 @@ export async function rollbackApp(
     }
 
     // Update DB.
-    await db
-      .update(apps)
-      .set({
-        container_id: rollbackName,
-        domain,
-        domain_source: classifyAppDomainWithInstanceBase(domain),
-        status: "running",
-        runtime_has_healthcheck: true,
-        updated_at: new Date(),
-      })
-      .where(eq(apps.id, appId))
+    const rollbackUpdate = db.update(apps).set({
+      container_id: rollbackName,
+      domain,
+      domain_source: classifyAppDomainWithInstanceBase(domain),
+      status: "running",
+      runtime_has_healthcheck: true,
+      updated_at: new Date(),
+    })
+    const rollbackLeaseCondition = currentDeployLeaseCondition()
+    if (rollbackLeaseCondition) {
+      const updated = await rollbackUpdate
+        .where(and(eq(apps.id, appId), rollbackLeaseCondition))
+        .returning({ id: apps.id })
+      if (!updated[0]) {
+        throw new DeployLeaseLostError(
+          "lease changed before rollback runtime commit"
+        )
+      }
+    } else {
+      await rollbackUpdate.where(eq(apps.id, appId))
+    }
 
     logBus.publish(channel, `[runner] rollback complete`)
   } catch (error) {
     if (caddySwitched) {
       await runOwnedDeployReconciliation(async () => {
-        if (appRow.domain && appRow.container_id) {
+        if (previousCaddyUpstream) {
           await caddyClient.setUpstream(
             appId,
-            appRow.domain,
-            { host: appRow.container_id, port: runtimePort },
-            { cdn: appRow }
+            previousCaddyHost ?? appRow.domain ?? domain,
+            previousCaddyUpstream,
+            {
+              cdn: appRow,
+            }
           )
           await syncAppDomainAliases({
             db,
             appId,
             caddy: caddyClient,
-            upstream: { host: appRow.container_id, port: runtimePort },
+            upstream: previousCaddyUpstream,
           })
         } else {
           await caddyClient.removeUpstream(appId)
@@ -1407,9 +1500,9 @@ export async function rollbackApp(
     }
     if (rollbackContainerId) {
       const containerIdToRemove = rollbackContainerId
-      await runOwnedDeployReconciliation(() =>
-        stopContainer(agent, containerIdToRemove)
-      ).catch((cleanupError) =>
+      await runOwnedDeployReconciliation(async () => {
+        await stopContainer(agent, containerIdToRemove)
+      }).catch((cleanupError) =>
         workerLog.error(
           { appId, rollbackContainerId: containerIdToRemove, cleanupError },
           "runner: rollback container reconciliation failed"

@@ -277,13 +277,24 @@ Failure to apply the primary Caddy route aborts the switch and compensates the
 new runtime. DNS, certificate and alias problems leave the healthy application
 running with a separate `action_required` routing state. A blocked Docker
 switch retains the previous container until routing can be rechecked.
+Periodic ingress reconciliation retries the healthy pending runtime under the
+application deployment lease. After applying its route, it removes inactive
+Docker slots only when both their names and app labels match this app. Failed
+removals are retried on later passes. Manual rollbacks use the same deployment lease to avoid racing reconciliation.
+A later deployment chooses its replacement
+slot from Caddy's live upstream, preserving the retained runtime until the switch.
+If Caddy cannot be inspected, the deployment stops before replacing a slot.
 
-Custom primary hosts require matching DNS or the application's verified TXT
-ownership proof before route registration and certificate provisioning. CDN
-addresses are reported as unknown rather than mismatched; they still require
-ownership proof. Generated hosts under the instance base and `.localhost`
-hosts skip this DNS gate and report DNS as unknown. Check the domain from the
-application banner after fixing DNS or certificate provisioning.
+New custom primary hosts require matching DNS or the application's verified TXT
+ownership proof before route registration and certificate provisioning. A host
+already served by the same app remains authorized for redeploy and rollback,
+including behind a CDN. Serving evidence belongs to that app and does not
+transfer with a hostname claim to another app. Successful builds record a
+hostname as serving evidence only after the primary route was applied.
+CDN addresses are reported as unknown rather than mismatched. Generated hosts
+under the instance base and `.localhost` hosts skip this DNS gate and report DNS
+as unknown. Check the domain from the application banner after fixing DNS or
+certificate provisioning.
 
 The preview never opens a TLS connection with the proposed hostname as SNI.
 Only an authorized, healthy runtime with a registered route can trigger a TLS

@@ -1319,7 +1319,8 @@ export async function handleDeploy(
         try {
           await fenceDeploySideEffect()
           const routeResult = await publishHealthyAppRoute({
-            db, appId: app.id, hostname: app.domain,
+            db, appId: app.id, buildId, hostname: app.domain,
+            getCurrentRouteHost: () => getSharedCaddy().getRouteHost(app.id),
             proxied: app.cdn_mode === "external",
             beforePersist: fenceDeploySideEffect,
             applyRoute: async () => {
@@ -1418,7 +1419,8 @@ export async function handleDeploy(
       if (app.domain) {
         await fenceDeploySideEffect()
         const routeResult = await publishHealthyAppRoute({
-          db, appId: app.id, hostname: app.domain,
+          db, appId: app.id, buildId, hostname: app.domain,
+          getCurrentRouteHost: () => getSharedCaddy().getRouteHost(app.id),
           proxied: app.cdn_mode === "external",
           beforePersist: fenceDeploySideEffect,
           applyRoute: async () => {
@@ -2012,9 +2014,6 @@ export async function handleDeploy(
             .update(builds)
             .set({
               status: finalStatus,
-              ...((finalStatus === "succeeded" || finalStatus === "succeeded_with_warning") && {
-                routing_domain: app.domain,
-              }),
               finished_at: finalPatch.finishedAt,
               log_path: logPath,
               ...(finalPatch.errorMessage !== undefined && {

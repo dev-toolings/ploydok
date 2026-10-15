@@ -8,6 +8,7 @@ const stoppedContainers: string[] = []
 const removedContainers: string[] = []
 let currentContainerId = "old-blue"
 let activeCaddyUpstream: { host: string; port: number } | null = null
+let reconciliationOwned = true
 
 mock.module("@ploydok/agent-proto", () => {
   class AgentClient {
@@ -96,6 +97,10 @@ mock.module("../caddy/client.js", () => ({
       return activeCaddyUpstream
     }
 
+    async getRouteHost() {
+      return null
+    }
+
     async removeUpstream() {}
   },
 }))
@@ -167,6 +172,7 @@ mock.module("./app-deploy-lock.js", () => ({
   DeployLeaseLostError: class DeployLeaseLostError extends Error {},
   fenceDeploySideEffect: async () => {},
   runOwnedDeployReconciliation: async (action: () => Promise<void>) => {
+    if (!reconciliationOwned) return false
     await action()
     return true
   },
@@ -247,6 +253,7 @@ function makeDb(updates: Array<Record<string, unknown>>) {
 describe("runBlueGreen routing gate", () => {
   it("retains the old container when DNS soft-fails before the primary route is applied", async () => {
     routeMode = "dns-soft"
+    reconciliationOwned = true
     currentContainerId = "old-blue"
     activeCaddyUpstream = null
     caddyUpstreams.length = 0
@@ -272,6 +279,7 @@ describe("runBlueGreen routing gate", () => {
 
   it("compensates the new container and restores Caddy after a primary route throw", async () => {
     routeMode = "primary-throw"
+    reconciliationOwned = true
     currentContainerId = "old-blue"
     activeCaddyUpstream = { host: "old-blue", port: 3000 }
     caddyUpstreams.length = 0
@@ -301,6 +309,7 @@ describe("runBlueGreen routing gate", () => {
   it("keeps Caddy's active old slot safe across a later deploy after DNS gating", async () => {
     const originalSetTimeout = globalThis.setTimeout
     routeMode = "dns-soft"
+    reconciliationOwned = true
     currentContainerId = "ploydok-app-app-1-blue"
     activeCaddyUpstream = {
       host: "ploydok-app-demo-app-1-blue",
@@ -343,5 +352,36 @@ describe("runBlueGreen routing gate", () => {
       "ploydok-app-app-1-blue",
     ])
     expect(removedContainers).toEqual(stoppedContainers)
+  })
+
+  it("does not restore Caddy when deploy reconciliation ownership is lost", async () => {
+    routeMode = "primary-throw"
+    reconciliationOwned = false
+    currentContainerId = "old-blue"
+    activeCaddyUpstream = { host: "old-blue", port: 3000 }
+    caddyUpstreams.length = 0
+    stoppedContainers.length = 0
+    removedContainers.length = 0
+    const updates: Array<Record<string, unknown>> = []
+    const { runBlueGreen } = await import("./runner.js")
+
+    try {
+      await expect(
+        runBlueGreen({
+          appId: "app-1",
+          imageRef: "registry.example/app:latest",
+          env: {},
+          db: makeDb(updates) as never,
+        })
+      ).rejects.toThrow("primary route failed")
+    } finally {
+      reconciliationOwned = true
+    }
+
+    expect(caddyUpstreams).toEqual([
+      { host: expect.stringContaining("green"), port: 3000 },
+    ])
+    expect(stoppedContainers).toEqual([])
+    expect(removedContainers).toEqual([])
   })
 })

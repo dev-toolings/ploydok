@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, mock } from "bun:test"
 import { EventEmitter } from "node:events"
-import { apps } from "@ploydok/db"
+import { apps, builds } from "@ploydok/db"
 
 type DnsMode = "missing" | "valid"
 type TlsMode = "issued" | "failed"
@@ -88,6 +88,47 @@ function makeDbWithAppSnapshot(
       return {
         set(values: Record<string, unknown>) {
           updates.push(values)
+          return { where: async () => [] }
+        },
+      }
+    },
+  } as never
+}
+
+function makeDbWithRoutingSnapshots(opts: {
+  appSnapshot: Record<string, unknown>
+  buildSnapshots?: Array<Record<string, unknown>>
+  appUpdates: Array<Record<string, unknown>>
+  buildUpdates: Array<Record<string, unknown>>
+}) {
+  return {
+    select(selection?: Record<string, unknown>) {
+      const selected = Object.keys(selection ?? {})
+      return {
+        from(table: unknown) {
+          const rows = table === apps && selected.includes("routing_status")
+            ? [opts.appSnapshot]
+            : table === builds && selected.includes("routing_domain")
+              ? (opts.buildSnapshots ?? [])
+              : []
+          return {
+            where() {
+              return {
+                limit: async () => rows,
+                orderBy() {
+                  return { limit: async () => rows }
+                },
+              }
+            },
+          }
+        },
+      }
+    },
+    update(table: unknown) {
+      return {
+        set(values: Record<string, unknown>) {
+          if (table === builds) opts.buildUpdates.push(values)
+          else opts.appUpdates.push(values)
           return { where: async () => [] }
         },
       }
@@ -326,6 +367,154 @@ describe("publishHealthyAppRoute", () => {
         error: null,
       }),
       verifyOwnership: async () => false,
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "action_required",
+      routeApplied: false,
+      dnsStatus: "unknown",
+    })
+    expect(result.error).toContain("DOMAIN_OWNERSHIP_REQUIRED")
+    expect(routeCalls).toBe(0)
+  })
+
+  it("uses a successful same-app build hostname as durable route proof", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    const appUpdates: Array<Record<string, unknown>> = []
+    const buildUpdates: Array<Record<string, unknown>> = []
+    let routeCalls = 0
+
+    const result = await publishHealthyAppRoute({
+      db: makeDbWithRoutingSnapshots({
+        appSnapshot: {
+          id: "app-1",
+          domain: "current.example.com",
+          domain_source: "custom",
+          routing_status: "action_required",
+          routing_dns_status: "unknown",
+          routing_tls_status: "issued",
+        },
+        buildSnapshots: [{ routing_domain: "served.example.com" }],
+        appUpdates,
+        buildUpdates,
+      }),
+      appId: "app-1",
+      hostname: "served.example.com",
+      proxied: true,
+      inspectDns: async () => ({
+        status: "unknown",
+        records: [{ type: "A", value: "104.16.1.1" }],
+        expectedRecords: [],
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      inspectTls: async () => ({
+        status: "not_required",
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      verifyOwnership: async () => false,
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "ready",
+      routeApplied: true,
+      dnsStatus: "unknown",
+    })
+    expect(routeCalls).toBe(1)
+    expect(buildUpdates).toEqual([])
+  })
+
+  it("does not write routing_domain when a successful build is blocked before publication", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    const appUpdates: Array<Record<string, unknown>> = []
+    const buildUpdates: Array<Record<string, unknown>> = []
+    let routeCalls = 0
+
+    const result = await publishHealthyAppRoute({
+      db: makeDbWithRoutingSnapshots({
+        appSnapshot: {
+          id: "app-1",
+          domain: "old.example.com",
+          domain_source: "custom",
+          routing_status: "action_required",
+          routing_dns_status: "unknown",
+          routing_tls_status: "issued",
+        },
+        appUpdates,
+        buildUpdates,
+      }),
+      appId: "app-1",
+      buildId: "build-blocked",
+      hostname: "blocked.example.com",
+      proxied: true,
+      inspectDns: async () => ({
+        status: "unknown",
+        records: [{ type: "A", value: "104.16.1.1" }],
+        expectedRecords: [],
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      inspectTls: async () => ({
+        status: "not_required",
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      verifyOwnership: async () => false,
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "action_required",
+      routeApplied: false,
+      dnsStatus: "unknown",
+    })
+    expect(routeCalls).toBe(0)
+    expect(buildUpdates).toEqual([])
+  })
+
+  it("does not use a different live Caddy host as proof for a new hostname", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    let routeCalls = 0
+
+    const result = await publishHealthyAppRoute({
+      db: makeDbWithRoutingSnapshots({
+        appSnapshot: {
+          id: "app-1",
+          domain: "new.example.com",
+          domain_source: "custom",
+          routing_status: "action_required",
+          routing_dns_status: "unknown",
+          routing_tls_status: "issued",
+        },
+        appUpdates: [],
+        buildUpdates: [],
+      }),
+      appId: "app-1",
+      hostname: "new.example.com",
+      proxied: true,
+      inspectDns: async () => ({
+        status: "unknown",
+        records: [{ type: "A", value: "104.16.1.1" }],
+        expectedRecords: [],
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      inspectTls: async () => ({
+        status: "not_required",
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      verifyOwnership: async () => false,
+      getCurrentRouteHost: async () => "other.example.com",
       applyRoute: async () => {
         routeCalls++
       },

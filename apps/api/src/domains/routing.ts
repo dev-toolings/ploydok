@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { resolve4, resolve6, resolveCname } from "node:dns/promises"
 import { connect } from "node:tls"
-import { and, eq } from "drizzle-orm"
+import { and, desc, eq, inArray, isNull } from "drizzle-orm"
 import { apps, builds, domains } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { env } from "../env"
@@ -269,6 +269,78 @@ async function hasCustomDomainTxtProof(db: Db, appId: string, hostname: string):
   }
 }
 
+/**
+ * A DNS inspection can be inconclusive for a hostname behind a CDN. In that
+ * case, an app may still publish the host when there is durable evidence that
+ * this app already served it. Successful build snapshots cover rollbacks and
+ * route reads cover installations created before routing_domain was tracked.
+ * The route reader must be scoped to the app's primary Caddy route.
+ */
+async function hasPreviouslyServedSameAppHost(input: {
+  db: Db
+  appId: string
+  hostname: string
+  getCurrentRouteHost?: () => Promise<string | null>
+}): Promise<boolean> {
+  const [appRows, buildRows] = await Promise.all([
+    (async () => {
+      try {
+        return await input.db
+          .select({
+            domain: apps.domain,
+            routing_status: apps.routing_status,
+          })
+          .from(apps)
+          .where(eq(apps.id, input.appId))
+          .limit(1)
+      } catch {
+        return []
+      }
+    })(),
+    (async () => {
+      try {
+        // Do not limit this to the newest build. A rollback can legitimately
+        // restore a hostname from an older successful build.
+        return await input.db
+          .select({ routing_domain: builds.routing_domain })
+          .from(builds)
+          .where(and(
+            eq(builds.app_id, input.appId),
+            inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
+            eq(builds.routing_domain, input.hostname),
+          ))
+          .orderBy(desc(builds.created_at), desc(builds.id))
+          .limit(1)
+      } catch {
+        return []
+      }
+    })(),
+  ])
+
+  const app = appRows[0]
+  const currentDomainWasReady = Boolean(
+    app &&
+    (normalizeAppHostname(app.domain ?? "") ?? "") === input.hostname &&
+    app.routing_status === "ready"
+  )
+  if (currentDomainWasReady || buildRows.length > 0) return true
+
+  let currentRouteHost: string | null = null
+  if (input.getCurrentRouteHost) {
+    try {
+      currentRouteHost = await input.getCurrentRouteHost()
+    } catch {
+      // A stale/unavailable Caddy admin API is a soft ownership-proof miss.
+      // The DNS/TXT evidence and primary route application retain their own
+      // error handling below.
+    }
+  }
+
+  const routeMatches = currentRouteHost !== null &&
+    (normalizeAppHostname(currentRouteHost) ?? currentRouteHost.trim().toLowerCase()) === input.hostname
+  return routeMatches
+}
+
 export async function publishHealthyAppRoute(input: {
   db: Db
   appId: string
@@ -282,6 +354,8 @@ export async function publishHealthyAppRoute(input: {
   inspectDns?: (hostname: string) => Promise<DnsInspection>
   inspectTls?: (hostname: string) => Promise<TlsInspection>
   verifyOwnership?: (hostname: string) => Promise<boolean>
+  /** Reads the host on Caddy's `ploydok-${appId}` primary route, if present. */
+  getCurrentRouteHost?: () => Promise<string | null>
 }): Promise<HealthyRouteResult> {
   const hostname = normalizeAppHostname(input.hostname)
   if (!hostname) throw new Error("Cannot publish route for invalid hostname")
@@ -312,7 +386,16 @@ export async function publishHealthyAppRoute(input: {
       // Failed proof lookups leave the healthy runtime awaiting user action.
     }
   }
-  const authorized = managed || dns.status === "valid" || ownershipVerified
+  let previouslyServed = false
+  if (!managed && dns.status !== "valid" && !ownershipVerified) {
+    previouslyServed = await hasPreviouslyServedSameAppHost({
+      db: input.db,
+      appId: input.appId,
+      hostname,
+      ...(input.getCurrentRouteHost ? { getCurrentRouteHost: input.getCurrentRouteHost } : {}),
+    })
+  }
+  const authorized = managed || dns.status === "valid" || ownershipVerified || previouslyServed
   let aliasError: string | null = null
   let routeApplied = false
   if (authorized) {
@@ -369,7 +452,10 @@ export async function publishHealthyAppRoute(input: {
     routing_tls_status: result.tlsStatus,
   }).where(eq(apps.id, input.appId))
   if (routeApplied && input.buildId) {
-    await input.db.update(builds).set({ routing_domain: hostname }).where(eq(builds.id, input.buildId))
+    await input.db.update(builds).set({ routing_domain: hostname }).where(and(
+      eq(builds.id, input.buildId), eq(builds.app_id, input.appId),
+      isNull(builds.routing_domain)
+    ))
   }
   return result
 }

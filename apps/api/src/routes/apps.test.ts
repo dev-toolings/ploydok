@@ -15,6 +15,7 @@ import {
   builds,
   secrets,
   app_delete_jobs,
+  app_deploy_leases,
   github_installation_users,
   gitlab_tokens,
   provider_installations,
@@ -57,6 +58,7 @@ type TestDb = Db
 let testDbPromise: Promise<TestDb> | null = null
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
+let rollbackCalls = 0
 
 describe("deriveCurrentBuildMetadata", () => {
   it("uses the latest successful build commit as the current deployed commit", () => {
@@ -1821,7 +1823,9 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   // All public exports must be listed here to avoid breaking other test files
   // that import from this module in the same bun test run.
   mock.module("../worker/runner.js", () => ({
-    rollbackApp: async () => undefined,
+    rollbackApp: async () => {
+      rollbackCalls++
+    },
     restartApp: async () => undefined,
     stopApp: async () => undefined,
     runBlueGreen: async () => ({ containerId: "mock-ctr", color: "blue" }),
@@ -1835,6 +1839,7 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
 
   beforeEach(async () => {
     db = await makeTestDb()
+    rollbackCalls = 0
     const user = await createTestUser(db)
     userId = user.id
     const project = await createTestProject(db, userId)
@@ -1861,6 +1866,42 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
     expect(body.ok).toBe(true)
   })
 
+  it("returns a conflict and does not start rollback while another deployment owns the app", async () => {
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
+    const { id: buildId } = await createTestBuild(db, appId, "succeeded")
+    const now = new Date()
+    await db.insert(app_deploy_leases).values({
+      app_id: appId,
+      build_id: buildId,
+      lease_token: "active-deploy-token",
+      heartbeat_at: now,
+      lease_until: new Date(now.getTime() + 60_000),
+      created_at: now,
+    })
+
+    try {
+      const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
+      const res = await honoApp.request(`/apps/${appId}/rollback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ buildId }),
+      })
+
+      expect(res.status).toBe(409)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe("ROLLBACK_CONFLICT")
+      expect(rollbackCalls).toBe(0)
+    } finally {
+      await db
+        .delete(app_deploy_leases)
+        .where(eq(app_deploy_leases.app_id, appId))
+    }
+  })
+
   it("rollback with explicit failed buildId → 400 INVALID_BUILD_STATUS", async () => {
     const { id: appId } = await createTestApp(db, { userId, projectId })
     const { id: failedBuildId } = await createTestBuild(db, appId, "failed")
@@ -1883,6 +1924,9 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
       projectId,
       runtimeMode: "docker",
     })
+
+    await createTestBuild(db, appId, "succeeded")
+    await createTestBuild(db, appId, "succeeded")
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     // No body — legacy behaviour

@@ -95,6 +95,10 @@ mock.module("../caddy/client.js", () => ({
     async getUpstream() {
       return null
     }
+
+    async getRouteHost() {
+      return null
+    }
   },
 }))
 

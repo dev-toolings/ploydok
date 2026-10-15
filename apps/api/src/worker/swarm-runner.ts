@@ -373,8 +373,11 @@ export async function runSwarmDeploy(
 
     if (app.domain) {
       await fenceDeploySideEffect()
+      const routingBuildId = currentDeployLease()?.buildId
       const routeResult = await publishHealthyAppRoute({
         db, appId, hostname: app.domain,
+        ...(routingBuildId ? { buildId: routingBuildId } : {}),
+        getCurrentRouteHost: () => caddy.getRouteHost(appId),
         proxied: app.cdn_mode === "external",
         beforePersist: fenceDeploySideEffect,
         applyRoute: async () => {
@@ -580,6 +583,7 @@ export async function rollbackSwarmApp(
         { appId, serviceName: app.service },
         "swarm rollback: no historical image available, using native service rollback"
       )
+      await fenceDeploySideEffect()
       runtimeMutated = true
       await grpcUnary<ServiceRollbackResponse>(
         agent.serviceRollback.bind(agent),
@@ -591,6 +595,7 @@ export async function rollbackSwarmApp(
         throw new Error(`Rollback build ${target?.id ?? targetBuildId} has no image tag`)
       }
       try {
+        await fenceDeploySideEffect()
         await grpcUnary(agent.serviceUpdateImage.bind(agent), {
           serviceName: app.service,
           image: target.image_tag,
@@ -609,6 +614,7 @@ export async function rollbackSwarmApp(
           "swarm rollback: historical image unavailable, using native service rollback"
         )
         useNativeRollback = true
+        await fenceDeploySideEffect()
         runtimeMutated = true
         await grpcUnary<ServiceRollbackResponse>(
           agent.serviceRollback.bind(agent),
@@ -640,6 +646,7 @@ export async function rollbackSwarmApp(
         "swarm rollback: task reported unavailable historical image, using native service rollback"
       )
       useNativeRollback = true
+      await fenceDeploySideEffect()
       runtimeMutated = true
       await grpcUnary<ServiceRollbackResponse>(
         agent.serviceRollback.bind(agent),
@@ -662,12 +669,15 @@ export async function rollbackSwarmApp(
       const upstream = { host: app.service, port: app.runtime_port ?? 3000 }
       const routeResult = await publishHealthyAppRoute({
         db, appId, hostname: domain,
+        getCurrentRouteHost: () => caddy.getRouteHost(appId),
         proxied: app.cdn_mode === "external",
+        beforePersist: fenceDeploySideEffect,
         applyRoute: async () => {
+          await fenceDeploySideEffect()
           await caddy.setUpstream(appId, domain, upstream)
         },
         afterRoute: async () => {
-          const aliases = await syncAppDomainAliases({ db, appId, caddy, upstream })
+          const aliases = await syncAppDomainAliases({ db, appId, caddy, upstream, beforeSideEffect: fenceDeploySideEffect })
           if (aliases.errors.length) throw new Error("Alias routing requires attention")
         },
       })
@@ -679,6 +689,7 @@ export async function rollbackSwarmApp(
         )
       }
     }
+    await fenceDeploySideEffect()
     await db.update(apps).set({
       ...(domain
         ? {
@@ -689,13 +700,15 @@ export async function rollbackSwarmApp(
       status: "running",
       updated_at: new Date(),
     })
-      .where(eq(apps.id, appId))
+      .where(and(eq(apps.id, appId), currentDeployLeaseCondition()))
   } catch (error) {
     if (runtimeMutated && (!useNativeRollback || nativeRollbackApplied)) {
-      await grpcUnary<ServiceRollbackResponse>(
-        agent.serviceRollback.bind(agent),
-        { serviceName: app.service }
-      ).catch((cleanupError) =>
+      await runOwnedDeployReconciliation(async () => {
+        await grpcUnary<ServiceRollbackResponse>(
+          agent.serviceRollback.bind(agent),
+          { serviceName: app.service }
+        )
+      }).catch((cleanupError) =>
         workerLog.error(
           { appId, serviceName: app.service, cleanupError },
           "swarm rollback: failed to restore the previous service snapshot"
