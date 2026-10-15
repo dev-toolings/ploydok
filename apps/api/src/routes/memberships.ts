@@ -57,12 +57,16 @@ export function createMembershipsRouter(db: Db): Hono {
     "/:orgId/members",
     requireRole(db, ["owner", "member"]),
     async (c) => {
+      const user = getUser(c)
       const orgId = getOrgId(c)
       const members = await listMembershipsForOrg(db, orgId)
       const pendingInvitations = await listPendingInvitationsForOrg(db, orgId)
 
       const response = MembersListResponseSchema.parse({
-        members,
+        members: members.map((member) => ({
+          ...member,
+          is_me: member.user_id === user.id,
+        })),
         pending_invitations: pendingInvitations,
       })
 

@@ -104,7 +104,7 @@ export type InvitationAcceptResponse = z.infer<
 >
 
 export const MembersListResponseSchema = z.object({
-  members: z.array(MemberListItemSchema),
+  members: z.array(MemberListItemSchema.extend({ is_me: z.boolean() })),
   pending_invitations: z.array(InvitationRowSchema),
 })
 export type MembersListResponse = z.infer<typeof MembersListResponseSchema>
