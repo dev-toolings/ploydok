@@ -44,14 +44,14 @@ export async function migrateDockerAppsToSwarmOnBoot(db: Db): Promise<{
     }
     try {
       const runtimeEnv = await loadRuntimeEnv(db, app.id)
-      await runSwarmDeploy({
+      const deployed = await runSwarmDeploy({
         appId: app.id,
         imageRef,
         env: runtimeEnv,
         db,
         ...(app.runtime_port ? { runtimePort: app.runtime_port } : {}),
       })
-      if (app.container_id) {
+      if (app.container_id && deployed.routeApplied) {
         const agent = createAgentClient()
         try {
           await stopContainer(agent, app.container_id)

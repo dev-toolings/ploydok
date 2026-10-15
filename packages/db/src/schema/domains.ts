@@ -17,8 +17,8 @@ export const domains = pgTable(
       .notNull()
       .references(() => apps.id, { onDelete: "cascade" }),
     hostname: text("hostname").notNull(),
-    // TLS certificate lifecycle: pending → issued | failed
-    tls_status: text("tls_status", { enum: ["pending", "issued", "failed"] })
+    // TLS certificate lifecycle: pending -> issued | failed | not_required
+    tls_status: text("tls_status", { enum: ["pending", "issued", "failed", "not_required"] })
       .notNull()
       .default("pending"),
     // TLS provisioning mode: http01 (default) or dns01 (wildcard support)

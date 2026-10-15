@@ -78,6 +78,12 @@ mock.module("@ploydok/agent-proto", () => {
 
 mock.module("../caddy/client.js", () => ({
   CaddyClient: class {
+    async getUpstream() {
+      return null
+    }
+    async getRouteHost() {
+      return null
+    }
     async setUpstream() {}
     async removeUpstream() {}
   },

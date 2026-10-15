@@ -4,6 +4,7 @@ import { describe, it, expect, mock, beforeEach, spyOn } from "bun:test"
 import * as dbQueries from "@ploydok/db/queries"
 import * as queueClaimMod from "../queue-claim"
 import * as queueAuditMod from "../queue-audit"
+import * as routingMod from "../../domains/routing"
 import * as verifierMod from "../../domains/verifier"
 import * as caddyClientMod from "../../caddy/client"
 
@@ -24,11 +25,16 @@ const MOCK_DOMAIN = {
 }
 
 function createMockDb() {
+  const updates: Array<Record<string, unknown>> = []
   return {
+    _updates: updates,
     update: mock(() => ({
-      set: mock(() => ({
-        where: mock(() => Promise.resolve()),
-      })),
+      set: mock((values: Record<string, unknown>) => {
+        updates.push(values)
+        return {
+          where: mock(() => Promise.resolve()),
+        }
+      }),
     })),
   } as any
 }
@@ -88,6 +94,67 @@ describe("handleDomainVerify", () => {
     await handleDomainVerify(fakeDb, { domainId: "dom-1" })
 
     expect(auditClaimedSpy).toHaveBeenCalled()
+  })
+
+  it("keeps TLS pending and records an action when DNS is absent", async () => {
+    const { handleDomainVerify } = await import("./domain-verify.js")
+    const fakeDb = createMockDb()
+
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      ...MOCK_DOMAIN,
+      tls_status: "running",
+    })
+    spyOn(dbQueries, "getAppForUser").mockResolvedValue({ id: "app-1" } as any)
+    spyOn(verifierMod, "verifyDomain").mockResolvedValue({
+      ok: false,
+      reason: "TXT record not found",
+    })
+
+    await expect(handleDomainVerify(fakeDb, { domainId: "dom-1" })).rejects.toThrow(
+      /TXT record not found/
+    )
+
+    expect(fakeDb._updates).toContainEqual({
+      verify_error: "TXT record not found",
+      updated_at: expect.any(Date),
+    })
+    expect(fakeDb._updates.some((patch: Record<string, unknown>) => patch.tls_status === "issued")).toBe(false)
+  })
+
+  it.each(["issued", "not_required"] as const)("records verified TLS state %s after DNS verification", async (status) => {
+    spyOn(routingMod, "inspectDomainTls").mockResolvedValue({ status, error: null, checkedAt: new Date().toISOString() })
+    const { handleDomainVerify } = await import("./domain-verify.js")
+    const fakeDb = createMockDb()
+
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      ...MOCK_DOMAIN,
+      tls_status: "running",
+    })
+    spyOn(dbQueries, "getAppForUser").mockResolvedValue({ id: "app-1" } as any)
+    spyOn(verifierMod, "verifyDomain").mockResolvedValue({ ok: true })
+    spyOn(caddyClientMod.CaddyClient.prototype, "getUpstream").mockResolvedValue({
+      host: "127.0.0.1",
+      port: 3000,
+    })
+    const upsertRouteSpy = spyOn(
+      caddyClientMod.CaddyClient.prototype,
+      "upsertRoute"
+    ).mockResolvedValue(undefined)
+
+    await handleDomainVerify(fakeDb, { domainId: "dom-1" })
+
+    expect(fakeDb._updates).toContainEqual({
+      tls_status: status,
+      verify_error: null,
+      updated_at: expect.any(Date),
+    })
+    expect(upsertRouteSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "example.com",
+        upstream: "127.0.0.1:3000",
+        tls: { mode: "http01" },
+      })
+    )
   })
 
   it("claim succeeds on retry (running → running, no rollback)", async () => {

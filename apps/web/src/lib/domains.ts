@@ -10,7 +10,7 @@ import type { ApiError } from "./api"
 // Types
 // ---------------------------------------------------------------------------
 
-export type TlsStatus = "pending" | "issued" | "failed"
+export type TlsStatus = "pending" | "issued" | "failed" | "not_required"
 export type TlsMode = "http01" | "dns01"
 export type Dns01Provider = "cloudflare" | "route53" | "ovh" | "digitalocean"
 

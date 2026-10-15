@@ -300,7 +300,9 @@ export class CaddyClient {
   ): Promise<{ host: string; port: number } | null> {
     const routeId = `ploydok-${appId}`
 
-    const res = await fetch(`${this.baseUrl}/id/${routeId}`)
+    const res = await fetch(`${this.baseUrl}/id/${routeId}`, {
+      signal: AbortSignal.timeout(1_500),
+    })
     if (res.status === 404) return null
     if (!res.ok) {
       throw new Error(
@@ -331,6 +333,35 @@ export class CaddyClient {
       }
     }
     return null
+  }
+
+  /**
+   * Get the exact host matcher currently attached to an app's primary route.
+   * The route id scopes this read to the app, so an unrelated route cannot
+   * prove ownership of the hostname.
+   */
+  async getRouteHost(appId: string): Promise<string | null> {
+    const routeId = `ploydok-${appId}`
+
+    const res = await fetch(`${this.baseUrl}/id/${routeId}`, {
+      signal: AbortSignal.timeout(1_500),
+    })
+    if (res.status === 404) return null
+    if (!res.ok) {
+      throw new Error(
+        `CaddyClient.getRouteHost failed: ${res.status} ${await res.text()}`
+      )
+    }
+
+    let route: CaddyRoute
+    try {
+      route = (await res.json()) as CaddyRoute
+    } catch {
+      return null
+    }
+
+    const hosts = route.match?.flatMap((matcher) => matcher.host ?? []) ?? []
+    return hosts[0] ?? null
   }
 
   /**

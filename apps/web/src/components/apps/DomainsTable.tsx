@@ -48,6 +48,9 @@ export interface DomainsTableProps {
 
 function TlsBadge({ status }: { status: Domain["tlsStatus"] }): React.JSX.Element {
   const { t } = useTranslation("apps")
+  if (status === "not_required") {
+    return <span className="text-xs text-muted-foreground">{t("routing.tlsStatus.not_required")}</span>
+  }
   if (status === "issued") {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">

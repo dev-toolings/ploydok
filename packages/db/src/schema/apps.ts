@@ -139,6 +139,23 @@ export const apps = pgTable("apps", {
     .notNull()
     .default("unless-stopped"),
   domain: text("domain"),
+  domain_source: text("domain_source", {
+    enum: ["generated", "custom"],
+  })
+    .notNull()
+    .default("generated"),
+  routing_status: text("routing_status", {
+    enum: ["pending", "ready", "action_required"],
+  })
+    .notNull()
+    .default("pending"),
+  routing_error: text("routing_error"),
+  routing_dns_status: text("routing_dns_status", {
+    enum: ["valid", "missing", "mismatch", "error", "unknown"],
+  }),
+  routing_tls_status: text("routing_tls_status", {
+    enum: ["issued", "pending", "failed", "not_required"],
+  }),
   // Registry GC override (null → fall back to global default of 3).
   keep_per_repo: integer("keep_per_repo"),
   // Healthcheck (intervals in seconds to match migration)
@@ -148,6 +165,9 @@ export const apps = pgTable("apps", {
   healthcheck_timeout_s: integer("healthcheck_timeout_s"),
   healthcheck_retries: integer("healthcheck_retries"),
   healthcheck_start_period_s: integer("healthcheck_start_period_s"),
+  // Runtime truth: Compose entrypoints may intentionally have no healthcheck;
+  // normal Ploydok runtimes always receive an injected check.
+  runtime_has_healthcheck: boolean("runtime_has_healthcheck"),
   // Quotas / plan. `custom` = no enforcement (back-compat for pre-sprint-3bis apps).
   plan: text("plan", { enum: ["nano", "small", "medium", "large", "custom"] })
     .notNull()

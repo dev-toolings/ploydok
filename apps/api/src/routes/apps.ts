@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import * as nodePath from "node:path"
 import { createHash, randomBytes } from "node:crypto"
 import { Hono } from "hono"
 import type { MiddlewareHandler } from "hono"
 import type { Queue } from "bullmq"
 import { z } from "zod"
-import { and, eq, isNotNull } from "drizzle-orm"
+import { and, desc, eq, gt, inArray, isNotNull, or } from "drizzle-orm"
 import { nanoid } from "nanoid"
 import { createDb } from "@ploydok/db"
 import {
@@ -19,6 +19,7 @@ import {
   secrets,
   app_delete_jobs,
   system_jobs,
+  app_deploy_leases,
 } from "@ploydok/db"
 import {
   BuildMethodSchema,
@@ -96,6 +97,7 @@ import { resumeApplicationConfiguration } from "../services/application-creation
 import { encryptField, decryptField } from "../github/app-credentials"
 import { ghProvider } from "./github"
 import { getSharedAgent } from "../debug/singletons"
+import { isNotFound, toAgentError } from "../agent/errors"
 import { resolveRuntimeContainer } from "../services/runtime-containers"
 import { resolveAppRuntimeContainerId } from "../services/runtime-target"
 import {
@@ -119,9 +121,50 @@ import {
 import {
   buildPublicUrl as buildDomainPublicUrl,
   deriveDefaultAppDomainBase,
+  normalizeAppHostname,
+  classifyAppDomain,
 } from "../domains/app-domain"
+import {
+  assertDomainAvailable,
+  DomainCollisionError,
+  InvalidAppDomainError,
+  findDomainCollisions,
+  isUniqueDomainConstraintError,
+  lockDomain,
+} from "../domains/availability"
+import {
+  inspectDomainDns,
+  publishHealthyAppRoute,
+  syncAppDomainAliases,
+} from "../domains/routing"
+import { CaddyClient } from "../caddy/client"
+import { ContainerHealthStatus } from "@ploydok/agent-proto"
+import { listSwarmTasks, taskIsHealthy } from "../worker/swarm-runner"
+import {
+  caddyStaticRootForApp,
+  staticRootForApp,
+} from "../worker/handlers/build-static"
+import { createRateLimiter } from "../webhooks/rate-limit"
+import { runtimeContainerNameCandidates } from "../services/runtime-containers"
+import {
+  DeployLeaseLostError,
+  currentDeployLease,
+  fenceDeploySideEffect,
+  withAppDeployLease,
+} from "../worker/app-deploy-lock"
 
 export { deriveDefaultAppDomainBase } from "../domains/app-domain"
+
+const domainPreviewRateLimit = createRateLimiter({
+  redis: createRedis(env.REDIS_URL),
+  windowSec: 60,
+  max: 60,
+  keyPrefix: "rl:apps-domain-preview",
+  keyFrom: (c) => {
+    const user = c.get("user") as AuthUser | undefined
+    return user?.id ? `user:${user.id}` : { key: "user:unknown", max: 1 }
+  },
+})
 
 // ---------------------------------------------------------------------------
 // Validation schemas
@@ -419,6 +462,7 @@ function dnsSafeToken(value: string, length: number): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, length)
+    .replace(/-$/, "a")
   return (
     token ||
     nanoid(length)
@@ -638,6 +682,23 @@ function serializeApp(
     restartPolicy: row.restart_policy,
     domain: row.domain,
     publicUrl: buildPublicUrl(row.domain),
+    domainSource: row.domain_source,
+    routing: {
+      status: row.routing_status,
+      error: row.routing_error,
+      dnsStatus: row.routing_dns_status ?? "unknown",
+      tlsStatus: row.routing_tls_status ?? "unknown",
+      issue:
+        row.routing_dns_status && row.routing_dns_status !== "valid"
+          ? "dns"
+          : row.routing_tls_status &&
+              row.routing_tls_status !== "issued" &&
+              row.routing_tls_status !== "not_required"
+            ? "tls"
+            : row.routing_status === "action_required"
+              ? "runtime"
+              : null,
+    },
     containerId: row.container_id,
     currentCommitSha: buildMetadata.currentCommitSha,
     latestBuildId: buildMetadata.latestBuildId,
@@ -794,6 +855,186 @@ function serializeBuild(row: BuildRow) {
   }
 }
 
+type RecheckTarget =
+  | { kind: "proxy"; upstream: { host: string; port: number } }
+  | { kind: "static"; root: string; spaFallback: boolean }
+
+function appHasConfiguredHealthcheck(app: AppRow): boolean {
+  if (app.runtime_has_healthcheck !== null && app.runtime_has_healthcheck !== undefined) {
+    return app.runtime_has_healthcheck
+  }
+  if (app.build_method !== "compose") return true
+  return [
+    app.healthcheck_path,
+    app.healthcheck_port,
+    app.healthcheck_interval_s,
+    app.healthcheck_timeout_s,
+    app.healthcheck_retries,
+    app.healthcheck_start_period_s,
+  ].some((value) => value !== null && value !== undefined)
+}
+
+async function hasActiveDeployLease(db: Db, appId: string): Promise<boolean> {
+  const rows = await db
+    .select({ app_id: app_deploy_leases.app_id })
+    .from(app_deploy_leases)
+    .where(
+      and(
+        eq(app_deploy_leases.app_id, appId),
+        gt(app_deploy_leases.lease_until, new Date())
+      )
+    )
+    .limit(1)
+  return rows.length > 0
+}
+
+async function currentRoutingBuildId(
+  db: Db,
+  app: Pick<AppRow, "id" | "container_id">
+): Promise<string | null> {
+  const buildFilter = app.container_id
+    ? and(
+        eq(builds.app_id, app.id),
+        inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
+        or(
+          eq(builds.container_id, app.container_id),
+          eq(builds.runtime_ref, app.container_id)
+        )
+      )
+    : and(
+        eq(builds.app_id, app.id),
+        inArray(builds.status, ["succeeded", "succeeded_with_warning"])
+      )
+  const rows = await db
+    .select({ id: builds.id })
+    .from(builds)
+    .where(buildFilter)
+    .orderBy(desc(builds.created_at), desc(builds.id))
+    .limit(1)
+  return rows[0]?.id ?? null
+}
+
+async function withRoutingDeployLease<T>(opts: {
+  db: Db
+  app: Pick<AppRow, "id" | "container_id">
+  task: () => Promise<T>
+}): Promise<T | null> {
+  const buildId = await currentRoutingBuildId(opts.db, opts.app)
+  if (!buildId) return null
+  try {
+    return await withAppDeployLease(opts.db, opts.app.id, buildId, opts.task)
+  } catch (error) {
+    if (error instanceof DeployLeaseLostError) return null
+    throw error
+  }
+}
+
+async function cleanupRetainedDockerSlot(
+  app: AppRow,
+  previousUpstream: { host: string; port: number } | null,
+  currentUpstream: { host: string; port: number }
+): Promise<void> {
+  const ownedSlots = new Set([
+    ...runtimeContainerNameCandidates(app, "blue"),
+    ...runtimeContainerNameCandidates(app, "green"),
+  ])
+  const agent = getSharedAgent()
+  const listed = await agent.listContainers({ kindFilter: "app" })
+  const retained = listed.containers.filter(
+    (container) =>
+      container.appId === app.id &&
+      ownedSlots.has(container.name) &&
+      container.name !== currentUpstream.host
+  )
+  if (
+    retained.length === 0 &&
+    previousUpstream &&
+    ownedSlots.has(previousUpstream.host)
+  ) {
+    return
+  }
+  for (const container of retained) {
+    try {
+      await fenceDeploySideEffect()
+      await agent.containerStop({
+        containerId: container.id,
+        timeoutSeconds: 10,
+      })
+    } catch (error) {
+      if (isNotFound(toAgentError(error))) continue
+      throw error
+    }
+    try {
+      await fenceDeploySideEffect()
+      await agent.containerRemove({
+        containerId: container.id,
+        force: true,
+        removeVolumes: false,
+      })
+    } catch (error) {
+      if (isNotFound(toAgentError(error))) continue
+      throw error
+    }
+  }
+}
+
+export async function resolveHealthyRecheckTarget(
+  db: Db,
+  app: AppRow
+): Promise<RecheckTarget> {
+  if (app.build_method === "static" || app.status === "serving") {
+    const root = caddyStaticRootForApp(app.id)
+    const artifact = await stat(staticRootForApp(app.id)).catch(() => null)
+    if (!artifact?.isDirectory()) {
+      throw new Error("Static runtime artifact is unavailable")
+    }
+    return {
+      kind: "static",
+      root,
+      spaFallback: app.static_spa_fallback ?? true,
+    }
+  }
+
+  const port = app.runtime_port ?? 3000
+  if (app.runtime_mode === "swarm" && app.swarm_service_name) {
+    const tasks = await listSwarmTasks(app.id, db)
+    if (
+      tasks.filter((task) =>
+        taskIsHealthy(task, appHasConfiguredHealthcheck(app))
+      ).length < Math.max(1, app.replicas ?? 1)
+    ) {
+      throw new Error("Runtime is not healthy")
+    }
+    return {
+      kind: "proxy",
+      upstream: { host: app.swarm_service_name, port },
+    }
+  }
+
+  if (!app.container_id) {
+    throw new Error("Runtime container is unavailable")
+  }
+  const health = await getSharedAgent().inspectContainerHealth({
+    containerId: app.container_id,
+  })
+  const hasHealthcheck = appHasConfiguredHealthcheck(app)
+  if (
+    health.containerMissing ||
+    health.running !== true ||
+    (health.status !== ContainerHealthStatus.CONTAINER_HEALTH_STATUS_HEALTHY &&
+      !(
+        !hasHealthcheck &&
+        health.status === ContainerHealthStatus.CONTAINER_HEALTH_STATUS_NONE
+      ))
+  ) {
+    throw new Error("Runtime is not healthy")
+  }
+  return {
+    kind: "proxy",
+    upstream: { host: app.container_id, port },
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router factory — accepts an injected DB for testability
 // ---------------------------------------------------------------------------
@@ -818,6 +1059,72 @@ export function createAppsRouter(db: Db): Hono {
     await next()
   }
 
+  // Preview the final host before an app exists. DNS is checked against the
+  // real resolver with a short timeout; an unavailable DNS record is reported
+  // as a pending action and never treated as proof that the host is ready.
+  router.get("/domain-preview", appsRead, domainPreviewRateLimit, async (c) => {
+    const rawDomain = c.req.query("domain") ?? c.req.query("hostname")
+    if (!rawDomain) {
+      return c.json(
+        { error: { code: "VALIDATION_ERROR", message: "domain is required" } },
+        400
+      )
+    }
+
+    const hostname = normalizeAppHostname(rawDomain)
+    if (!hostname) {
+      return c.json(
+        {
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Domain must be a hostname without a path, port, or credentials",
+          },
+        },
+        400
+      )
+    }
+
+    const appId = c.req.query("appId")
+    if (appId && !(await getAppForUser(db, appId, getUser(c).id))) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "App not found" } },
+        404
+      )
+    }
+
+    const domainBase = deriveDefaultAppDomainBase({
+      explicitBase: env.PLOYDOK_DOMAIN_BASE,
+      publicHost: env.PLOYDOK_PUBLIC_HOST,
+    })
+    const [collisions, dns] = await Promise.all([
+      findDomainCollisions(db, hostname, appId ? { excludeAppId: appId } : {}),
+      inspectDomainDns(hostname),
+    ])
+    // A preview must not perform an arbitrary-SNI TLS handshake. TLS becomes
+    // evidence only after the route has been published and rechecked.
+    const tls = {
+      status:
+        env.PLOYDOK_PUBLIC_SCHEME === "https"
+          ? ("pending" as const)
+          : ("not_required" as const),
+      checkedAt: new Date().toISOString(),
+      error:
+        env.PLOYDOK_PUBLIC_SCHEME === "https"
+          ? "TLS is checked after route publication"
+          : null,
+    }
+
+    return c.json({
+      available: collisions.length === 0,
+      normalizedHostname: hostname,
+      kind: classifyAppDomain(hostname, domainBase),
+      publicUrl: buildPublicUrl(hostname),
+      expectedRecords: dns.expectedRecords,
+      dns,
+      tls,
+    })
+  })
+
   router.get("/default-domain-config", appsRead, (c) => {
     const domainBase = deriveDefaultAppDomainBase({
       explicitBase: env.PLOYDOK_DOMAIN_BASE,
@@ -827,6 +1134,189 @@ export function createAppsRouter(db: Db): Hono {
       domainBase,
       publicScheme: env.PLOYDOK_PUBLIC_SCHEME,
       publicPort: env.PLOYDOK_PUBLIC_PORT ?? null,
+    })
+  })
+
+  router.post("/:id/routing/recheck", appsWrite, ownerOnly, sf, async (c) => {
+    const appId = c.req.param("id")!
+    const app = await getAppForOwner(db, appId, getUser(c).id)
+    if (!app) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "App not found" } },
+        404
+      )
+    }
+    if (await hasActiveDeployLease(db, appId)) {
+      return c.json({
+        routing: {
+          status: "action_required",
+          issue: "runtime",
+          error: "Deployment is still in progress",
+          dnsStatus: app.routing_dns_status ?? "unknown",
+          tlsStatus: app.routing_tls_status ?? "unknown",
+        },
+      })
+    }
+    if (!app.domain) {
+      return c.json(
+        {
+          routing: {
+            status: "action_required",
+            issue: "runtime",
+            error: "Application has no public domain",
+            dnsStatus: "unknown",
+            tlsStatus: "unknown",
+          },
+        }
+      )
+    }
+
+    let target: RecheckTarget
+    try {
+      target = await resolveHealthyRecheckTarget(db, app)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await db
+        .update(apps)
+        .set({
+          routing_status: "action_required",
+          routing_error: message,
+        })
+        .where(eq(apps.id, appId))
+      return c.json({
+        routing: {
+          status: "action_required",
+          issue: "runtime",
+          error: message,
+          dnsStatus: app.routing_dns_status ?? "unknown",
+          tlsStatus: app.routing_tls_status ?? "unknown",
+        },
+      })
+    }
+
+    const caddy = new CaddyClient()
+    let previousUpstream: { host: string; port: number } | null = null
+    if (await hasActiveDeployLease(db, appId)) {
+      return c.json({
+        routing: {
+          status: "action_required",
+          issue: "runtime",
+          error: "Deployment is still in progress",
+          dnsStatus: app.routing_dns_status ?? "unknown",
+          tlsStatus: app.routing_tls_status ?? "unknown",
+        },
+      })
+    }
+    const result = await withRoutingDeployLease({
+      db,
+      app,
+      task: async () => {
+        const currentApp = await getAppForOwner(db, appId, getUser(c).id)
+        if (
+          !currentApp ||
+          currentApp.container_id !== app.container_id ||
+          currentApp.domain !== app.domain ||
+          currentApp.status !== app.status ||
+          currentApp.updated_at?.getTime() !== app.updated_at?.getTime()
+        ) {
+          return null
+        }
+        try {
+          target = await resolveHealthyRecheckTarget(db, currentApp)
+        } catch {
+          return null
+        }
+        previousUpstream =
+          target.kind === "proxy" ? await caddy.getUpstream(appId) : null
+        const routingLease = currentDeployLease()
+        const routeResult = await publishHealthyAppRoute({
+          db,
+          appId,
+          ...(routingLease?.buildId ? { buildId: routingLease.buildId } : {}),
+          hostname: app.domain!,
+          getCurrentRouteHost: () => caddy.getRouteHost(appId),
+          proxied: app.cdn_mode === "external",
+          beforePersist: fenceDeploySideEffect,
+          applyRoute: async () => {
+            if (target.kind === "static") {
+              await fenceDeploySideEffect()
+              await caddy.upsertStaticRoute({
+                appId,
+                host: app.domain!,
+                root: target.root,
+                spaFallback: target.spaFallback,
+                cdn: app,
+              })
+              return
+            }
+            await fenceDeploySideEffect()
+            await caddy.setUpstream(appId, app.domain!, target.upstream, {
+              cdn: app,
+            })
+          },
+          afterRoute: async () => {
+            const aliases =
+              target.kind === "static"
+                ? await syncAppDomainAliases({
+                    db,
+                    appId,
+                    static: {
+                      root: target.root,
+                      spaFallback: target.spaFallback,
+                    },
+                    caddy,
+                    beforeSideEffect: fenceDeploySideEffect,
+                  })
+                : await syncAppDomainAliases({
+                    db,
+                    appId,
+                    upstream: target.upstream,
+                    caddy,
+                    beforeSideEffect: fenceDeploySideEffect,
+                  })
+            if (aliases.errors.length) {
+              throw new Error("Alias routing requires attention")
+            }
+          },
+        })
+        if (routeResult.routeApplied && target.kind === "proxy") {
+          await cleanupRetainedDockerSlot(
+            app,
+            previousUpstream,
+            target.upstream
+          )
+        }
+        return routeResult
+      },
+    })
+    if (!result) {
+      return c.json({
+        routing: {
+          status: "action_required",
+          issue: "runtime",
+          error: "Deployment is still in progress",
+          dnsStatus: app.routing_dns_status ?? "unknown",
+          tlsStatus: app.routing_tls_status ?? "unknown",
+        },
+      })
+    }
+    const issue =
+      result.dnsStatus !== "valid"
+        ? "dns"
+        : result.tlsStatus === "failed" || result.tlsStatus === "pending"
+          ? "tls"
+          : result.status === "action_required"
+            ? "runtime"
+            : null
+    return c.json({
+      routing: {
+        status: result.status,
+        issue,
+        error: result.error,
+        dnsStatus:
+          result.dnsStatus === "error" ? "unknown" : result.dnsStatus,
+        tlsStatus: result.tlsStatus,
+      },
     })
   })
 
@@ -1080,9 +1570,29 @@ export function createAppsRouter(db: Db): Hono {
     const slug =
       existingCreationApp?.slug ?? (await uniqueSlug(db, projectId, baseSlug))
 
-    // 3. Compute a directly reachable preview domain if absent.
-    const domain =
+    // 3. Compute and normalize the final host before persisting the app.
+    const requestedDomain =
       existingCreationApp?.domain ?? body.domain ?? defaultAppDomain(slug, id)
+    const domain = normalizeAppHostname(requestedDomain)
+    if (!domain) {
+      return c.json(
+        {
+          error: {
+            code: "INVALID_DOMAIN",
+            message:
+              "Domain must be a hostname without a path, port, or credentials",
+          },
+        },
+        400
+      )
+    }
+    const domainSource = classifyAppDomain(
+      domain,
+      deriveDefaultAppDomainBase({
+        explicitBase: env.PLOYDOK_DOMAIN_BASE,
+        publicHost: env.PLOYDOK_PUBLIC_HOST,
+      })
+    )
 
     // Snapshot registry defaults alongside explicit user values.
     const presetFields = frameworkPresetCreateFields(body)
@@ -1114,6 +1624,9 @@ export function createAppsRouter(db: Db): Hono {
       newApp =
         existingCreationApp ??
         (await db.transaction(async (tx) => {
+          const txDb = tx as unknown as Db
+          await lockDomain(txDb, domain)
+          await assertDomainAvailable(txDb, domain)
           const inserted = await insertApp(tx as unknown as Db, {
             id,
             project_id: projectId,
@@ -1169,6 +1682,7 @@ export function createAppsRouter(db: Db): Hono {
             stop_grace_period_s: body.runtime?.stopGracePeriodS ?? 10,
             restart_policy: body.restartPolicy ?? "unless-stopped",
             domain,
+            domain_source: domainSource,
             creation_idempotency_key: creationKey,
           })
           await createCreationSaga(tx, {
@@ -1184,6 +1698,35 @@ export function createAppsRouter(db: Db): Hono {
           return inserted
         }))
     } catch (err) {
+      if (err instanceof InvalidAppDomainError || err instanceof DomainCollisionError) {
+        return c.json(
+          {
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err instanceof DomainCollisionError
+                ? {
+                    collisions: err.collisions.map((collision) => ({
+                      resource: collision.resource,
+                    })),
+                  }
+                : {}),
+            },
+          },
+          err instanceof InvalidAppDomainError ? 400 : 409
+        )
+      }
+      if (isUniqueDomainConstraintError(err)) {
+        return c.json(
+          {
+            error: {
+              code: "DOMAIN_CONFLICT",
+              message: "Hostname is already in use",
+            },
+          },
+          409
+        )
+      }
       if (
         creationKey &&
         isUniqueConstraintError(
@@ -1628,7 +2171,34 @@ export function createAppsRouter(db: Db): Hono {
       patch.stop_grace_period_s = body.runtime.stopGracePeriodS
     if (body.restartPolicy !== undefined)
       patch.restart_policy = body.restartPolicy
-    if (body.domain !== undefined) patch.domain = body.domain
+    let domainChange: string | null = null
+    if (body.domain !== undefined) {
+      domainChange = normalizeAppHostname(body.domain)
+      if (!domainChange) {
+        return c.json(
+          {
+            error: {
+              code: "INVALID_DOMAIN",
+              message:
+                "Domain must be a hostname without a path, port, or credentials",
+            },
+          },
+          400
+        )
+      }
+      patch.domain = domainChange
+      patch.domain_source = classifyAppDomain(
+        domainChange,
+        deriveDefaultAppDomainBase({
+          explicitBase: env.PLOYDOK_DOMAIN_BASE,
+          publicHost: env.PLOYDOK_PUBLIC_HOST,
+        })
+      )
+      patch.routing_status = "pending"
+      patch.routing_error = null
+      patch.routing_dns_status = null
+      patch.routing_tls_status = null
+    }
     if (body.keepPerRepo !== undefined) patch.keep_per_repo = body.keepPerRepo
     if (body.auto_deploy_enabled !== undefined)
       patch.auto_deploy_enabled = body.auto_deploy_enabled
@@ -1650,7 +2220,32 @@ export function createAppsRouter(db: Db): Hono {
 
     Object.assign(patch, frameworkPresetPatchFields(existing, body))
 
-    const updated = await updateApp(db, appId, patch)
+    let updated: AppRow | null
+    try {
+      updated = domainChange
+        ? await db.transaction(async (tx) => {
+            const txDb = tx as unknown as Db
+            await lockDomain(txDb, domainChange!)
+            await assertDomainAvailable(txDb, domainChange!, {
+              excludeAppId: appId,
+            })
+            return updateApp(txDb, appId, patch)
+          })
+        : await updateApp(db, appId, patch)
+    } catch (err) {
+      if (err instanceof DomainCollisionError || isUniqueDomainConstraintError(err)) {
+        return c.json(
+          {
+            error: {
+              code: "DOMAIN_CONFLICT",
+              message: "Hostname is already in use",
+            },
+          },
+          409
+        )
+      }
+      throw err
+    }
 
     // Docker only applies restart policy at container creation time.
     // If a running app changes policy, immediately recreate the runtime so the
@@ -2324,12 +2919,12 @@ export function createAppsRouter(db: Db): Hono {
           404
         )
       }
-      if (targetBuild.status !== "succeeded") {
+      if (targetBuild.status !== "succeeded" && targetBuild.status !== "succeeded_with_warning") {
         return c.json(
           {
             error: {
               code: "INVALID_BUILD_STATUS",
-              message: `Cannot rollback to build with status '${targetBuild.status}' — only succeeded builds are allowed`,
+              message: `Cannot rollback to build with status '${targetBuild.status}': only successful builds are allowed`,
             },
           },
           400
@@ -2338,12 +2933,73 @@ export function createAppsRouter(db: Db): Hono {
     }
 
     try {
-      if (app.runtime_mode === "swarm") {
-        const { rollbackSwarmApp } = await import("../worker/swarm-runner.js")
-        await rollbackSwarmApp(appId, db, body.buildId)
-      } else {
-        const { rollbackApp } = await import("../worker/runner.js")
-        await rollbackApp(appId, db, body.buildId, undefined)
+      const rollbackResult = await withRoutingDeployLease({
+        db,
+        app,
+        task: async () => {
+          const currentApp = await getAppForUser(db, appId, user.id)
+          if (
+            !currentApp ||
+            currentApp.container_id !== app.container_id ||
+            currentApp.domain !== app.domain ||
+            currentApp.status !== app.status ||
+            currentApp.updated_at?.getTime() !== app.updated_at?.getTime()
+          ) {
+            return { kind: "conflict" as const }
+          }
+          if (body.buildId) {
+            const targetBuild = await getBuildForApp(db, body.buildId, appId)
+            if (
+              !targetBuild ||
+              (targetBuild.status !== "succeeded" &&
+                targetBuild.status !== "succeeded_with_warning")
+            ) {
+              return { kind: "invalid_target" as const }
+            }
+          }
+          if (currentApp.runtime_mode === "swarm") {
+            const { rollbackSwarmApp } =
+              await import("../worker/swarm-runner.js")
+            await rollbackSwarmApp(appId, db, body.buildId)
+          } else {
+            const { rollbackApp } = await import("../worker/runner.js")
+            await rollbackApp(appId, db, body.buildId, undefined)
+          }
+          return { kind: "ok" as const }
+        },
+      })
+      if (!rollbackResult) {
+        return c.json(
+          {
+            error: {
+              code: "ROLLBACK_CONFLICT",
+              message: "The app changed or a deployment is in progress",
+            },
+          },
+          409
+        )
+      }
+      if (rollbackResult.kind === "conflict") {
+        return c.json(
+          {
+            error: {
+              code: "ROLLBACK_CONFLICT",
+              message: "The app changed while rollback was starting",
+            },
+          },
+          409
+        )
+      }
+      if (rollbackResult.kind === "invalid_target") {
+        return c.json(
+          {
+            error: {
+              code: "INVALID_BUILD_STATUS",
+              message: "The rollback target is no longer successful",
+            },
+          },
+          409
+        )
       }
       return c.json({ ok: true })
     } catch (err) {

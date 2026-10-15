@@ -388,6 +388,48 @@ describe("CaddyClient", () => {
     ).rejects.toThrow("CaddyClient.upsertRoute PATCH routes failed: 500")
   })
 
+  test("getRouteHost reads only the requested app route", async () => {
+    const calls: MockRequest[] = []
+    handler = (req) => {
+      calls.push(req)
+      if (req.method === "GET" && req.path === "/id/ploydok-app-1") {
+        return {
+          status: 200,
+          body: {
+            "@id": "ploydok-app-1",
+            match: [{ host: ["app.example.com"] }],
+            handle: [],
+          },
+        }
+      }
+      return { status: 404, body: null }
+    }
+
+    await expect(client.getRouteHost("app-1")).resolves.toBe("app.example.com")
+    expect(calls).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/id/ploydok-app-1",
+      }),
+    ])
+  })
+
+  test("getRouteHost returns null when the app route is absent", async () => {
+    const calls: MockRequest[] = []
+    handler = (req) => {
+      calls.push(req)
+      return { status: 404, body: { error: "not found" } }
+    }
+
+    await expect(client.getRouteHost("missing-app")).resolves.toBeNull()
+    expect(calls).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/id/ploydok-missing-app",
+      }),
+    ])
+  })
+
   // -------------------------------------------------------------------------
   // removeRoute
   // -------------------------------------------------------------------------

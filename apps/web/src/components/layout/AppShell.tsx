@@ -171,8 +171,8 @@ const workspaceNav: Array<NavItem> = [
     orgPathSuffix: "databases",
     fallbackHref: "/databases",
   },
-  { id: "services", icon: RiCodeBoxLine, orgPathSuffix: "services" },
   { id: "deployments", icon: RiRocketLine, orgPathSuffix: "deployments" },
+  { id: "services", icon: RiCodeBoxLine, orgPathSuffix: "services" },
   { id: "marketplace", icon: RiShapesLine, orgPathSuffix: "marketplace" },
   {
     id: "templates",

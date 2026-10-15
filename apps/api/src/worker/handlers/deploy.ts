@@ -51,11 +51,14 @@ import {
   planComposeSwarmDeploy,
   readComposeFileFromWorkspace,
   swarmAgentFromGrpc,
+  waitForSwarmServiceCondition,
+  removeComposeSwarmServices,
 } from "../compose-swarm"
 import { createAgentClient } from "../../agent/client.js"
 import { ensureCaddyOnProjectNetwork } from "../../caddy/attachment.js"
 import { ensureProjectSwarmNetwork } from "../../services/projects.js"
 import { CaddyClient } from "../../caddy/client.js"
+import { publishHealthyAppRoute, syncAppDomainAliases } from "../../domains/routing.js"
 import {
   dispatchStaticDeploy,
   gcOldShas,
@@ -92,6 +95,7 @@ import {
   DeployCancelledError,
   DeployLeaseLostError,
   fenceDeploySideEffect,
+  runOwnedDeployReconciliation,
 } from "../app-deploy-lock"
 
 export function deploymentOutcomeForError(
@@ -1304,18 +1308,73 @@ export async function handleDeploy(
           "ploydok.owner_id": app.owner_id,
         },
       })
-      const swarm = swarmAgentFromGrpc(createAgentClient())
+      const entrypoint = plan.services.find((service) => service.name === plan.entrypoint?.name)
+      const swarmClient = createAgentClient()
+      const swarm = swarmAgentFromGrpc(swarmClient)
       await fenceDeploySideEffect()
       const names = await deployPlannedComposeStack(swarm, plan, {
         onPoll: fenceDeploySideEffect,
+      }).catch((error) => {
+        swarmClient.close()
+        throw error
       })
+      try {
+        if (entrypoint) await waitForSwarmServiceCondition(swarm, {
+          serviceName: entrypoint.name,
+          condition: entrypoint.healthcheck ? "service_healthy" : "service_started",
+          replicas: entrypoint.replicas, restartPolicy: entrypoint.restartPolicy,
+          onPoll: fenceDeploySideEffect,
+        })
+      } catch (error) {
+        await runOwnedDeployReconciliation(() => removeComposeSwarmServices(swarm, names))
+        throw error
+      } finally {
+        swarmClient.close()
+      }
       if (app.domain && plan.entrypoint) {
-        await fenceDeploySideEffect()
-        await new CaddyClient().setUpstream(
-          app.id,
-          app.domain,
-          { host: plan.entrypoint.name, port: plan.entrypoint.port }
-        )
+        try {
+          await fenceDeploySideEffect()
+          const routeResult = await publishHealthyAppRoute({
+            db, appId: app.id, buildId, hostname: app.domain,
+            getCurrentRouteHost: () => getSharedCaddy().getRouteHost(app.id),
+            proxied: app.cdn_mode === "external",
+            beforePersist: fenceDeploySideEffect,
+            applyRoute: async () => {
+              await fenceDeploySideEffect()
+              const caddy = new CaddyClient()
+              const upstream = { host: plan.entrypoint!.name, port: plan.entrypoint!.port }
+              await caddy.setUpstream(app.id, app.domain!, upstream)
+            },
+            afterRoute: async () => {
+              const caddy = new CaddyClient()
+              const upstream = { host: plan.entrypoint!.name, port: plan.entrypoint!.port }
+              const aliases = await syncAppDomainAliases({
+                db, appId: app.id, caddy, upstream,
+                beforeSideEffect: fenceDeploySideEffect,
+              })
+              if (aliases.errors.length) throw new Error("Alias routing requires attention")
+            },
+          })
+          if (!routeResult.routeApplied) {
+            onLog(
+              `[deploy] compose stack is healthy but its primary route requires DNS/TLS action`
+            )
+          }
+        } catch (error) {
+          await runOwnedDeployReconciliation(() => {
+            const cleanupClient = createAgentClient()
+            const cleanupSwarm = swarmAgentFromGrpc(cleanupClient)
+            return removeComposeSwarmServices(cleanupSwarm, names).finally(() => {
+              cleanupClient.close()
+            })
+          }).catch((cleanupError) =>
+            workerLog.error(
+              { appId: app.id, names, cleanupError },
+              "compose: failed to remove services after route publication error"
+            )
+          )
+          throw error
+        }
         onLog(
           `[deploy] Caddy upstream ${plan.entrypoint.name}:${plan.entrypoint.port}`
         )
@@ -1330,6 +1389,11 @@ export async function handleDeploy(
           container_id: null,
           status: "running",
           runtime_port: plan.entrypoint?.port ?? app.runtime_port,
+          runtime_has_healthcheck: Boolean(
+            plan.services.find(
+              (service) => service.name === plan.entrypoint?.name
+            )?.healthcheck
+          ),
           updated_at: new Date(),
         })
         .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
@@ -1370,16 +1434,39 @@ export async function handleDeploy(
 
       if (app.domain) {
         await fenceDeploySideEffect()
-        await getSharedCaddy().upsertStaticRoute({
-          appId: app.id,
-          host: app.domain,
-          root: caddyStaticRootForApp(app.id),
-          spaFallback: app.static_spa_fallback ?? true,
-          cdn: app,
+        const routeResult = await publishHealthyAppRoute({
+          db, appId: app.id, buildId, hostname: app.domain,
+          getCurrentRouteHost: () => getSharedCaddy().getRouteHost(app.id),
+          proxied: app.cdn_mode === "external",
+          beforePersist: fenceDeploySideEffect,
+          applyRoute: async () => {
+            await fenceDeploySideEffect()
+            await getSharedCaddy().upsertStaticRoute({
+              appId: app.id,
+              host: app.domain!,
+              root: caddyStaticRootForApp(app.id),
+              spaFallback: app.static_spa_fallback ?? true,
+              cdn: app,
+            })
+          },
+          afterRoute: async () => {
+            const aliases = await syncAppDomainAliases({
+              db, appId: app.id, caddy: getSharedCaddy(),
+              static: { root: caddyStaticRootForApp(app.id), spaFallback: app.static_spa_fallback ?? true },
+              beforeSideEffect: fenceDeploySideEffect,
+            })
+            if (aliases.errors.length) throw new Error("Alias routing requires attention")
+          },
         })
-        await fenceDeploySideEffect()
-        await purgeCloudflareForApp(db, app.id)
-        onLog(`[deploy] Caddy static route updated for ${app.domain}`)
+        if (!routeResult.routeApplied) {
+          onLog(
+            `[deploy] static artifact is live but its primary route requires DNS/TLS action`
+          )
+        } else {
+          await fenceDeploySideEffect()
+          await purgeCloudflareForApp(db, app.id)
+          onLog(`[deploy] Caddy static route updated for ${app.domain}`)
+        }
       }
 
       const keep = app.keep_per_repo ?? 3
@@ -1399,6 +1486,7 @@ export async function handleDeploy(
         })
         .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
 
+      rollbackStaticPromotion = null
       finalPatch = { finishedAt: new Date() }
       finalStatus = "succeeded"
       await fenceDeploySideEffect()
@@ -1853,6 +1941,13 @@ export async function handleDeploy(
 
     finalStatus = "failed"
     finalPatch = { finishedAt: new Date(), errorMessage: msg }
+    await rollbackStaticPromotion?.().catch((rollbackError) =>
+      workerLog.error(
+        { appId: app.id, buildId, rollbackError },
+        "static deploy: failed to restore the previous promotion after failure"
+      )
+    )
+    rollbackStaticPromotion = null
     commitStatusErrorState =
       err instanceof FatalDeployError ? "failure" : "error"
     deploymentOutcome = deploymentOutcomeForError(err)

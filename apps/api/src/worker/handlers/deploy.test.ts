@@ -777,9 +777,7 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     const job = makeJob({ buildId: bgBuildId })
 
     await expect(
-      withAppDeployLease(db, bgAppId, bgBuildId, () =>
-        handleDeploy(db, job)
-      )
+      withAppDeployLease(db, bgAppId, bgBuildId, () => handleDeploy(db, job))
     ).rejects.toThrow("healthcheck failed after 6 retries")
 
     // Build record must have status failed.

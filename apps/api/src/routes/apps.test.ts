@@ -11,9 +11,11 @@ import {
   memberships,
   passkeys,
   apps,
+  services,
   builds,
   secrets,
   app_delete_jobs,
+  app_deploy_leases,
   github_installation_users,
   gitlab_tokens,
   provider_installations,
@@ -60,6 +62,7 @@ afterAll(async () => {
 })
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
+let rollbackCalls = 0
 
 describe("deriveCurrentBuildMetadata", () => {
   it("uses the latest successful build commit as the current deployed commit", () => {
@@ -89,6 +92,12 @@ describe("deriveCurrentBuildMetadata", () => {
 })
 
 describe("default app domains", () => {
+  it("keeps truncated id tokens valid when a separator lands at the end", () => {
+    expect(buildDefaultAppDomain({
+      slug: "fixture", appId: "ABCDEFG_more", publicHost: "localhost",
+    })).toBe("fixture-abcdefga.demo.localhost")
+  })
+
   it("uses explicit domain base when configured", () => {
     expect(
       deriveDefaultAppDomainBase({
@@ -301,7 +310,7 @@ async function createTestApp(db: TestDb, opts: CreateAppOpts) {
     container_id: null,
     runtime_mode: opts.runtimeMode ?? "swarm",
     restart_policy: "unless-stopped",
-    domain: `${slug}.demo.localhost`,
+    domain: `${slug}-${nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "a")}.demo.localhost`,
     build_method: "auto",
     healthcheck_path: "/",
     healthcheck_port: null,
@@ -619,6 +628,33 @@ describe.skipIf(skip)("POST /apps", () => {
     })
   })
 
+  it("rejects another tenant's app and service hostname at preview and creation", async () => {
+    const other = await createTestUser(db)
+    const otherProject = await createTestProject(db, other.id)
+    const client = buildTestApp(db, fakeUser(userId, "preview-user@test.invalid"))
+    for (const kind of ["app", "service"] as const) {
+      const token = nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "a")
+      const domain = `owned-${kind}-${token}.example.test`
+      const values = { id: nanoid(), project_id: otherProject.id, name: "Owned", slug: token, domain }
+      if (kind === "app") await db.insert(apps).values(values)
+      else await db.insert(services).values({ ...values, template_id: "fixture", compose_raw: "services: {}" })
+
+      const preview = await client.request(`/apps/domain-preview?domain=${domain.toUpperCase()}`)
+      expect(preview.status).toBe(200)
+      const result = await preview.json() as { available: boolean; collisions?: Array<Record<string, unknown>> }
+      expect(result.available).toBe(false)
+      expect(result).not.toHaveProperty("collisions")
+
+      const create = await client.request("/apps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, name: "Candidate", gitProvider: "image", imageRef: "nginx:stable", domain: domain.toUpperCase() }),
+      })
+      expect(create.status).toBe(409)
+      expect(await create.json()).toMatchObject({ error: { code: "DOMAIN_CONFLICT" } })
+    }
+  }, 15_000)
+
   it("creates an app with valid body → 201 + app in response", async () => {
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await app.request("/apps", {
@@ -648,8 +684,14 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(body.app.name).toBe("My App")
     expect(body.app.slug).toBe("my-app")
     expect(body.app.status).toBe("pending")
+    const domainBase = deriveDefaultAppDomainBase({
+      explicitBase: Bun.env["PLOYDOK_DOMAIN_BASE"],
+      publicHost: Bun.env["PLOYDOK_PUBLIC_HOST"],
+    })
     expect(body.app.domain).toMatch(
-      /^my-app-[a-z0-9-]{8}\.demo\.localhost$/
+      new RegExp(
+        `^my-app-[a-z0-9-]{8}\\.${domainBase.replace(/\./g, "\\.")}$`
+      )
     )
     expect(body.app.restartPolicy).toBe("unless-stopped")
     expect(body.app.id).toBeString()
@@ -1144,6 +1186,57 @@ describe.skipIf(skip)("POST /apps", () => {
     const body = (await res.json()) as { app: { domain: string } }
     expect(body.app.domain).toBe("myapp.example.com")
   })
+
+  it("persists a custom domain with framework preset runtime defaults", async () => {
+    const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
+    const res = await app.request("/apps", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Preset Domain App",
+        projectId,
+        gitProvider: "image",
+        imageRef: "nginx:stable",
+        frameworkPreset: "laravel",
+        domain: "Laravel.Example.com",
+      }),
+    })
+
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { app: { id: string } }
+    const rows = await db
+      .select({
+        domain: apps.domain,
+        domainSource: apps.domain_source,
+        frameworkPreset: apps.framework_preset,
+        buildMethod: apps.build_method,
+        staticOutputDir: apps.static_output_dir,
+        runtimePort: apps.runtime_port,
+        healthcheckPath: apps.healthcheck_path,
+        healthcheckPort: apps.healthcheck_port,
+        healthcheckIntervalS: apps.healthcheck_interval_s,
+        healthcheckTimeoutS: apps.healthcheck_timeout_s,
+        healthcheckRetries: apps.healthcheck_retries,
+        healthcheckStartPeriodS: apps.healthcheck_start_period_s,
+      })
+      .from(apps)
+      .where(eq(apps.id, body.app.id))
+
+    expect(rows[0]).toEqual({
+      domain: "laravel.example.com",
+      domainSource: "custom",
+      frameworkPreset: "laravel",
+      buildMethod: "nixpacks",
+      staticOutputDir: "public",
+      runtimePort: 80,
+      healthcheckPath: "/",
+      healthcheckPort: 80,
+      healthcheckIntervalS: 5,
+      healthcheckTimeoutS: 3,
+      healthcheckRetries: 6,
+      healthcheckStartPeriodS: 30,
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1600,7 +1693,7 @@ describe.skipIf(skip)("DELETE /apps/:id", () => {
 async function createTestBuild(
   db: TestDb,
   appId: string,
-  status: "pending" | "running" | "succeeded" | "failed" | "cancelled",
+  status: "pending" | "running" | "succeeded" | "succeeded_with_warning" | "failed" | "cancelled",
   opts: {
     imageTag?: string
     commitSha?: string
@@ -1847,7 +1940,9 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   // All public exports must be listed here to avoid breaking other test files
   // that import from this module in the same bun test run.
   mock.module("../worker/runner.js", () => ({
-    rollbackApp: async () => undefined,
+    rollbackApp: async () => {
+      rollbackCalls++
+    },
     restartApp: async () => undefined,
     stopApp: async () => undefined,
     runBlueGreen: async () => ({ containerId: "mock-ctr", color: "blue" }),
@@ -1861,19 +1956,20 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
 
   beforeEach(async () => {
     db = await makeTestDb()
+    rollbackCalls = 0
     const user = await createTestUser(db)
     userId = user.id
     const project = await createTestProject(db, userId)
     projectId = project.id
   })
 
-  it("rollback with explicit succeeded buildId → 200", async () => {
+  it.each(["succeeded", "succeeded_with_warning"] as const)("rollback with explicit %s buildId returns 200", async (status) => {
     const { id: appId } = await createTestApp(db, {
       userId,
       projectId,
       runtimeMode: "docker",
     })
-    const { id: buildId } = await createTestBuild(db, appId, "succeeded")
+    const { id: buildId } = await createTestBuild(db, appId, status)
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await honoApp.request(`/apps/${appId}/rollback`, {
@@ -1885,6 +1981,42 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
+  })
+
+  it("returns a conflict and does not start rollback while another deployment owns the app", async () => {
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
+    const { id: buildId } = await createTestBuild(db, appId, "succeeded")
+    const now = new Date()
+    await db.insert(app_deploy_leases).values({
+      app_id: appId,
+      build_id: buildId,
+      lease_token: "active-deploy-token",
+      heartbeat_at: now,
+      lease_until: new Date(now.getTime() + 60_000),
+      created_at: now,
+    })
+
+    try {
+      const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
+      const res = await honoApp.request(`/apps/${appId}/rollback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ buildId }),
+      })
+
+      expect(res.status).toBe(409)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe("ROLLBACK_CONFLICT")
+      expect(rollbackCalls).toBe(0)
+    } finally {
+      await db
+        .delete(app_deploy_leases)
+        .where(eq(app_deploy_leases.app_id, appId))
+    }
   })
 
   it("rollback with explicit failed buildId → 400 INVALID_BUILD_STATUS", async () => {
@@ -1909,6 +2041,9 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
       projectId,
       runtimeMode: "docker",
     })
+
+    await createTestBuild(db, appId, "succeeded")
+    await createTestBuild(db, appId, "succeeded")
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     // No body — legacy behaviour

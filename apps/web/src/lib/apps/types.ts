@@ -10,6 +10,17 @@ import type {
   RestartPolicy,
 } from "@ploydok/shared"
 
+export type AppRoutingStatus = "pending" | "ready" | "action_required"
+export type AppRoutingIssue = "dns" | "tls" | "runtime"
+
+export interface AppRoutingState {
+  status: AppRoutingStatus
+  issue?: AppRoutingIssue | null
+  error?: string | null
+  dnsStatus?: "valid" | "missing" | "mismatch" | "error" | "unknown" | null
+  tlsStatus?: "pending" | "issued" | "failed" | "not_required" | "unknown" | null
+}
+
 export interface AppListItem {
   id: string
   organizationId?: string
@@ -20,6 +31,7 @@ export interface AppListItem {
   branch?: string
   domain?: string
   publicUrl?: string
+  routing?: AppRoutingState | null
   repoFullName?: string
   imageRef?: string | null
   /** apps.container_id — the canonical container the runner wrote at last

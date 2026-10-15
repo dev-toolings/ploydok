@@ -18,6 +18,11 @@ import { reconcileRuntimeAppsOnBoot } from "./services/app-runtime-reconciler.js
 import { reconcileSwarmProjectNetworks } from "./services/projects.js"
 import { reconcileResourceCreations } from "./services/resource-creation-reconciler.js"
 import { migrateDockerAppsToSwarmOnBoot } from "./services/swarm-migration.js"
+import { assertNoCaseInsensitiveAppDomainDuplicates } from "@ploydok/db"
+import {
+  backfillAppDomainMetadata,
+  deriveDefaultAppDomainBase,
+} from "./domains/app-domain.js"
 
 const log = childLogger("boot")
 
@@ -48,6 +53,7 @@ async function runMigrationsOnBoot(): Promise<void> {
   try {
     await sql`SELECT pg_advisory_lock(hashtext('ploydok:drizzle-migrations'))`
     log.info({ migrationsFolder }, "applying drizzle migrations on boot")
+    await assertNoCaseInsensitiveAppDomainDuplicates(sql)
     await migrate(drizzle(sql), { migrationsFolder })
     log.info("drizzle migrations applied")
   } finally {
@@ -218,6 +224,20 @@ if (import.meta.main) {
     }
   }
 
+  const workerDb = createDb(env.DATABASE_URL)
+  if (env.NODE_ENV !== "test") {
+    const backfill = await backfillAppDomainMetadata(
+      workerDb,
+      deriveDefaultAppDomainBase({
+        explicitBase: env.PLOYDOK_DOMAIN_BASE,
+        publicHost: env.PLOYDOK_PUBLIC_HOST,
+      })
+    )
+    if (backfill.appsUpdated > 0 || backfill.buildsUpdated > 0) {
+      log.info(backfill, "app domain metadata backfill complete")
+    }
+  }
+
   // M3.2: pass the BunWebSocket handler so Bun can upgrade WS connections.
   // idleTimeout: 0 disables the 10 s default so long-lived SSE streams
   // (GET /events) don't get chunk-encoded-truncated before their first
@@ -236,7 +256,6 @@ if (import.meta.main) {
     `api listening on :${env.PORT}`
   )
 
-  const workerDb = createDb(env.DATABASE_URL)
   const worker = startWorker(workerDb)
   log.info("worker started (polling jobs every 2s)")
 

@@ -24,6 +24,13 @@ import type { AuthUser } from "../auth/middleware"
 import { requireSecondFactor } from "../auth/middleware"
 import { encryptField, decryptField } from "../github/app-credentials"
 import { parseAndValidateCert } from "../domains/cert-parser"
+import {
+  assertDomainAvailable,
+  DomainCollisionError,
+  InvalidAppDomainError,
+  isUniqueDomainConstraintError,
+  lockDomain,
+} from "../domains/availability"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -262,29 +269,36 @@ export function createAppsDomainsRouter(db: Db): Hono {
 
     const hostname = normalized.hostname
 
-    // Global uniqueness check — one hostname can only belong to one app.
-    const existing = await getDomainByHostname(db, hostname)
-    if (existing) {
-      return c.json(
-        {
-          error: {
-            code: "CONFLICT",
-            message: "Hostname already in use by another app",
-          },
-        },
-        409
-      )
-    }
-
     const verifyToken = randomBytes(16).toString("hex")
-
-    const row = await addDomain(db, appId, hostname, {
-      tls_mode: body.tls_mode,
-      dns01_provider: body.dns01_provider ?? null,
-      verify_token: verifyToken,
-      requested_by_user_id: user.id,
-      verify_source: "api",
-    })
+    let row: Awaited<ReturnType<typeof addDomain>>
+    try {
+      row = await db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db
+        await lockDomain(txDb, hostname)
+        await assertDomainAvailable(txDb, hostname)
+        return addDomain(txDb, appId, hostname, {
+          tls_mode: body.tls_mode,
+          dns01_provider: body.dns01_provider ?? null,
+          verify_token: verifyToken,
+          requested_by_user_id: user.id,
+          verify_source: "api",
+        })
+      })
+    } catch (err) {
+      if (err instanceof InvalidAppDomainError) {
+        return c.json(
+          { error: { code: "VALIDATION_ERROR", message: err.message } },
+          400
+        )
+      }
+      if (err instanceof DomainCollisionError || isUniqueDomainConstraintError(err)) {
+        return c.json(
+          { error: { code: "CONFLICT", message: "Hostname already in use" } },
+          409
+        )
+      }
+      throw err
+    }
 
     // Enqueue DNS verification job
     await domainVerifyQueue.add(

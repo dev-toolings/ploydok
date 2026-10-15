@@ -28,6 +28,7 @@ import type {
 import type {
   AppDetail,
   AppListItem,
+  AppRoutingState,
   AppStatusEventPayload,
   AppsResponse,
   BuildStatusEventPayload,
@@ -156,6 +157,30 @@ export function useCreateApp() {
           queryKey: ["apps", vars.organizationId ?? vars.projectId],
         })
       }
+    },
+    onError: (error) => {
+      toast.error(error.message)
+    },
+  })
+}
+
+export function useRecheckAppRouting(appId: string) {
+  const qc = useQueryClient()
+
+  return useMutation<{ routing: AppRoutingState }, ApiError, void>({
+    mutationFn: () =>
+      apiFetch<{ routing: AppRoutingState }>(
+        `/apps/${appId}/routing/recheck`,
+        { method: "POST" }
+      ),
+    onSuccess: ({ routing }) => {
+      qc.setQueryData<AppDetail>(["apps", appId], (current) =>
+        current ? { ...current, routing } : current
+      )
+      invalidateGetCache(`/apps/${appId}`)
+      void qc.invalidateQueries({ queryKey: ["apps", appId] })
+      void qc.invalidateQueries({ queryKey: ["apps"] })
+      toast.success(i18n.t("apps:toasts.routingChecked"))
     },
     onError: (error) => {
       toast.error(error.message)

@@ -135,18 +135,18 @@ const NAV_ITEMS: Array<NavEntry> = [
     orgPathSuffix: "databases",
   },
   {
-    id: "nav-services",
-    section: "Navigation",
-    icon: RiCodeBoxLine,
-    to: "/dashboard",
-    orgPathSuffix: "services",
-  },
-  {
     id: "nav-deployments",
     section: "Navigation",
     icon: RiRocketLine,
     to: "/dashboard",
     orgPathSuffix: "deployments",
+  },
+  {
+    id: "nav-services",
+    section: "Navigation",
+    icon: RiCodeBoxLine,
+    to: "/dashboard",
+    orgPathSuffix: "services",
   },
   {
     id: "nav-marketplace",
