@@ -22,11 +22,13 @@ export interface S3Config {
   secretAccessKey: string
 }
 
-const CHUNK_SIZE = 4 * 1024 * 1024 // 4 MB
+const CHUNK_SIZE = 5 * 1024 * 1024 // S3 multipart minimum: 5 MiB
 
 export function createS3Client(config: S3Config): S3Client {
   const clientConfig: S3ClientConfig = {
     region: config.region,
+    // Some S3-compatible stores reject the SDK's optional CRC32 request metadata.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
