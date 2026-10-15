@@ -65,6 +65,7 @@ function makeChain(results: unknown[]) {
     leftJoin: () => chain,
     where: () => chain,
     orderBy: () => chain,
+    for: () => chain,
     limit: () => Promise.resolve(result),
     then: (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(result).then(onFulfilled),
@@ -87,6 +88,10 @@ function buildDb(selectResults: unknown[]) {
 
   const db: Record<string, unknown> = {
     select: mock(() => makeChain(selectResults)),
+    execute: mock(async () => []),
+    transaction: mock(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(db)
+    ),
     insert: mock((table: unknown) => ({
       values: mock(async (values: unknown) => {
         inserts.push({ table, values })
@@ -289,6 +294,26 @@ describe("shared destinations in backup config routes", () => {
     expect(inserts).toHaveLength(0)
   })
 
+  it("rejects a link-local inline endpoint before writing a backup config", async () => {
+    const { db, inserts, updates } = buildDb([
+      [{ db: { id: "db-1", project_id: "proj-1" } }],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/databases/db-1/backup-config", {
+        destinationKind: "s3",
+        s3Endpoint: "http://169.254.169.254",
+      })
+    )
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({
+      error: { code: "VALIDATION_ERROR" },
+    })
+    expect(inserts).toHaveLength(0)
+    expect(updates).toHaveLength(0)
+  })
+
   it("rejects a volume destination owned by another workspace", async () => {
     const volumeRow = {
       id: "vol-1",
@@ -418,6 +443,119 @@ describe("shared destinations in backup config routes", () => {
         s3_credentials_secret_id: null,
       }),
     })
+  })
+
+  it("refuses switching a database destination while backup rows still reference the config", async () => {
+    const existing = {
+      id: "db-config-1",
+      database_id: "db-1",
+      destination_id: "destination-old",
+      destination_kind: "s3" as const,
+      s3_endpoint: null,
+      s3_bucket: null,
+      s3_prefix: "database",
+      s3_region: null,
+      s3_credentials_secret_id: null,
+    }
+    const { db, updates } = buildDb([
+      [{ db: { id: "db-1", project_id: "proj-1" } }],
+      [{ id: "destination-new", org_id: "proj-1", kind: "s3" }],
+      [existing],
+      [existing],
+      [{ id: "backup-1" }],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/databases/db-1/backup-config", {
+        destinationId: "destination-new",
+      })
+    )
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({
+      error: { code: "BACKUP_CONFIG_IN_USE" },
+    })
+    expect(updates).toHaveLength(0)
+  })
+
+  it("rechecks a destination id under lock before updating a concurrently switched config", async () => {
+    const initiallySelected = {
+      id: "db-config-1",
+      database_id: "db-1",
+      destination_id: "destination-old",
+      destination_kind: "s3" as const,
+      s3_endpoint: null,
+      s3_bucket: null,
+      s3_prefix: "database",
+      s3_region: null,
+      s3_credentials_secret_id: null,
+    }
+    const concurrentlySwitched = {
+      ...initiallySelected,
+      destination_id: "destination-new",
+    }
+    const { db, updates } = buildDb([
+      [{ db: { id: "db-1", project_id: "proj-1" } }],
+      [{ id: "destination-old", org_id: "proj-1", kind: "s3" }],
+      [initiallySelected],
+      [concurrentlySwitched],
+      [{ id: "backup-1" }],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/databases/db-1/backup-config", {
+        destinationId: "destination-old",
+      })
+    )
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({
+      error: { code: "BACKUP_CONFIG_IN_USE" },
+    })
+    expect(updates).toHaveLength(0)
+  })
+
+  it("applies the same guard when linking an inline volume config", async () => {
+    const volumeRow = {
+      id: "vol-1",
+      app_id: "app-1",
+      name: "data",
+      mount_path: "/data",
+      size_limit_bytes: null,
+      created_at: new Date("2026-04-28T09:00:00.000Z"),
+    }
+    const existing = {
+      id: "volume-config-1",
+      app_id: "app-1",
+      volume_id: "vol-1",
+      destination_id: null,
+      destination_kind: "s3" as const,
+      s3_endpoint: "https://old.example.test",
+      s3_bucket: "old-bucket",
+      s3_prefix: "volume",
+      s3_region: "auto",
+      s3_credentials_secret_id: "old-secret",
+    }
+    const { db, updates } = buildDb([
+      [volumeRow],
+      [{ projectId: "proj-1" }],
+      [{ id: "destination-new", org_id: "proj-1", kind: "s3" }],
+      [existing],
+      [existing],
+      [{ id: "volume-backup-1" }],
+    ])
+
+    const res = await wrapRouter(db).fetch(
+      req("PUT", "/apps/app-1/volumes/vol-1/backup-config", {
+        destinationId: "destination-new",
+      })
+    )
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({
+      error: { code: "BACKUP_CONFIG_IN_USE" },
+    })
+    expect(updates).toHaveLength(0)
   })
 })
 

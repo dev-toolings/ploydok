@@ -83,7 +83,9 @@ CREATE INDEX IF NOT EXISTS "volume_backup_configs_destination_id_idx"
 -- The encrypted secret is intentionally not grouped by ciphertext or secret
 -- id here: AES-GCM uses a fresh nonce for every write. The idempotent runtime
 -- backfill decrypts the referenced values and merges equal credentials. This
--- SQL stage only creates stable candidates and attaches configs to them.
+-- SQL stage only creates stable candidates and attaches configs to them. It
+-- keeps this placeholder so the runtime pass can distinguish untouched rows
+-- from destinations whose names were edited by a user.
 INSERT INTO "storage_destinations" (
   "id", "org_id", "name", "kind", "s3_endpoint", "s3_bucket", "s3_region",
   "credentials_secret_id", "created_at", "updated_at"

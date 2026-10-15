@@ -73,6 +73,34 @@ async function usageCount(db: Db, destinationId: string): Promise<number> {
   return Number(rows[0]?.count ?? 0)
 }
 
+async function usageCountsByDestination(
+  db: Db,
+  orgId: string
+): Promise<Map<string, number>> {
+  const rows = await db
+    .select({
+      destinationId: storage_destinations.id,
+      usageCount: sql<number>`
+        count(distinct ${backup_configs.id}) +
+        count(distinct ${volume_backup_configs.id})
+      `,
+    })
+    .from(storage_destinations)
+    .leftJoin(
+      backup_configs,
+      eq(backup_configs.destination_id, storage_destinations.id)
+    )
+    .leftJoin(
+      volume_backup_configs,
+      eq(volume_backup_configs.destination_id, storage_destinations.id)
+    )
+    .where(eq(storage_destinations.org_id, orgId))
+    .groupBy(storage_destinations.id)
+
+  return new Map(
+    rows.map((row) => [row.destinationId, Number(row.usageCount ?? 0)])
+  )
+}
 async function createCredentialsSecret(
   db: Pick<Db, "insert">,
   orgId: string,
@@ -154,10 +182,9 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       .from(storage_destinations)
       .where(eq(storage_destinations.org_id, orgId))
       .orderBy(storage_destinations.name)
-    const summaries = await Promise.all(
-      rows.map(async (destination) =>
-        destinationSummary(destination, await usageCount(db, destination.id))
-      )
+    const usageCounts = await usageCountsByDestination(db, orgId)
+    const summaries = rows.map((destination) =>
+      destinationSummary(destination, usageCounts.get(destination.id) ?? 0)
     )
     return c.json({
       destinations: summaries,

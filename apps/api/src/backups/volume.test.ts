@@ -52,6 +52,10 @@ function buildDb(selectResults: unknown[]) {
 
   const db: Record<string, unknown> = {
     select: mock(() => makeChain(selectResults)),
+    execute: mock(async () => []),
+    transaction: mock(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(db)
+    ),
     insert: mock((table: unknown) => ({
       values: mock(async (values: unknown) => {
         inserts.push({ table, values })
@@ -124,6 +128,7 @@ describe("runVolumeBackupOnce", () => {
           },
         },
       ],
+      [configRow],
       [configRow],
       [],
     ])

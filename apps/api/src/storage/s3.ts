@@ -15,7 +15,15 @@ import {
   type S3ClientConfig,
 } from "@aws-sdk/client-s3"
 import { Upload } from "@aws-sdk/lib-storage"
+import { lookup as dnsLookup } from "node:dns"
+import { Agent as HttpAgent } from "node:http"
+import { Agent as HttpsAgent } from "node:https"
+import type { LookupFunction } from "node:net"
 import type { Readable } from "node:stream"
+import {
+  isUnsafeStorageDestinationAddress,
+  isUnsafeStorageDestinationEndpoint,
+} from "@ploydok/shared"
 
 export interface S3Config {
   endpoint?: string | undefined
@@ -26,7 +34,95 @@ export interface S3Config {
 
 const CHUNK_SIZE = 5 * 1024 * 1024 // S3 multipart minimum: 5 MiB
 
+export const S3_LINK_LOCAL_ENDPOINT_ERROR =
+  "S3 endpoint points to a blocked link-local address"
+
+type LookupAll = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+  callback: (
+    error: NodeJS.ErrnoException | null,
+    addresses: S3LookupAddress[]
+  ) => void
+) => void
+
+type S3LookupAddress = { address: string; family: number }
+
+const defaultLookup = dnsLookup as unknown as LookupAll
+
+function blockedEndpointError(): NodeJS.ErrnoException {
+  const error = new Error(S3_LINK_LOCAL_ENDPOINT_ERROR) as NodeJS.ErrnoException
+  error.code = "EHOSTUNREACH"
+  return error
+}
+
+/**
+ * Resolve every address before opening an S3 socket. Rejecting the complete
+ * answer when one address is link-local prevents DNS aliases and a later
+ * connection attempt from reaching the instance metadata network.
+ */
+export function createSafeS3Lookup(
+  resolver: LookupAll = defaultLookup
+): LookupFunction {
+  return (hostname, options, callback) => {
+    const returnAll = options.all === true
+    const fail = (error: NodeJS.ErrnoException) => {
+      if (returnAll) callback(error, [])
+      else callback(error, "", 0)
+    }
+
+    if (isUnsafeStorageDestinationAddress(hostname)) {
+      fail(blockedEndpointError())
+      return
+    }
+
+    resolver(hostname, { all: true, verbatim: true }, (error, addresses) => {
+      if (error) {
+        fail(error)
+        return
+      }
+      if (
+        addresses.some((address) =>
+          isUnsafeStorageDestinationAddress(address.address)
+        )
+      ) {
+        fail(blockedEndpointError())
+        return
+      }
+      const family =
+        options.family === "IPv4"
+          ? 4
+          : options.family === "IPv6"
+            ? 6
+            : options.family
+      const matchingAddresses =
+        family === 4 || family === 6
+          ? addresses.filter((address) => address.family === family)
+          : addresses
+      if (matchingAddresses.length === 0) {
+        const notFound = new Error(
+          `S3 endpoint host could not be resolved: ${hostname}`
+        ) as NodeJS.ErrnoException
+        notFound.code = "ENOTFOUND"
+        fail(notFound)
+        return
+      }
+      if (returnAll) {
+        callback(null, matchingAddresses)
+      } else {
+        const address = matchingAddresses[0]!
+        callback(null, address.address, address.family)
+      }
+    })
+  }
+}
+
 export function createS3Client(config: S3Config): S3Client {
+  if (config.endpoint && isUnsafeStorageDestinationEndpoint(config.endpoint)) {
+    throw blockedEndpointError()
+  }
+
+  const safeLookup = createSafeS3Lookup()
   const clientConfig: S3ClientConfig = {
     region: config.region,
     // Some S3-compatible stores reject the SDK's optional CRC32 request metadata.
@@ -34,6 +130,10 @@ export function createS3Client(config: S3Config): S3Client {
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
+    },
+    requestHandler: {
+      httpAgent: new HttpAgent({ lookup: safeLookup }),
+      httpsAgent: new HttpsAgent({ lookup: safeLookup }),
     },
   }
   if (config.endpoint) {

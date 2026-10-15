@@ -258,8 +258,9 @@ describe.skipIf(skip)("storage destination legacy backfill", () => {
     ])
 
     for (const migrationName of [
-      "0089_storage_destinations.sql",
-      "0090_storage_destination_secret_ownership.sql",
+      "0091_storage_destinations.sql",
+      "0092_storage_destination_secret_ownership.sql",
+      "0093_storage_destination_secret_cloning.sql",
     ]) {
       const migration = await Bun.file(
         new URL(`../migrations/${migrationName}`, import.meta.url)
@@ -277,6 +278,9 @@ describe.skipIf(skip)("storage destination legacy backfill", () => {
       .from(storage_destinations)
       .where(sql`org_id = ${orgA} AND id LIKE 'legacy-%'`)
     expect(sqlStageDestinations.length).toBeGreaterThanOrEqual(2)
+    const sqlStageDestinationIds = sqlStageDestinations.map(
+      (candidate) => candidate.id
+    )
     for (const candidate of sqlStageDestinations) {
       if (!candidate.credentials_secret_id) continue
       const [ownedSecret] = await db
@@ -341,13 +345,71 @@ describe.skipIf(skip)("storage destination legacy backfill", () => {
       scope: "shared",
       phase: "runtime",
     })
+    expect(migratedDestination?.name).toBe(
+      "Migrated S3: shared-bucket (https://s3.backfill.test)"
+    )
 
+    const remainingLegacyDestinations = await db
+      .select({ id: storage_destinations.id })
+      .from(storage_destinations)
+      .where(sql`org_id = ${orgA} AND id LIKE 'legacy-%'`)
+    const removedLegacyDestinationIds = sqlStageDestinationIds.filter(
+      (id) => !remainingLegacyDestinations.some((row) => row.id === id)
+    )
+    for (const destinationId of removedLegacyDestinationIds) {
+      expect(
+        await db
+          .select({ id: secrets.id })
+          .from(secrets)
+          .where(eq(secrets.id, `storage-destination-secret-${destinationId}`))
+      ).toHaveLength(0)
+    }
+
+    const userDestination = await db
+      .select()
+      .from(storage_destinations)
+      .where(eq(storage_destinations.id, `user-created-destination-a-${suffix}`))
+    expect(userDestination[0]?.credentials_secret_id).toBe(
+      `storage-destination-secret-user-created-destination-a-${suffix}`
+    )
+    await db.delete(secrets).where(eq(secrets.id, userSecretA))
+    expect(
+      await db
+        .select({ id: secrets.id })
+        .from(secrets)
+        .where(
+          eq(
+            secrets.id,
+            `storage-destination-secret-user-created-destination-a-${suffix}`
+          )
+        )
+    ).toHaveLength(1)
+
+    const editedLegacyDestinationId = `legacy-edited-${suffix}`
+    await db.insert(storage_destinations).values({
+      id: editedLegacyDestinationId,
+      org_id: orgA,
+      name: "Custom migrated destination",
+      kind: "s3",
+      s3_endpoint: "https://s3.backfill.test",
+      s3_bucket: "shared-bucket",
+      s3_region: "eu-west-1",
+      credentials_secret_id: migratedDestination!.credentials_secret_id,
+      created_at: now,
+      updated_at: now,
+    })
     await backfillStorageDestinations(db, fixtureMasterKey)
     expect(
       (await db
         .select()
         .from(storage_destinations)
         .where(eq(storage_destinations.org_id, orgA)))
-    ).toHaveLength(3)
+    ).toHaveLength(4)
+    expect(
+      await db
+        .select({ id: storage_destinations.id })
+        .from(storage_destinations)
+        .where(eq(storage_destinations.id, editedLegacyDestinationId))
+    ).toHaveLength(1)
   })
 })

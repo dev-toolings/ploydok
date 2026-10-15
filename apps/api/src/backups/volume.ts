@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises"
 import path from "node:path"
 import type { Readable } from "node:stream"
 import { nanoid } from "nanoid"
-import { and, eq, lt } from "drizzle-orm"
+import { and, eq, lt, sql } from "drizzle-orm"
 import {
   apps,
   app_volumes,
@@ -30,33 +30,26 @@ export interface VolumeBackupRunResult {
   location: string
 }
 
+type PreparedVolumeBackup = {
+  volumeName: string
+  config: typeof volume_backup_configs.$inferSelect
+  backupId: string
+  location: string
+  startedAt: Date
+}
+
 interface ArchiveSource {
   stream: Readable
   completed: Promise<void>
   abort: () => void
 }
 
-interface WaitableChildProcess {
-  stderr: NodeJS.ReadableStream | null
-  on(event: string, listener: (...args: any[]) => void): unknown
-}
-
-export function getAppVolumeHostPath(appId: string, volumeId: string): string {
-  const root =
-    process.env.PLOYDOK_APP_VOLUMES_ROOT ?? "/var/lib/ploydok/app-volumes"
-  return path.join(root, appId, volumeId)
-}
-
-export async function runVolumeBackupOnce(
+async function prepareVolumeBackup(
   db: Db,
   appId: string,
   volumeId: string,
   scheduledAt?: Date
-): Promise<VolumeBackupRunResult> {
-  const backupId = nanoid()
-  const startedAt = new Date()
-  const volumeLog = log.child({ appId, volumeId, backupId })
-
+): Promise<PreparedVolumeBackup> {
   const volumeRows = await db
     .select({ app: apps, volume: app_volumes })
     .from(app_volumes)
@@ -68,7 +61,7 @@ export async function runVolumeBackupOnce(
     throw new Error(`App volume not found: ${appId}/${volumeId}`)
   }
 
-  const configRows = await db
+  const selectedConfigRows = await db
     .select()
     .from(volume_backup_configs)
     .where(
@@ -79,14 +72,40 @@ export async function runVolumeBackupOnce(
       )
     )
     .limit(1)
+  const selectedConfig = selectedConfigRows[0]
+  if (!selectedConfig) {
+    throw new Error(
+      `No enabled backup config for app volume ${appId}/${volumeId}`
+    )
+  }
+
+  await db.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backup:volume:${selectedConfig.id}`}, 0))`
+  )
+
+  const configRows = await db
+    .select()
+    .from(volume_backup_configs)
+    .where(
+      and(
+        eq(volume_backup_configs.id, selectedConfig.id),
+        eq(volume_backup_configs.enabled, true)
+      )
+    )
+    .limit(1)
   const rawConfig = configRows[0]
   if (!rawConfig) {
     throw new Error(
       `No enabled backup config for app volume ${appId}/${volumeId}`
     )
   }
-  const config = await resolveBackupDestination(db, rawConfig)
+  const config = (await resolveBackupDestination(
+    db,
+    rawConfig
+  )) as typeof volume_backup_configs.$inferSelect
 
+  const backupId = nanoid()
+  const startedAt = new Date()
   const ageEncrypted = Boolean(config.age_recipient_public_key)
   const filename = buildBackupFilename(
     scheduledAt ?? startedAt,
@@ -123,6 +142,38 @@ export async function runVolumeBackupOnce(
     started_at: startedAt,
   })
 
+  return {
+    volumeName: volumeRow.volume.name,
+    config,
+    backupId,
+    location,
+    startedAt,
+  }
+}
+
+interface WaitableChildProcess {
+  stderr: NodeJS.ReadableStream | null
+  on(event: string, listener: (...args: any[]) => void): unknown
+}
+
+export function getAppVolumeHostPath(appId: string, volumeId: string): string {
+  const root =
+    process.env.PLOYDOK_APP_VOLUMES_ROOT ?? "/var/lib/ploydok/app-volumes"
+  return path.join(root, appId, volumeId)
+}
+
+export async function runVolumeBackupOnce(
+  db: Db,
+  appId: string,
+  volumeId: string,
+  scheduledAt?: Date
+): Promise<VolumeBackupRunResult> {
+  const prepared = await db.transaction((tx) =>
+    prepareVolumeBackup(tx as unknown as Db, appId, volumeId, scheduledAt)
+  )
+  const { volumeName, config, backupId, location } = prepared
+  const volumeLog = log.child({ appId, volumeId, backupId })
+
   let sizeBytes = 0
   let error: string | undefined
 
@@ -151,7 +202,7 @@ export async function runVolumeBackupOnce(
     }
 
     volumeLog.info(
-      { location, sizeBytes, volumeName: volumeRow.volume.name },
+      { location, sizeBytes, volumeName },
       "volume backup completed"
     )
   } catch (err) {
