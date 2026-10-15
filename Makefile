@@ -3,6 +3,11 @@
 
 # Ports locaux : API 3335, Web 5173, Caddy 8181/8543/2020, agent unix /tmp/ploydok/agent.sock
 
+# Docker buildx builder used for local image builds (see infra-up).
+BUILDX_BUILDER := ploydok-dev
+# Compose network (project `ploydok`, network key `ploydok`) the builder joins.
+BUILDX_NETWORK := ploydok_ploydok
+
 ifneq (,$(findstring xterm,$(TERM))$(MAKE_TERMOUT))
 C_SECTION := \033[1;33m
 C_TARGET := \033[0;36m
@@ -29,7 +34,7 @@ help: ## Affiche les cibles disponibles, regroupees par section
 install: ## Installe les dependances, configure l'infra et demarre le dev
 	@printf '$(C_TARGET)[install]$(C_RESET) installing workspace dependencies...\n'
 	bun install
-	@printf '$(C_TARGET)[install]$(C_RESET) bringing up local infra (postgres + redis + caddy + buildkitd + registry + agent)...\n'
+	@printf '$(C_TARGET)[install]$(C_RESET) bringing up local infra (postgres + redis + caddy + registry + agent + buildx builder)...\n'
 	$(MAKE) infra-up
 	@printf '$(C_TARGET)[install]$(C_RESET) waiting for postgres and checking credentials...\n'
 	$(MAKE) db-ensure-auth
@@ -180,6 +185,12 @@ secrets-init: ## Genere les secrets de developpement dans .env.local
 	else \
 	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_CADDY_STATIC_ROOT already present, skipped\n'; \
 	fi; \
+	if ! grep -q '^PLOYDOK_BUILDKIT_ADDR=' "$$ENV_FILE" 2>/dev/null; then \
+	  echo "PLOYDOK_BUILDKIT_ADDR=buildx://$(BUILDX_BUILDER)" >> "$$ENV_FILE"; \
+	  printf '$(C_OK)[secrets-init]$(C_RESET) PLOYDOK_BUILDKIT_ADDR set to buildx://$(BUILDX_BUILDER)\n'; \
+	else \
+	  printf '$(C_WARN)[secrets-init]$(C_RESET) PLOYDOK_BUILDKIT_ADDR already present, skipped\n'; \
+	fi; \
 	STATIC_ROOT=$$(grep '^PLOYDOK_STATIC_ROOT=' "$$ENV_FILE" | head -n1 | cut -d= -f2-); \
 	mkdir -p "$$STATIC_ROOT" "$$HOME/.ploydok-dev/builds"
 
@@ -187,9 +198,24 @@ infra-up: secrets-init ## Demarre les services infra du projet
 	@docker network create ploydok-public 2>/dev/null || true
 	@docker network create ploydok-ingress 2>/dev/null || true
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml up -d
+	@# Builds go through the Docker engine's buildx, like Dokploy and Coolify:
+	@# no host buildctl, no rootless daemon blocked by AppArmor userns rules.
+	@# The builder joins the compose network so the push URL registry:5000 resolves.
+	@# A builder created with another network (old network=host) is recreated.
+	@if docker buildx inspect $(BUILDX_BUILDER) 2>/dev/null | grep -q 'network="$(BUILDX_NETWORK)"'; then \
+	  printf '$(C_OK)[infra-up]$(C_RESET) buildx builder $(BUILDX_BUILDER) already on $(BUILDX_NETWORK)\n'; \
+	else \
+	  if docker buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1; then \
+	    printf '$(C_WARN)[infra-up]$(C_RESET) buildx builder $(BUILDX_BUILDER) uses another network, recreating\n'; \
+	    docker buildx rm $(BUILDX_BUILDER) >/dev/null; \
+	  fi; \
+	  docker buildx create --name $(BUILDX_BUILDER) --driver docker-container \
+	    --driver-opt network=$(BUILDX_NETWORK) --buildkitd-config infra/buildkit/buildkitd.toml \
+	    --bootstrap >/dev/null; \
+	fi
 	@printf '$(C_OK)[infra-up]$(C_RESET) Caddy admin   : http://127.0.0.1:2020/config/\n'
 	@printf '$(C_OK)[infra-up]$(C_RESET) Registry v2   : http://127.0.0.1:5000/v2/\n'
-	@printf '$(C_OK)[infra-up]$(C_RESET) BuildKit host : docker-container://ploydok-buildkitd\n'
+	@printf '$(C_OK)[infra-up]$(C_RESET) BuildKit      : buildx://$(BUILDX_BUILDER)\n'
 	@printf '$(C_OK)[infra-up]$(C_RESET) Postgres      : postgresql://ploydok:***@127.0.0.1:5434/ploydok\n'
 	@printf '$(C_OK)[infra-up]$(C_RESET) Redis         : redis://:***@127.0.0.1:6381/0\n'
 
@@ -234,7 +260,7 @@ clean: ## Nettoie les artefacts de build
 dod: ## Lance les specifications Playwright DoD Sprint 3
 	@echo "+----------------------------------------------------------------+"
 	@echo "| Prerequis avant make dod                                       |"
-	@echo "| 1. make infra-up       > postgres/redis/caddy/buildkit/agent   |"
+	@echo "| 1. make infra-up       > postgres/redis/caddy/registry/agent   |"
 	@echo "| 2. make dev            > dans un autre shell (web + api)       |"
 	@echo "| 3. make db-seed        > une fois (dev login + backup code)    |"
 	@echo "| 4. GitHub App installee sur le compte de test                  |"

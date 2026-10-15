@@ -117,6 +117,38 @@ describe("cleanupBuildCaches", () => {
     )
   })
 
+  it("prunes a Docker buildx builder when the address names one", async () => {
+    const spawn = mock(() => ({
+      stdout: new Response("Total: 42B\n").body!,
+      stderr: new Response("").body!,
+      exited: Promise.resolve(0),
+    }))
+
+    const result = await pruneBuildKitCache({
+      keepDuration: "24h",
+      keepStorage: "5g",
+      address: "buildx://ploydok-dev",
+      spawn,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(spawn).toHaveBeenCalledWith(
+      [
+        "docker",
+        "buildx",
+        "prune",
+        "--builder",
+        "ploydok-dev",
+        "--force",
+        "--filter",
+        "until=24h",
+        "--reserved-space",
+        "5GB",
+      ],
+      { stdout: "pipe", stderr: "pipe" }
+    )
+  })
+
   it("does not report success when dedicated BuildKit prune fails", async () => {
     const spawn = mock(() => ({
       stdout: new Response("").body!,

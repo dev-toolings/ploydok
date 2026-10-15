@@ -4,6 +4,7 @@ import type { Stats } from "node:fs"
 import path from "node:path"
 import { env } from "../../env"
 import { childLogger } from "../../logger"
+import { buildxBuilderName } from "../buildkit"
 
 const log = childLogger("cleanup-build-caches")
 
@@ -155,17 +156,32 @@ export async function pruneBuildKitCache(opts?: {
     const normalizedStorage = `${storageMatch[1]}${storageUnit}B`
     const address = opts?.address ?? env.PLOYDOK_BUILDKIT_ADDR
     const spawn = opts?.spawn ?? Bun.spawn
+    const builder = buildxBuilderName(address)
     const proc = spawn(
-      [
-        "buildctl",
-        "--addr",
-        address,
-        "prune",
-        "--keep-duration",
-        keepDuration,
-        "--keep-storage",
-        normalizedStorage,
-      ],
+      builder
+        ? [
+            "docker",
+            "buildx",
+            "prune",
+            "--builder",
+            builder,
+            "--force",
+            "--filter",
+            `until=${keepDuration}`,
+            // buildx renamed buildctl's --keep-storage (BuildKit keepBytes).
+            "--reserved-space",
+            normalizedStorage,
+          ]
+        : [
+            "buildctl",
+            "--addr",
+            address,
+            "prune",
+            "--keep-duration",
+            keepDuration,
+            "--keep-storage",
+            normalizedStorage,
+          ],
       { stdout: "pipe", stderr: "pipe" }
     )
     const [stdout, stderr, exitCode] = await Promise.all([

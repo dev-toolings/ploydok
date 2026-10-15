@@ -5,7 +5,6 @@ Docker Compose orchestre le control-plane local pour le développement :
 | Service     | Rôle                                                                             | Port local                                |
 | ----------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
 | `caddy`     | Reverse proxy + TLS. Admin API 2020.                                             | 8181 (http) / 8543 (https) / 2020 (admin) |
-| `buildkitd` | Build OCI images (BuildKit). Adressé via `docker-container://ploydok-buildkitd`. | —                                         |
 | `registry`  | Registry v2 local, push des images buildées.                                     | 5000                                      |
 | `postgres`  | Base de données de développement.                                                | 5434                                      |
 | `redis`     | File de travaux et données éphémères.                                            | 6381                                      |
@@ -32,8 +31,16 @@ le compose et par le descriptor de production.
 
 ## BuildKit
 
-- Daemon : container `ploydok-buildkitd`. L'API parle au daemon BuildKit ; les
-  opérations Docker privilégiées restent déléguées à l'agent.
+- En dev, les images se construisent avec le BuildKit du moteur Docker via
+  buildx, comme Dokploy et Coolify : `make infra-up` crée le builder
+  `ploydok-dev` (driver `docker-container`, `network=ploydok_ploydok`, config
+  `infra/buildkit/buildkitd.toml`) et `make secrets-init` pose
+  `PLOYDOK_BUILDKIT_ADDR=buildx://ploydok-dev`. Aucun `buildctl` ni démon
+  rootless à installer sur l'hôte : Ubuntu 24.04+ refuse ce dernier
+  (`apparmor_restrict_unprivileged_userns=1`).
+- Toute autre adresse (`docker-container://…`, `tcp://…`, `unix://…`) passe
+  par `buildctl`, comme en prod. Les opérations Docker privilégiées hors build
+  restent déléguées à l'agent.
 - Build dir côté API : `~/.ploydok-dev/builds/` (var `PLOYDOK_BUILD_DIR`). Garbage-collecté périodiquement — ne pas y stocker de données persistantes.
 
 ## Registry

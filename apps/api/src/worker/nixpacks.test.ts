@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import * as nixpacksMod from "./nixpacks"
@@ -143,6 +143,32 @@ describe("nixpacksBuild", () => {
     expect(path.basename(generated.contextDir)).toStartWith(
       ".ploydok-nixpacks-context-"
     )
+  })
+
+  it("copies the sources of ctx into the generated context", async () => {
+    spawnSpy = spyOn(Bun, "spawn").mockImplementation(((cmd: string[]) => {
+      const out = cmd[cmd.indexOf("--out") + 1]!
+      mkdirSync(path.join(out, ".nixpacks"), { recursive: true })
+      writeFileSync(path.join(out, ".nixpacks", "Dockerfile"), "FROM scratch")
+      return fakeBunProcess({}) as ReturnType<typeof Bun.spawn>
+    }) as typeof Bun.spawn)
+
+    await mkdir(path.join(tmpDir, "apps", "web"), { recursive: true })
+    await mkdir(path.join(tmpDir, ".git"), { recursive: true })
+    await writeFile(path.join(tmpDir, "apps", "web", "package.json"), "{}")
+    await writeFile(path.join(tmpDir, ".git", "HEAD"), "x")
+    const generated = await nixpacksMod.nixpacksBuild({
+      workspacePath: tmpDir,
+      rootDir: "apps/web",
+      tag: "127.0.0.1:5000/app-123:sha123",
+      cacheDir: path.join(tmpDir, "builds", "app-123", ".nixpacks-cache"),
+    })
+
+    expect(existsSync(path.join(generated.contextDir, "package.json"))).toBe(
+      true
+    )
+    expect(existsSync(generated.dockerfile)).toBe(true)
+    expect(existsSync(path.join(tmpDir, ".nixpacks"))).toBe(false)
   })
 
   it("falls back to basename of cacheDir as cache key when cacheKey is omitted", async () => {

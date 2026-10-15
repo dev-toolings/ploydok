@@ -1,41 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# BuildKit daemon config — dev only.
-# Declares the local dev registries as insecure (plain HTTP, no TLS).
-# The compose service `registry:5000` is the push target from inside the
-# buildkitd container. `127.0.0.1:5000` is declared too for host-network
-# scenarios (CI, when network_mode=host is used).
+# BuildKit daemon config, dev only.
+# Loaded by the `ploydok-dev` Docker buildx builder that `make infra-up`
+# creates (driver docker-container, network=ploydok_ploydok). It declares the local dev
+# registry as insecure (plain HTTP, no TLS) so builds can push to it.
+# `registry:5000` resolves because the builder joins the compose network.
 
-# ── Rootless worker config ────────────────────────────────────────────────────
-#
-# Process sandbox: disabled via --oci-worker-no-process-sandbox (CLI flag in
-# docker-compose.yml command). This flag is required when the container runs
-# without sub-user-namespace nesting (no nested unprivileged userns inside the
-# rootless container). Without it, BuildKit attempts to fork a sandboxed
-# process with CLONE_NEWUSER which is blocked by the host kernel policy when
-# userns nesting is not available. This is equivalent to the default behavior
-# of Docker Desktop rootless and is documented as standard in the official
-# BuildKit rootless docs:
-# https://github.com/moby/buildkit/blob/master/docs/rootless.md
-#
-# No privileged executables: with --oci-worker-no-process-sandbox, the OCI
-# worker does NOT spawn sub-processes with elevated capabilities. All build
-# steps execute as uid 1000 inside the container user-namespace, which maps to
-# a non-privileged uid on the host. The host sees no root processes.
-#
-# Snapshotter choice:
-#   - "overlayfs" (chosen) — kernel-native rootless overlayfs, no fuse needed.
-#     Supported by kernel ≥ 5.13 on most modern distros (Debian 12+, Ubuntu
-#     22.04+, Fedora 35+). Fast, correct, zero userland deps.
-#   - "fuse-overlayfs" — needs `fuse` kernel module loaded AND /dev/fuse
-#     exposed to the container via compose `devices:`. Skipped: portable but
-#     extra moving parts that silently break on hosts where fuse isn't loaded.
-#   - "native" — always works but slow (copies every layer). Fallback for
-#     older kernels (< 5.13) — override via `snapshotter = "native"`.
+# Snapshotter: kernel-native overlayfs, no fuse needed. Override with
+# `snapshotter = "native"` on kernels older than 5.13.
 [worker.oci]
   enabled = true
   snapshotter = "overlayfs"
-  # no-process-sandbox is set via CLI flag --oci-worker-no-process-sandbox in
-  # docker-compose.yml. Redundant here but documented for clarity.
 
 [registry."registry:5000"]
   http = true

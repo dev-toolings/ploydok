@@ -514,7 +514,7 @@ Or run the steps individually:
 
 ```bash
 bun install          # workspace dependencies
-make infra-up        # postgres + redis + caddy + buildkitd + registry + agent
+make infra-up        # postgres + redis + caddy + registry + agent + buildx builder
 make db-ensure-auth  # wait for postgres, realign the role if the volume drifted
 make db-migrate      # apply database migrations
 make check           # probe the whole stack and print the /setup URL
