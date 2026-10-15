@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { resolve4, resolve6, resolveCname } from "node:dns/promises"
 import { connect } from "node:tls"
-import { and, desc, eq, inArray, isNull } from "drizzle-orm"
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm"
 import { apps, builds, domains } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { env } from "../env"
-import { classifyAppDomain, deriveDefaultAppDomainBase, normalizeAppHostname } from "./app-domain"
+import {
+  classifyAppDomain,
+  deriveDefaultAppDomainBase,
+  normalizeAppHostname,
+  ROUTING_MIGRATION_ERROR,
+} from "./app-domain"
 import { isCloudflareProxyAddress } from "./cdn-addresses"
 import { verifyDomain } from "./verifier"
 import { getCaddyTlsOptionsForDomain } from "./caddy-tls"
@@ -560,4 +565,232 @@ export async function syncAppDomainAliases(input: {
     }
   }
   return { updated, errors }
+}
+
+const ACTIVE_ROUTING_STATUSES = ["running", "restarting", "serving"] as const
+
+export type RoutingMigrationRecheckResult = {
+  managedReady: number
+  customReady: number
+  customActionRequired: number
+  deferred: number
+}
+
+type RoutingDriftRow = {
+  id: string
+  domain: string
+  hostname: string
+  cdn_mode: "off" | "internal" | "external"
+}
+
+function isActiveRoutingStatus(status: string): boolean {
+  return (ACTIVE_ROUTING_STATUSES as readonly string[]).includes(status)
+}
+
+/**
+ * 0086 marked every active app action_required and left no follower.
+ * Instance-managed hostnames are already served by this instance, so they
+ * become ready here. Custom hostnames are inspected one at a time. Nothing
+ * in this pass reads or writes a Caddy route.
+ * A DNS transport failure keeps the migration sentinel for the next boot.
+ * A definitive DNS or TLS failure is stored as action_required.
+ */
+export async function recheckMigrationRoutingDrift(
+  db: Db,
+  opts: {
+    publicHost?: string
+    domainBase?: string
+    scheme?: "http" | "https"
+    dnsFunctions?: DnsFns
+    inspectDns?: (hostname: string, proxied: boolean) => Promise<DnsInspection>
+    inspectTls?: (hostname: string) => Promise<TlsInspection>
+  } = {}
+): Promise<RoutingMigrationRecheckResult> {
+  const publicHost = opts.publicHost ?? env.PLOYDOK_PUBLIC_HOST
+  const domainBase =
+    opts.domainBase ??
+    deriveDefaultAppDomainBase({
+      explicitBase: env.PLOYDOK_DOMAIN_BASE,
+      publicHost,
+    })
+  const scheme = opts.scheme ?? env.PLOYDOK_PUBLIC_SCHEME
+  const inspectDns =
+    opts.inspectDns ??
+    ((hostname: string, proxied: boolean) =>
+      inspectDomainDns(hostname, {
+        publicHost,
+        domainBase,
+        ...(opts.dnsFunctions ? { functions: opts.dnsFunctions } : {}),
+        ...(proxied ? { proxied: true } : {}),
+      }))
+  const inspectTls =
+    opts.inspectTls ??
+    ((hostname: string) =>
+      inspectDomainTls(hostname, {
+        scheme: "https",
+        allowProvisioning: true,
+      }))
+
+  const rows = await db
+    .select({
+      id: apps.id,
+      domain: apps.domain,
+      status: apps.status,
+      routing_status: apps.routing_status,
+      routing_error: apps.routing_error,
+      cdn_mode: apps.cdn_mode,
+    })
+    .from(apps)
+    .where(
+      and(
+        inArray(apps.status, [...ACTIVE_ROUTING_STATUSES]),
+        isNotNull(apps.domain),
+        eq(apps.routing_status, "action_required"),
+        eq(apps.routing_error, ROUTING_MIGRATION_ERROR)
+      )
+    )
+    .orderBy(apps.id)
+
+  const result: RoutingMigrationRecheckResult = {
+    managedReady: 0,
+    customReady: 0,
+    customActionRequired: 0,
+    deferred: 0,
+  }
+  const managed: RoutingDriftRow[] = []
+  const custom: RoutingDriftRow[] = []
+  for (const row of rows) {
+    if (
+      row.routing_status !== "action_required" ||
+      row.routing_error !== ROUTING_MIGRATION_ERROR ||
+      !row.domain ||
+      !isActiveRoutingStatus(row.status)
+    ) {
+      continue
+    }
+    const hostname = normalizeAppHostname(row.domain)
+    if (!hostname) {
+      result.deferred++
+      continue
+    }
+    const entry: RoutingDriftRow = {
+      id: row.id,
+      domain: row.domain,
+      hostname,
+      cdn_mode: row.cdn_mode,
+    }
+    if (isInstanceManagedDomain(hostname, publicHost, domainBase)) {
+      managed.push(entry)
+    } else {
+      custom.push(entry)
+    }
+  }
+
+  for (const row of managed) {
+    try {
+      const dns = await inspectDns(row.hostname, false)
+      const tls = await inspectDomainTls(row.hostname, {
+        scheme,
+        allowProvisioning: false,
+      })
+      if (
+        await persistRoutingDrift(db, row, {
+          routing_status: "ready",
+          routing_error: null,
+          routing_dns_status: dns.status,
+          routing_tls_status: tls.status,
+        })
+      ) {
+        result.managedReady++
+      }
+    } catch {
+      result.deferred++
+    }
+  }
+
+  for (const row of custom) {
+    try {
+      const proxied = row.cdn_mode === "external"
+      const dns = await inspectDns(row.hostname, proxied)
+      if (dns.status === "error") {
+        result.deferred++
+        continue
+      }
+      const dnsOk =
+        dns.status === "valid" ||
+        (dns.status === "unknown" &&
+          (proxied ||
+            (await hasPreviouslyServedSameAppHost({
+              db,
+              appId: row.id,
+              hostname: row.hostname,
+            }))))
+      const tls =
+        scheme !== "https"
+          ? {
+              status: "not_required" as const,
+              checkedAt: new Date().toISOString(),
+              error: null,
+            }
+          : dnsOk
+            ? await inspectTls(row.hostname)
+            : {
+                status: "pending" as const,
+                checkedAt: new Date().toISOString(),
+                error: null,
+              }
+      const tlsOk = tls.status === "issued" || tls.status === "not_required"
+      const ready = dnsOk && tlsOk
+      const gateError = dnsOk
+        ? null
+        : dns.status === "unknown"
+          ? "DOMAIN_OWNERSHIP_REQUIRED"
+          : "DOMAIN_DNS_REQUIRED"
+      const errors = [
+        gateError,
+        ready ? null : dns.error,
+        ready ? null : tls.error,
+      ].filter((value): value is string => Boolean(value))
+      if (
+        await persistRoutingDrift(db, row, {
+          routing_status: ready ? "ready" : "action_required",
+          routing_error: errors.length > 0 ? errors.join("; ") : null,
+          routing_dns_status: dns.status,
+          routing_tls_status: tls.status,
+        })
+      ) {
+        if (ready) result.customReady++
+        else result.customActionRequired++
+      }
+    } catch {
+      result.deferred++
+    }
+  }
+
+  return result
+}
+
+async function persistRoutingDrift(
+  db: Db,
+  row: RoutingDriftRow,
+  patch: {
+    routing_status: RoutingStatus
+    routing_error: string | null
+    routing_dns_status: DnsStatus
+    routing_tls_status: TlsStatus
+  }
+): Promise<boolean> {
+  const changed = await db
+    .update(apps)
+    .set(patch)
+    .where(
+      and(
+        eq(apps.id, row.id),
+        eq(apps.domain, row.domain),
+        eq(apps.routing_status, "action_required"),
+        eq(apps.routing_error, ROUTING_MIGRATION_ERROR)
+      )
+    )
+    .returning({ id: apps.id })
+  return changed.length > 0
 }
