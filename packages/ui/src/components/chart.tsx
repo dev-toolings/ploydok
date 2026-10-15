@@ -153,9 +153,13 @@ function ChartTooltipContent({
     const [item] = payload
     const key = `${labelKey ?? item.dataKey ?? item.name ?? "value"}`
     const itemConfig = getPayloadConfigFromPayload(config, item, key)
+    const labelConfig: ChartConfig[string] | undefined =
+      typeof label === "string" && Object.hasOwn(config, label)
+        ? config[label]
+        : undefined
     const value =
       !labelKey && typeof label === "string"
-        ? (config[label].label ?? label)
+        ? (labelConfig?.label ?? label)
         : itemConfig?.label
 
     if (labelFormatter) {
@@ -330,7 +334,7 @@ function getPayloadConfigFromPayload(
   config: ChartConfig,
   payload: unknown,
   key: string
-) {
+): ChartConfig[string] | undefined {
   if (typeof payload !== "object" || payload === null) {
     return undefined
   }
@@ -359,7 +363,9 @@ function getPayloadConfigFromPayload(
     ]
   }
 
-  return configLabelKey in config ? config[configLabelKey] : config[key]
+  const resolved: ChartConfig[string] | undefined =
+    configLabelKey in config ? config[configLabelKey] : config[key]
+  return resolved
 }
 
 export {
