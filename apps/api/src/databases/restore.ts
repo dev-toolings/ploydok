@@ -30,6 +30,7 @@ const log = childLogger("databases.restore")
 
 export interface RestoreOptions {
   backupId: string
+  databaseId: string
   /** age private key (X25519 identity) — pasted by user, never stored. Empty = dump not encrypted. */
   ageIdentity?: string
 }
@@ -39,7 +40,7 @@ export interface RestoreOptions {
 // ---------------------------------------------------------------------------
 
 export async function runRestore(db: Db, opts: RestoreOptions): Promise<{ ok: boolean; error?: string }> {
-  const { backupId, ageIdentity } = opts
+  const { backupId, databaseId, ageIdentity } = opts
   const restoreLog = log.child({ backupId })
 
   // 1. Load backup + database
@@ -50,6 +51,9 @@ export async function runRestore(db: Db, opts: RestoreOptions): Promise<{ ok: bo
     .limit(1)
   const backup = backupRows[0]
   if (!backup) throw new Error(`Backup not found: ${backupId}`)
+  if (backup.database_id !== databaseId) {
+    throw new Error(`Backup ${backupId} does not belong to database ${databaseId}`)
+  }
   if (backup.status !== "succeeded") {
     throw new Error(`Cannot restore backup with status ${backup.status}`)
   }
@@ -57,11 +61,11 @@ export async function runRestore(db: Db, opts: RestoreOptions): Promise<{ ok: bo
   const dbRows = await db
     .select()
     .from(databases)
-    .where(eq(databases.id, backup.database_id))
+    .where(eq(databases.id, databaseId))
     .limit(1)
   const dbRow = dbRows[0]
-  if (!dbRow) throw new Error(`Database not found: ${backup.database_id}`)
-  if (!dbRow.container_id) throw new Error(`Database ${backup.database_id} has no container_id`)
+  if (!dbRow) throw new Error(`Database not found: ${databaseId}`)
+  if (!dbRow.container_id) throw new Error(`Database ${databaseId} has no container_id`)
 
   restoreLog.info({ databaseId: dbRow.id, location: backup.location, kind: dbRow.kind }, "restore started")
 
