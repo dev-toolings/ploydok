@@ -2,6 +2,14 @@
 import type { AppStatus } from "@ploydok/shared"
 import type { AppDetail, AppListItem, AppStatusEventPayload, RawAppDetail, RawAppListItem } from "./types"
 
+export function blankToNull(
+  value: string | null | undefined
+): string | null | undefined {
+  if (value === undefined || value === null) return value
+  if (/\p{Cc}/u.test(value)) return value
+  return value.trim().length === 0 ? null : value
+}
+
 // The API serializes app timestamps as ISO strings; the web models use unix ms.
 export function toEpochMs(value: number | string): number {
   if (typeof value === "number") return value

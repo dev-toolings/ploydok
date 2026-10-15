@@ -3,6 +3,55 @@
 This runbook applies to the first production milestone: one Docker Swarm node
 on Debian 12 or Ubuntu 24.04 LTS. It does not claim high availability.
 
+## Framework detection and saved build settings
+
+The application wizard shows the framework proposal, confidence and positive
+file probes for the selected repository target. A repository containing several
+applications requires a root-directory choice. Conflicting framework signals
+require an explicit preset choice before deployment.
+
+Preset defaults live in `packages/shared/src/deployment-presets.ts`. The API,
+dashboard and workers consume this registry. A null or empty command inherits
+the selected preset's command. When that preset also has no command, the
+builder determines it from the repository. Inspect the proposed commands before
+overriding them, especially for Python module names, Svelte adapters and release
+binaries. Commands accept at most 2000 characters and reject NUL, CR and LF.
+
+Selecting a preset and editing its commands, output directory, runtime port or
+healthcheck does not modify the repository. The app stores the preset in
+`framework_preset` and stores the effective edits in its existing configuration
+columns. Repository detection remains informational once a preset is selected.
+Normal and preview deployments use the saved choice instead of replacing it
+with a newly detected framework. Existing applications without a preset retain
+their explicit build settings. Without a preset, a previous successful build
+(including success with a warning) permits legacy automatic detection to
+continue through ambiguous framework or root-directory evidence, with a build
+log warning. New applications still require an explicit choice.
+
+Changing a preset refreshes fields that are null, blank or equal to the previous
+preset's defaults. Different saved values remain user overrides; explicit
+values supplied in the same PATCH take precedence. Historical rows do not
+record override provenance, so a value equal to an old default is treated as
+inherited when switching presets. Clear a command to return to inheritance.
+Clearing the preset restores ordinary automatic defaults for inherited fields
+while preserving custom overrides.
+The stored detection evidence is labeled as detected at creation; it is not
+silently refreshed during redeployment.
+
+Ports must be in 1..65535. Healthcheck paths start with `/` and contain no
+control characters. Positive intervals and timeouts are bounded at 86400
+seconds, retries at 100, and the non-negative start period at 86400 seconds.
+Healthcheck URLs are quoted as literal shell arguments in Docker, Swarm and
+preview probes. Invalid saved presets and unresolved new-app ambiguity are
+permanent configuration errors; preview jobs do not retry them.
+
+GitHub and GitLab deployment-target responses include framework, confidence,
+evidence and preset information for each target. Oversized optional manifests
+are skipped within the inspection size cap, so an oversized `composer.lock`
+does not hide a Laravel target identified by `composer.json` and `artisan`.
+Provider authorization and network failures remain errors, not empty detection
+results.
+
 ## Monitoring architecture
 
 ```text

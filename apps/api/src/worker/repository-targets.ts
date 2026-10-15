@@ -13,6 +13,10 @@ export async function resolveRepositoryRoot(options: {
   workspacePath: string
   rootDir: string | null
   hasExplicitConfig: boolean
+  /** Keep the historical repository root for an already deployed app. */
+  allowLegacyAmbiguous?: boolean
+  /** Receives compatibility warnings so workers can include them in logs. */
+  onWarning?: (warning: string) => void
 }): Promise<string | null> {
   if (options.rootDir !== null || options.hasExplicitConfig)
     return options.rootDir
@@ -55,6 +59,14 @@ export async function resolveRepositoryRoot(options: {
   const target = defaultRepositoryTarget(targets)
   if (target) return target.rootDir === "." ? null : target.rootDir
   if (targets.length > 1) {
+    if (options.allowLegacyAmbiguous) {
+      options.onWarning?.(
+        `Multiple applications detected (${targets
+          .map((item) => item.rootDir)
+          .join(", ")}); continuing with the legacy repository root because this app has a previous successful build`
+      )
+      return null
+    }
     throw new FatalDeployError(
       `Multiple applications detected: ${targets.map((item) => item.rootDir).join(", ")}. Select the application's root directory or configure Compose.`
     )

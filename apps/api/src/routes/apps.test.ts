@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test"
+import { afterAll, beforeAll, describe, it, expect, beforeEach, mock, spyOn } from "bun:test"
 import { Hono } from "hono"
 import { nanoid } from "nanoid"
 import { eq } from "drizzle-orm"
@@ -47,15 +47,19 @@ import { buildPublicOrigin } from "../domains/app-domain"
 const skip = !TEST_PG_URL
 if (skip) console.log("[apps.test] PLOYDOK_TEST_PG_URL not set — skipping")
 
-async function makeTestDb() {
-  if (!testDbPromise) {
-    testDbPromise = makePgTestDb().then(({ db }) => db)
-  }
-  return testDbPromise
-}
-
 type TestDb = Db
-let testDbPromise: Promise<TestDb> | null = null
+
+let sharedTestDbPromise:
+  | Promise<{ db: TestDb; cleanup: () => Promise<void> }>
+  | undefined
+async function makeTestDb(): Promise<TestDb> {
+  sharedTestDbPromise ??= makePgTestDb()
+  return (await sharedTestDbPromise).db
+}
+afterAll(async () => {
+  const shared = await sharedTestDbPromise
+  await shared?.db.$client.end()
+})
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
 let rollbackCalls = 0
@@ -1182,6 +1186,57 @@ describe.skipIf(skip)("POST /apps", () => {
     const body = (await res.json()) as { app: { domain: string } }
     expect(body.app.domain).toBe("myapp.example.com")
   })
+
+  it("persists a custom domain with framework preset runtime defaults", async () => {
+    const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
+    const res = await app.request("/apps", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Preset Domain App",
+        projectId,
+        gitProvider: "image",
+        imageRef: "nginx:stable",
+        frameworkPreset: "laravel",
+        domain: "Laravel.Example.com",
+      }),
+    })
+
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { app: { id: string } }
+    const rows = await db
+      .select({
+        domain: apps.domain,
+        domainSource: apps.domain_source,
+        frameworkPreset: apps.framework_preset,
+        buildMethod: apps.build_method,
+        staticOutputDir: apps.static_output_dir,
+        runtimePort: apps.runtime_port,
+        healthcheckPath: apps.healthcheck_path,
+        healthcheckPort: apps.healthcheck_port,
+        healthcheckIntervalS: apps.healthcheck_interval_s,
+        healthcheckTimeoutS: apps.healthcheck_timeout_s,
+        healthcheckRetries: apps.healthcheck_retries,
+        healthcheckStartPeriodS: apps.healthcheck_start_period_s,
+      })
+      .from(apps)
+      .where(eq(apps.id, body.app.id))
+
+    expect(rows[0]).toEqual({
+      domain: "laravel.example.com",
+      domainSource: "custom",
+      frameworkPreset: "laravel",
+      buildMethod: "nixpacks",
+      staticOutputDir: "public",
+      runtimePort: 80,
+      healthcheckPath: "/",
+      healthcheckPort: 80,
+      healthcheckIntervalS: 5,
+      healthcheckTimeoutS: 3,
+      healthcheckRetries: 6,
+      healthcheckStartPeriodS: 30,
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1502,6 +1557,68 @@ describe.skipIf(skip)("PATCH /apps/:id", () => {
     expect(res.status).toBe(403)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe("FORBIDDEN")
+  })
+})
+
+describe.skipIf(skip)("app command and port validation boundaries", () => {
+  let db: TestDb
+  let userId: string
+  let projectId: string
+  let appId: string
+
+  beforeAll(async () => {
+    db = await makeTestDb()
+    const user = await createTestUser(db)
+    userId = user.id
+    const project = await createTestProject(db, userId)
+    projectId = project.id
+    appId = (await createTestApp(db, { userId, projectId })).id
+  })
+
+  it("rejects unsafe and oversized commands at the POST route boundary", async () => {
+    const app = buildTestApp(db, fakeUser(userId, "u@t.com"))
+    for (const [field, value] of [
+      ["installCommand", "bun\r\nrun build"],
+      ["buildCommand", "bun\u0000run build"],
+      ["startCommand", "x".repeat(2_001)],
+    ] as const) {
+      const response = await app.request("/apps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: `Invalid ${field}`,
+          projectId,
+          gitProvider: "image",
+          imageRef: "nginx:stable",
+          [field]: value,
+        }),
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: "VALIDATION_ERROR" },
+      })
+    }
+  })
+
+  it("rejects out-of-range ports and control characters at the PATCH route boundary", async () => {
+    const app = buildTestApp(db, fakeUser(userId, "u@t.com"))
+    for (const body of [
+      { runtimePort: 0 },
+      { runtimePort: 65_536 },
+      { healthcheck: { port: 0 } },
+      { healthcheck: { port: 65_536 } },
+      { healthcheck: { path: "/ready\u0001" } },
+    ]) {
+      const response = await app.request(`/apps/${appId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: "VALIDATION_ERROR" },
+      })
+    }
   })
 })
 

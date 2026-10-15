@@ -88,6 +88,20 @@ describe("repository application targets", () => {
     expect(targets).toHaveLength(2)
     expect(defaultRepositoryTarget(targets)).toBeUndefined()
   })
+
+  it("requires a framework choice for a hybrid Node plus Django root", async () => {
+    const targets = await discover({
+      "package.json": JSON.stringify({
+        scripts: { start: "node server.js" },
+      }),
+      "manage.py": "#!/usr/bin/env python\n",
+      "requirements.txt": "Django==5.2\n",
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]?.classification.ambiguous).toBe(true)
+    expect(defaultRepositoryTarget(targets)).toBeUndefined()
+  })
 })
 
 it("skips workspace-only build manifests across ecosystems", async () => {
@@ -147,6 +161,14 @@ it("skips an oversized manifest and still classifies the monorepo", async () => 
   ).toEqual([
     ["apps/api", "laravel"],
     ["apps/web", "static"],
+  ])
+  expect(defaultRepositoryTarget(targets)).toBeUndefined()
+  const laravel = targets.find((target) => target.rootDir === "apps/api")
+  expect(laravel?.classification.confidence).toBe("high")
+  expect(laravel?.classification.presetId).toBe("laravel")
+  expect(laravel?.classification.evidence).toEqual([
+    "composer.json",
+    "artisan",
   ])
 })
 

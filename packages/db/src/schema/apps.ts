@@ -77,6 +77,11 @@ export const apps = pgTable("apps", {
   install_command: text("install_command"),
   build_command: text("build_command"),
   start_command: text("start_command"),
+  // Explicit user selection is separate from the latest repository detection.
+  // A null value means redeploy may detect again; a value is never replaced by
+  // a later probe.
+  framework_preset: text("framework_preset"),
+  framework_detection: text("framework_detection"),
   watch_paths: text("watch_paths"), // JSON array
   build_method: text("build_method", {
     enum: [

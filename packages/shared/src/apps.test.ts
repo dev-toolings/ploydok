@@ -120,6 +120,15 @@ describe("HealthcheckConfigSchema", () => {
     const result = HealthcheckConfigSchema.parse(input)
     expect(result).toEqual(input)
   })
+
+  it("accepts the complete TCP port range and rejects values outside it", () => {
+    for (const port of [1, 65_535]) {
+      expect(HealthcheckConfigSchema.parse({ port }).port).toBe(port)
+    }
+    for (const port of [0, 65_536, 8080.5]) {
+      expect(() => HealthcheckConfigSchema.parse({ port })).toThrow()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -185,6 +194,27 @@ describe("AppConfigSchema", () => {
 
   it("rejects missing required fields", () => {
     expect(() => AppConfigSchema.parse({ name: "x" })).toThrow()
+  })
+
+  it("normalizes blank commands to inherit and rejects unsafe or oversized commands", () => {
+    const blank = AppConfigSchema.parse({ ...base, installCommand: "" })
+    expect(blank.installCommand).toBeNull()
+
+    for (const value of ["bun\r\nrun build", "bun\u0000run build"]) {
+      expect(() => AppConfigSchema.parse({ ...base, buildCommand: value })).toThrow()
+    }
+    expect(() =>
+      AppConfigSchema.parse({ ...base, startCommand: "x".repeat(2_001) })
+    ).toThrow()
+  })
+
+  it("uses the same bounds for the app runtime port", () => {
+    expect(AppConfigSchema.parse({ ...base, runtimePort: 65_535 }).runtimePort).toBe(
+      65_535
+    )
+    for (const runtimePort of [0, 65_536, 3000.5]) {
+      expect(() => AppConfigSchema.parse({ ...base, runtimePort })).toThrow()
+    }
   })
 })
 

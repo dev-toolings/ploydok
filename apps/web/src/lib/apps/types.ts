@@ -5,6 +5,8 @@ import type {
   AppStatus,
   Build,
   BuildStatus,
+  FrameworkDetection,
+  FrameworkPresetId,
   RestartPolicy,
 } from "@ploydok/shared"
 
@@ -43,7 +45,6 @@ export interface AppListItem {
   lastImageDigest?: string | null
   pendingImageDigest?: string | null
 }
-
 export interface AppDetail extends AppListItem {
   gitProvider?: string
   imagePullPolicy?: "always" | "if_not_present" | null
@@ -55,6 +56,8 @@ export interface AppDetail extends AppListItem {
   buildCommand?: string
   startCommand?: string
   buildMethod?: string
+  frameworkPreset?: FrameworkPresetId | null
+  frameworkDetection?: FrameworkDetection
   staticOutputDir?: string
   staticSpaFallback?: boolean
   runtimePort?: number | null
@@ -128,7 +131,7 @@ export interface RawAppDetail extends Omit<
   } | null
 }
 
-export type AppSettingsPatch = Partial<
+type AppSettingsPatchValues = Omit<
   Pick<
     AppDetail,
     | "branch"
@@ -140,6 +143,7 @@ export type AppSettingsPatch = Partial<
     | "buildCommand"
     | "startCommand"
     | "buildMethod"
+    | "frameworkPreset"
     | "staticOutputDir"
     | "staticSpaFallback"
     | "runtimePort"
@@ -158,8 +162,15 @@ export type AppSettingsPatch = Partial<
     | "iconUrl"
     | "quickLinks"
     | "trackLatest"
-  >
+  >,
+  "installCommand" | "buildCommand" | "startCommand"
 >
+
+export type AppSettingsPatch = Partial<AppSettingsPatchValues> & {
+  installCommand?: string | null
+  buildCommand?: string | null
+  startCommand?: string | null
+}
 
 export interface AppStatusEventPayload {
   appId?: string
@@ -198,4 +209,3 @@ export interface RegistryUsage {
   bytes: number
   diskPct: number
 }
-

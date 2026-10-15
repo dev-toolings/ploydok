@@ -13,6 +13,18 @@
     "publicAnonymous": "Public / anonymous",
     "pullPolicy": "Pull policy",
     "buildMethod": "Build method",
+    "preset": "Framework preset",
+    "presetHint": "Choose a framework preset, then expand Advanced options to edit its commands and runtime values.",
+    "selectPreset": "Select a preset",
+    "presetAmbiguous": "Several framework presets match this repository. Select the one to deploy before continuing.",
+    "useDetectedPreset": "Use detected preset",
+    "editPresetHint": "These values come from the selected preset. Expand Advanced options to edit them.",
+    "notConfigured": "Not configured",
+    "builderManaged": "Determined by the builder",
+    "confidence": "Confidence",
+    "evidence": "Detection evidence",
+    "candidates": "Possible frameworks",
+    "runtimePort": "Runtime port",
     "spaFallback": "SPA fallback",
     "spaFallbackHint": "Serve {{file}} for client-side routes.",
     "summary": "Summary before creation",
@@ -245,7 +257,24 @@
     "repositoryTargetHint": "Detected from repository files. Deploy each service separately, or select a directory containing your Compose configuration.",
     "repositoryTargetRequired": "Several applications were found. Select a directory before continuing.",
     "repositoryDetectionFailed": "Repository detection is unavailable. Enter the application directory manually (. for the repository root) and select a build method.",
-    "productionStartRequired": "Enter the production start command for this server adapter."
+    "frameworkChoiceRequired": "Select a framework preset before continuing.",
+    "productionStartRequired": "Enter the production start command for this server adapter.",
+    "invalidBuildConfig": "Check the commands, healthcheck path, and ports before continuing.",
+    "presetNames": {
+      "dockerfile": "Dockerfile",
+      "node": "Node.js",
+      "next": "Next.js",
+      "nuxt": "Nuxt",
+      "sveltekit": "SvelteKit",
+      "vite": "Vite",
+      "laravel": "Laravel",
+      "symfony": "Symfony",
+      "django": "Django",
+      "rails": "Rails",
+      "phoenix": "Phoenix",
+      "static": "Static site",
+      "unknown": "Custom"
+    }
   },
   "status": {
     "running": "Running",
@@ -665,6 +694,7 @@
     "toggleFullscreenF": "Toggle fullscreen (F)",
     "phpSupport": "Nixpacks PHP support",
     "phpSupportBody": "Supported PHP versions are {{versions}}. For PHP 7.4 or older, switch to Dockerfile or deploy a custom image.",
+    "frameworkDetectionAtCreation": "Framework detected at creation",
     "autoDetect": "Auto-detect",
     "buildMethodHint": "auto · dockerfile · nixpacks · static",
     "dockerfilePath": "Dockerfile path",
@@ -683,7 +713,8 @@
     "couldNotSave": "Could not save",
     "swarm": "Swarm",
     "dockerLegacy": "Docker legacy",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "invalidSettings": "Check the commands, healthcheck path, and ports before saving."
   },
   "monitoring": {
     "title": "Resource monitoring",

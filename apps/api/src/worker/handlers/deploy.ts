@@ -9,11 +9,16 @@ import {
   ALL_PROBE_KEYS,
   MANIFEST_FILE_PROBE_KEYS,
   classifyStackWithManifests,
+  frameworkGuardrailDefaults,
+  classificationForPreset,
+  getFrameworkPreset,
+  FRAMEWORK_PRESETS,
 } from "@ploydok/shared"
 import type { ManifestContents, StackClassification } from "@ploydok/shared"
 import {
   updateBuildStatus,
   getAppForUser,
+  getLastSucceededBuild,
   insertAuditLog,
 } from "@ploydok/db/queries"
 import { claimQueuedRow } from "../queue-claim"
@@ -23,6 +28,7 @@ import { cleanupQueue, gcQueue, logArchiveQueue } from "../queues"
 import type { Db } from "@ploydok/db"
 import { getRegistryCredential } from "@ploydok/db/queries"
 import { env } from "../../env"
+import { resolveFrameworkPresetConfig } from "../../services/framework-preset"
 import { decryptField } from "../../github/app-credentials"
 import { GitHubProvider } from "../../github/client"
 import { GitHubCache } from "../../github/cache"
@@ -177,6 +183,7 @@ interface AppForDeploy {
   build_command: string | null
   start_command: string | null
   build_method: string | null
+  framework_preset: string | null
   static_output_dir: string | null
   static_spa_fallback: boolean | null
   cdn_mode: "off" | "internal" | "external"
@@ -244,6 +251,7 @@ async function getAppForDeploy(db: Db, appId: string): Promise<AppForDeploy> {
       build_command: apps.build_command,
       start_command: apps.start_command,
       build_method: apps.build_method,
+      framework_preset: apps.framework_preset,
       static_output_dir: apps.static_output_dir,
       static_spa_fallback: apps.static_spa_fallback,
       cdn_mode: apps.cdn_mode,
@@ -317,6 +325,8 @@ async function classifyWorkspaceStack(params: {
     ...base,
     stack: "symfony",
     framework: "Symfony",
+    presetId: "symfony",
+    preset: FRAMEWORK_PRESETS.symfony,
     confidence: "high",
     suggestedEnvVars: {
       NIXPACKS_PHP_ROOT_DIR: "/app/public",
@@ -347,46 +357,8 @@ function defaultRuntimePortForStack(
   method: "docker" | "nixpacks" | "static",
   classification: StackClassification
 ): number | null {
-  if (method === "static") return null
-  if (
-    method === "nixpacks" &&
-    (classification.stack === "laravel" ||
-      classification.stack === "symfony" ||
-      classification.stack === "php")
-  ) {
-    return 80
-  }
-  if (method === "nixpacks") {
-    if (
-      classification.stack === "django" ||
-      classification.stack === "flask" ||
-      classification.stack === "fastapi" ||
-      classification.stack === "python"
-    ) {
-      return 8000
-    }
-    if (classification.stack === "astro") return 4321
-    if (classification.stack === "elixir") return 4000
-    if (
-      classification.stack === "go" ||
-      classification.stack === "rust" ||
-      classification.stack === "java"
-    ) {
-      return 8080
-    }
-    if (
-      classification.stack === "hono" ||
-      classification.stack === "next" ||
-      classification.stack === "remix" ||
-      classification.stack === "node" ||
-      classification.stack === "bun" ||
-      classification.stack === "deno" ||
-      classification.stack === "ruby"
-    ) {
-      return 3000
-    }
-  }
-  return null
+  if (method !== "nixpacks") return null
+  return frameworkGuardrailDefaults(classification).defaults.runtimePort ?? null
 }
 
 /**
@@ -629,7 +601,37 @@ export async function handleDeploy(
     }
   }
 
-  const rawMethod = app.build_method ?? "auto"
+  const selectedPreset = getFrameworkPreset(app.framework_preset)
+  if (app.framework_preset != null && !selectedPreset) {
+    throw new FatalDeployError(
+      "Stored framework preset is invalid; select a preset again"
+    )
+  }
+  const presetFields = resolveFrameworkPresetConfig({
+    framework_preset: app.framework_preset,
+    install_command: app.install_command,
+    build_command: app.build_command,
+    start_command: app.start_command,
+    build_method: app.build_method,
+    static_output_dir: app.static_output_dir,
+    runtime_port: app.runtime_port,
+    healthcheck_path: undefined,
+    healthcheck_port: undefined,
+    healthcheck_interval_s: undefined,
+    healthcheck_timeout_s: undefined,
+    healthcheck_retries: undefined,
+    healthcheck_start_period_s: undefined,
+  })
+  const installCommand = presetFields.install_command
+  const buildCommand = presetFields.build_command
+  let startCommand = presetFields.start_command
+  const previousSuccessfulBuild =
+    !selectedPreset &&
+    (app.build_method === null || app.build_method === "auto")
+      ? await getLastSucceededBuild(db, app.id)
+      : null
+  const allowLegacyAmbiguous = Boolean(previousSuccessfulBuild)
+  const rawMethod = presetFields.build_method
   if (rawMethod === "railpack") {
     recordDeploymentOutcome("application_failed")
     throw new FatalDeployError(
@@ -1041,10 +1043,13 @@ export async function handleDeploy(
         Boolean(
           app.dockerfile_path ||
           app.nixpacks_config_path ||
-          app.install_command ||
-          app.build_command ||
-          app.start_command
+          installCommand ||
+          buildCommand ||
+          startCommand ||
+          Boolean(selectedPreset)
         ) || ![null, "auto", "nixpacks"].includes(app.build_method),
+      allowLegacyAmbiguous,
+      onWarning: (warning) => onLog(`[deploy] warning: ${warning}`),
     })
     if (resolvedRoot !== app.root_dir) {
       app.root_dir = resolvedRoot
@@ -1066,6 +1071,9 @@ export async function handleDeploy(
     const detected = await detectBuildMethod({
       workspacePath,
       override: detectedOverride,
+      frameworkPreset: app.framework_preset,
+      allowLegacyAmbiguous,
+      onWarning: (warning) => onLog(`[deploy] warning: ${warning}`),
       ...(app.root_dir !== null && { rootDir: app.root_dir }),
       ...(app.dockerfile_path !== null
         ? { dockerfilePath: app.dockerfile_path }
@@ -1112,23 +1120,31 @@ export async function handleDeploy(
     // Framework env guardrail: creation-time auto-injection is best effort and
     // older apps may predate it. Re-check the cloned source on every deploy and
     // persist missing framework-critical vars before build/runtime env is read.
-    const workspaceClassification = await classifyWorkspaceStack({
+    const detectedClassification = await classifyWorkspaceStack({
       workspacePath,
       rootDir: app.root_dir,
     })
+    const workspaceClassification = selectedPreset
+      ? classificationForPreset(selectedPreset.id, detectedClassification)
+      : detectedClassification
+    if (selectedPreset) {
+      onLog(`[deploy] using saved framework preset ${selectedPreset.id}`)
+    }
     if (
       detected.method === "nixpacks" &&
-      app.start_command === null &&
+      !selectedPreset &&
+      startCommand === null &&
       workspaceClassification.suggestedStartCommand
     ) {
-      app.start_command = workspaceClassification.suggestedStartCommand
+      startCommand = workspaceClassification.suggestedStartCommand
+      app.start_command = startCommand
       await db
         .update(apps)
         .set({ start_command: app.start_command, updated_at: new Date() })
         .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
       runtimePublished = true
       onLog(
-        `[deploy] inferred start command for ${workspaceClassification.framework ?? workspaceClassification.stack}: ${app.start_command}`
+        `[deploy] inferred start command for ${workspaceClassification.framework ?? workspaceClassification.stack}: ${startCommand}`
       )
     }
     try {
@@ -1394,12 +1410,12 @@ export async function handleDeploy(
       const staticResult = await dispatchStaticDeploy(
         app.id,
         commitSha,
-        app.static_output_dir ?? "dist",
+        app.static_output_dir ?? presetFields.static_output_dir ?? "dist",
         {
           workspacePath,
           rootDir: app.root_dir,
-          installCommand: app.install_command,
-          buildCommand: app.build_command,
+          installCommand,
+          buildCommand,
           env: buildEnv,
           onLog,
           ...(currentDeployAbortSignal()
@@ -1586,11 +1602,11 @@ export async function handleDeploy(
             configFile: app.nixpacks_config_path,
           }),
           ...(app.node_version !== null && { nodeVersion: app.node_version }),
-          ...(app.install_command !== null && {
-            installCmd: app.install_command,
+          ...(installCommand !== null && {
+            installCmd: installCommand,
           }),
-          ...(app.build_command !== null && { buildCmd: app.build_command }),
-          ...(app.start_command !== null && { startCmd: app.start_command }),
+          ...(buildCommand !== null && { buildCmd: buildCommand }),
+          ...(startCommand !== null && { startCmd: startCommand }),
           ...(Object.keys(buildEnv).length > 0 && { buildEnv }),
         })
         if (plan) {
@@ -1648,11 +1664,11 @@ export async function handleDeploy(
             configFile: app.nixpacks_config_path,
           }),
           ...(app.node_version !== null && { nodeVersion: app.node_version }),
-          ...(app.install_command !== null && {
-            installCmd: app.install_command,
+          ...(installCommand !== null && {
+            installCmd: installCommand,
           }),
-          ...(app.build_command !== null && { buildCmd: app.build_command }),
-          ...(app.start_command !== null && { startCmd: app.start_command }),
+          ...(buildCommand !== null && { buildCmd: buildCommand }),
+          ...(startCommand !== null && { startCmd: startCommand }),
           ...(Object.keys(buildEnv).length > 0 && { buildEnv }),
           ...(Object.keys(runtimeSecretEnv).length > 0 && {
             runtimeEnv: runtimeSecretEnv,

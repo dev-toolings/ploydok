@@ -32,7 +32,14 @@ import {
 } from "@workspace/ui/components/select"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
-import { PLANS, defaultRepositoryTarget } from "@ploydok/shared"
+import {
+  CommandSchema,
+  HealthcheckPathSchema,
+  HealthcheckPortSchema,
+  PLANS,
+  RuntimePortSchema,
+  defaultRepositoryTarget,
+} from "@ploydok/shared"
 import i18n from "../../lib/i18n"
 import {
   Dialog,
@@ -67,11 +74,19 @@ import {
   useRepositoryTargets,
   useStackClassification,
 } from "../../lib/stack-classifier-hook"
+import {
+  asExplainableClassification,
+  getBuildPresets,
+  presetForClassification,
+  presetOptionsForClassification,
+} from "../../lib/build-presets"
 import { useRegistryCredentials } from "../../lib/registry-credentials"
 import { usePendingAction } from "../../lib/hooks/use-pending-action"
+import { blankToNull } from "../../lib/apps/transforms"
 import { RepoSelector } from "./RepoSelector"
 import { GitLabRepoSelector } from "./GitLabRepoSelector"
 import { PlanSelector } from "./PlanSelector"
+import type { BuildPreset } from "../../lib/build-presets"
 import type { TFunction } from "i18next"
 import type { Database, DbKind, DbPlan } from "../../lib/databases"
 import type { PlanSelectorValue } from "./PlanSelector"
@@ -152,6 +167,15 @@ interface DatabaseSelection {
   envPrefix: string
 }
 
+type BuildConfigField =
+  | "installCommand"
+  | "buildCommand"
+  | "startCommand"
+  | "staticOutputDir"
+  | "healthcheckPath"
+  | "healthcheckPort"
+  | "runtimePort"
+
 export interface FormState {
   name: string
   source: SourceKind
@@ -163,6 +187,10 @@ export interface FormState {
   trackLatest: boolean
   buildMethod: BuildMethod
   buildMethodTouched: boolean
+  presetId: string
+  presetTouched: boolean
+  presetExplicit: boolean
+  buildFieldTouched: Partial<Record<BuildConfigField, boolean>>
   rootDir: string
   dockerfilePath: string
   installCommand: string
@@ -173,6 +201,7 @@ export interface FormState {
   watchPaths: string
   healthcheckPath: string
   healthcheckPort: string
+  runtimePort: string
   laravelSeedOnFirstDeploy: boolean
   initialEnvVars: Array<InitialEnvVar>
   database: DatabaseSelection
@@ -194,6 +223,10 @@ const INITIAL_FORM: FormState = {
   trackLatest: false,
   buildMethod: "auto",
   buildMethodTouched: false,
+  presetId: "",
+  presetTouched: false,
+  presetExplicit: false,
+  buildFieldTouched: {},
   rootDir: "",
   dockerfilePath: "",
   installCommand: "",
@@ -204,6 +237,7 @@ const INITIAL_FORM: FormState = {
   watchPaths: "",
   healthcheckPath: "/",
   healthcheckPort: "",
+  runtimePort: "",
   laravelSeedOnFirstDeploy: false,
   initialEnvVars: [],
   database: {
@@ -235,6 +269,10 @@ export function repoDerivedDefaults(): Partial<FormState> {
   return {
     buildMethod: "auto",
     buildMethodTouched: false,
+    presetId: "",
+    presetTouched: false,
+    presetExplicit: false,
+    buildFieldTouched: {},
     rootDir: "",
     dockerfilePath: "",
     installCommand: "",
@@ -245,9 +283,59 @@ export function repoDerivedDefaults(): Partial<FormState> {
     watchPaths: "",
     healthcheckPath: "/",
     healthcheckPort: "",
+    runtimePort: "",
     laravelSeedOnFirstDeploy: false,
     initialEnvVars: [],
     database: { ...INITIAL_FORM.database },
+  }
+}
+
+function applyBuildPreset(
+  form: FormState,
+  preset: BuildPreset,
+  touched: boolean,
+  explicit = touched,
+  resetBuildMethod = false
+): FormState {
+  const buildMethodTouched = resetBuildMethod
+    ? false
+    : touched || form.buildMethodTouched
+  return {
+    ...form,
+    buildMethod:
+      resetBuildMethod || !form.buildMethodTouched
+        ? preset.defaults.buildMethod
+        : form.buildMethod,
+    buildMethodTouched,
+    presetId: preset.id,
+    presetTouched: touched,
+    presetExplicit: explicit,
+    installCommand: form.buildFieldTouched.installCommand
+      ? form.installCommand
+      : (preset.defaults.installCommand ?? ""),
+    buildCommand: form.buildFieldTouched.buildCommand
+      ? form.buildCommand
+      : (preset.defaults.buildCommand ?? ""),
+    startCommand: form.buildFieldTouched.startCommand
+      ? form.startCommand
+      : (preset.defaults.startCommand ?? ""),
+    staticOutputDir: form.buildFieldTouched.staticOutputDir
+      ? form.staticOutputDir
+      : (preset.defaults.outputDirectory ?? "dist"),
+    runtimePort: form.buildFieldTouched.runtimePort
+      ? form.runtimePort
+      : preset.defaults.port === null
+        ? ""
+        : String(preset.defaults.port),
+    healthcheckPath: form.buildFieldTouched.healthcheckPath
+      ? form.healthcheckPath
+      : preset.defaults.healthcheck.path,
+    healthcheckPort: form.buildFieldTouched.healthcheckPort
+      ? form.healthcheckPort
+      : preset.defaults.healthcheck.port === null &&
+          preset.defaults.port === null
+        ? ""
+        : String(preset.defaults.healthcheck.port ?? preset.defaults.port),
   }
 }
 
@@ -504,6 +592,9 @@ export function CreateAppModal({
     form.branch || undefined
   )
   const targets = repositoryTargets.data?.targets
+  const selectedTarget = targets?.find(
+    (target) => target.rootDir === (form.rootDir.trim() || ".")
+  )
   const targetChoiceRequired = Boolean(
     targets &&
     targets.length > 1 &&
@@ -516,12 +607,33 @@ export function CreateAppModal({
     form.branch || undefined,
     form.rootDir || undefined
   )
-  const detectionError = repositoryTargets.error ?? classifier.error
-  const classification = classifier.data ?? null
+  const targetClassification = selectedTarget?.classification ?? null
+  const classification = targetClassification ?? classifier.data ?? null
+  const explainableClassification = asExplainableClassification(classification)
+  const sharedPresets = React.useMemo(() => getBuildPresets(), [])
+  const presetOptions = React.useMemo(
+    () =>
+      presetOptionsForClassification(explainableClassification, sharedPresets),
+    [explainableClassification, sharedPresets]
+  )
+  const recommendedPreset = presetForClassification(
+    explainableClassification,
+    sharedPresets
+  )
+  const candidateCount = Array.isArray(explainableClassification?.candidates)
+    ? explainableClassification.candidates.length
+    : 0
+  const classificationAmbiguous = Boolean(
+    explainableClassification?.ambiguous || candidateCount > 1
+  )
+  const detectionError =
+    repositoryTargets.error ?? (targetClassification ? null : classifier.error)
   const recommendedBuild = classification?.recommendedBuild
   const hasDockerfile =
     recommendedBuild === undefined ? null : recommendedBuild === "dockerfile"
-  const detectionLoading = classifier.isFetching || repositoryTargets.isFetching
+  const detectionLoading =
+    repositoryTargets.isFetching ||
+    (!targetClassification && classifier.isFetching)
   const { data: databases, isLoading: databasesLoading } = useDatabases(
     organizationId,
     { enabled: open && (currentStep === "database" || currentStep === "env") }
@@ -649,14 +761,6 @@ export function CreateAppModal({
     if (classification?.requiresStartCommand) setShowAdvanced(true)
   }, [classification?.requiresStartCommand])
 
-  React.useEffect(() => {
-    if (!classification?.suggestedStartCommand) return
-    setForm((prev) =>
-      prev.startCommand
-        ? prev
-        : { ...prev, startCommand: classification.suggestedStartCommand! }
-    )
-  }, [classification])
 
   React.useEffect(() => {
     if (recommendedBuild === undefined) return
@@ -674,6 +778,28 @@ export function CreateAppModal({
       return { ...prev, buildMethod: next }
     })
   }, [recommendedBuild])
+
+  React.useEffect(() => {
+    if (!recommendedPreset) return
+    setForm((prev) => {
+      if (prev.presetTouched || prev.presetId === recommendedPreset.id) {
+        return prev
+      }
+      const next = applyBuildPreset(prev, recommendedPreset, false, false)
+      return {
+        ...next,
+        installCommand: prev.buildFieldTouched.installCommand
+          ? prev.installCommand
+          : next.installCommand,
+        buildCommand: prev.buildFieldTouched.buildCommand
+          ? prev.buildCommand
+          : next.buildCommand,
+        startCommand: prev.buildFieldTouched.startCommand
+          ? prev.startCommand
+          : (classification?.suggestedStartCommand ?? next.startCommand),
+      }
+    })
+  }, [recommendedPreset, classification?.suggestedStartCommand])
 
   React.useEffect(() => {
     if (classification?.stack !== "symfony") return
@@ -714,7 +840,44 @@ export function CreateAppModal({
     key: TKey,
     value: FormState[TKey]
   ): void => {
-    setForm((prev) => ({ ...prev, [key]: value }))
+    const configFields: ReadonlyArray<BuildConfigField> = [
+      "installCommand",
+      "buildCommand",
+      "startCommand",
+      "staticOutputDir",
+      "healthcheckPath",
+      "healthcheckPort",
+      "runtimePort",
+    ]
+    setForm((prev) => {
+      if (configFields.includes(key as BuildConfigField)) {
+        const configField = key as BuildConfigField
+        return {
+          ...prev,
+          [key]: value,
+          presetTouched: true,
+          buildFieldTouched: {
+            ...prev.buildFieldTouched,
+            [configField]: true,
+          },
+        }
+      }
+      return { ...prev, [key]: value }
+    })
+  }
+
+  const handlePresetChange = (presetId: string): void => {
+    const preset = presetOptions.find((candidate) => candidate.id === presetId)
+    if (!preset) return
+    setForm((prev) => applyBuildPreset(prev, preset, true, true))
+    setShowAdvanced(true)
+  }
+
+  const resetPreset = (): void => {
+    if (!recommendedPreset) return
+    setForm((prev) =>
+      applyBuildPreset(prev, recommendedPreset, false, false, true)
+    )
   }
 
   const handleSourceChange = (source: SourceKind): void => {
@@ -770,8 +933,10 @@ export function CreateAppModal({
     if (currentStep === "env")
       return validateInitialEnvVars(form.initialEnvVars)
     if (currentStep === "build") {
+      if (!isBuildConfigValid(form)) return false
       if (
         classification?.requiresStartCommand &&
+        !form.presetExplicit &&
         form.buildMethod === "nixpacks" &&
         !form.startCommand.trim()
       )
@@ -788,6 +953,7 @@ export function CreateAppModal({
       ) {
         return false
       }
+      if (classificationAmbiguous && !form.presetExplicit) return false
     }
     if (currentStep === "database") {
       if (!/^[A-Z0-9_]+$/.test(form.database.envPrefix)) return false
@@ -821,7 +987,7 @@ export function CreateAppModal({
     )
   }
 
-  const handleSubmit = async (): Promise<void> => {
+  async function submitApp(): Promise<void> {
     if (submitInFlightRef.current) return
     submitInFlightRef.current = true
     setSubmitInFlight(true)
@@ -857,7 +1023,11 @@ export function CreateAppModal({
       }
       onClose()
     } catch (err) {
-      setSubmitError(localizedCreateError(err, t("create.failed")))
+      setSubmitError(
+        err instanceof Error && err.message === INVALID_BUILD_CONFIG_ERROR
+          ? t("create.invalidBuildConfig")
+          : localizedCreateError(err, t("create.failed"))
+      )
       throw err
     } finally {
       submitInFlightRef.current = false
@@ -865,7 +1035,7 @@ export function CreateAppModal({
     }
   }
 
-  const submitAction = usePendingAction(handleSubmit, {
+  const submitAction = usePendingAction(submitApp, {
     keepPendingOnSuccess: true,
   })
   const isSubmitting = mutationSubmitting || submitAction.pending
@@ -1044,6 +1214,11 @@ export function CreateAppModal({
                   hasDockerfile={hasDockerfile}
                   detectionLoading={detectionLoading}
                   classification={classification}
+                  presetOptions={presetOptions}
+                  recommendedPreset={recommendedPreset}
+                  classificationAmbiguous={classificationAmbiguous}
+                  onPresetChange={handlePresetChange}
+                  onResetPreset={resetPreset}
                   targets={targets ?? []}
                   detectionError={Boolean(detectionError)}
                   targetChoiceRequired={targetChoiceRequired}
@@ -1139,9 +1314,7 @@ export function CreateAppModal({
                 ) : (
                   <Button
                     size="sm"
-                    onClick={() => {
-                      void submitAction.run().catch(() => undefined)
-                    }}
+                    onClick={() => void submitAction.run().catch(() => {})}
                     loading={isSubmitting}
                     disabled={!canGoNext()}
                   >
@@ -2300,6 +2473,132 @@ function DnsRecords({ records }: { records: Array<DomainDnsRecord> }): React.JSX
 // Step 2 — Build
 // ---------------------------------------------------------------------------
 
+const PRESET_LABEL_KEYS: Record<string, string> = {
+  dockerfile: "create.presetNames.dockerfile",
+  node: "create.presetNames.node",
+  next: "create.presetNames.next",
+  nuxt: "create.presetNames.nuxt",
+  sveltekit: "create.presetNames.sveltekit",
+  vite: "create.presetNames.vite",
+  laravel: "create.presetNames.laravel",
+  symfony: "create.presetNames.symfony",
+  django: "create.presetNames.django",
+  rails: "create.presetNames.rails",
+  phoenix: "create.presetNames.phoenix",
+  static: "create.presetNames.static",
+  unknown: "create.presetNames.unknown",
+}
+
+function presetLabel(t: (key: string) => string, preset: BuildPreset): string {
+  const key = PRESET_LABEL_KEYS[preset.id]
+  return key ? t(key) : preset.label
+}
+
+function PresetConfiguration({
+  form,
+  presetOptions,
+  recommendedPreset,
+  classificationAmbiguous,
+  onPresetChange,
+  onResetPreset,
+}: {
+  form: FormState
+  presetOptions: Array<BuildPreset>
+  recommendedPreset: BuildPreset | null
+  classificationAmbiguous: boolean
+  onPresetChange: (presetId: string) => void
+  onResetPreset: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation("apps")
+  const selectedId = form.presetId || recommendedPreset?.id || ""
+  const currentPreset = presetOptions.find((preset) => preset.id === selectedId)
+  const hasOverride = Boolean(
+    form.presetTouched &&
+    recommendedPreset &&
+    selectedId !== recommendedPreset.id
+  )
+  const preview = [
+    [t("create.installCommand"), form.installCommand],
+    [t("create.buildCommand"), form.buildCommand],
+    [t("create.startCommand"), form.startCommand],
+    [t("create.outputDir"), form.staticOutputDir],
+    [t("create.runtimePort"), form.runtimePort],
+    [
+      t("create.healthcheck"),
+      `${form.healthcheckPath || "/"}${form.healthcheckPort ? `:${form.healthcheckPort}` : ""}`,
+    ],
+  ] as const
+
+  return (
+    <section className="space-y-3 rounded-xl border border-border bg-panel-inset p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <p className="text-sm font-medium">{t("create.preset")}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("create.presetHint")}
+          </p>
+        </div>
+        {recommendedPreset && hasOverride ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onResetPreset}
+          >
+            {t("create.useDetectedPreset")}
+          </Button>
+        ) : null}
+      </div>
+
+      <Select value={selectedId} onValueChange={onPresetChange}>
+        <SelectTrigger id="build-preset" className="min-h-11 w-full min-w-0">
+          <SelectValue placeholder={t("create.selectPreset")} />
+        </SelectTrigger>
+        <SelectContent>
+          {presetOptions.map((preset) => (
+            <SelectItem key={preset.id} value={preset.id}>
+              {presetLabel(t, preset)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {classificationAmbiguous && !form.presetExplicit ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t("create.presetAmbiguous")}
+        </p>
+      ) : null}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        {preview.map(([label, value]) => (
+          <div
+            key={label}
+            className="min-w-0 rounded-lg border border-border/70 bg-background/60 p-2"
+          >
+            <p className="text-[11px] font-medium text-muted-foreground">
+              {label}
+            </p>
+            <code
+              className={cn(
+                "mt-1 block min-w-0 font-mono text-xs break-all whitespace-pre-wrap",
+                value ? "text-foreground" : "text-muted-foreground"
+              )}
+            >
+              {value || t("create.builderManaged")}
+            </code>
+          </div>
+        ))}
+      </div>
+
+      {currentPreset && !form.presetTouched ? (
+        <p className="text-xs text-muted-foreground">
+          {t("create.editPresetHint")}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
 interface BuildStepProps {
   form: FormState
   setField: <TKey extends keyof FormState>(
@@ -2311,6 +2610,11 @@ interface BuildStepProps {
   hasDockerfile: boolean | null
   detectionLoading: boolean
   classification: StackClassification | null
+  presetOptions: Array<BuildPreset>
+  recommendedPreset: BuildPreset | null
+  classificationAmbiguous: boolean
+  onPresetChange: (presetId: string) => void
+  onResetPreset: () => void
   onRootDirChange: (rootDir: string) => void
   targets: Array<RepositoryTarget>
   detectionError: boolean
@@ -2325,6 +2629,11 @@ function BuildStep({
   hasDockerfile,
   detectionLoading,
   classification,
+  presetOptions,
+  recommendedPreset,
+  classificationAmbiguous,
+  onPresetChange,
+  onResetPreset,
   onRootDirChange,
   targets,
   detectionError,
@@ -2334,6 +2643,13 @@ function BuildStep({
   const selectMethod = (method: BuildMethod): void => {
     setField("buildMethod", method)
     setField("buildMethodTouched", true)
+    if (
+      method === "static" &&
+      !form.buildFieldTouched.staticOutputDir &&
+      form.staticOutputDir !== "dist"
+    ) {
+      setField("staticOutputDir", "dist")
+    }
   }
 
   const isStaticBuild = form.buildMethod === "static"
@@ -2368,9 +2684,19 @@ function BuildStep({
 
   return (
     <div className="space-y-5">
-      {classification && classification.stack !== "unknown" && (
+      {classification &&
+        (classification.stack !== "unknown" || classification.framework) && (
         <DetectedPanel classification={classification} />
       )}
+
+      <PresetConfiguration
+        form={form}
+        presetOptions={presetOptions}
+        recommendedPreset={recommendedPreset}
+        classificationAmbiguous={classificationAmbiguous}
+        onPresetChange={onPresetChange}
+        onResetPreset={onResetPreset}
+      />
 
       {classification?.stack === "laravel" && (
         <LaravelRuntimePanel
@@ -2466,6 +2792,7 @@ function BuildStep({
         </p>
       )}
       {classification?.requiresStartCommand &&
+        !form.presetExplicit &&
         form.buildMethod === "nixpacks" &&
         !form.startCommand.trim() && (
           <p role="alert" className="text-sm text-destructive">
@@ -2475,6 +2802,11 @@ function BuildStep({
       {detectionError && (
         <p role="alert" className="text-sm text-destructive">
           {t("create.repositoryDetectionFailed")}
+        </p>
+      )}
+      {!isBuildConfigValid(form) && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("create.invalidBuildConfig")}
         </p>
       )}
 
@@ -2497,13 +2829,6 @@ function BuildStep({
 
       {isStaticBuild && (
         <section className="space-y-3">
-          <ConfigField
-            id="static-output-dir"
-            label={t("create.outputDir")}
-            placeholder="dist"
-            value={form.staticOutputDir}
-            onChange={(v) => setField("staticOutputDir", v)}
-          />
           <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-background p-3 transition-colors hover:bg-muted/30">
             <input
               type="checkbox"
@@ -2545,6 +2870,7 @@ function BuildStep({
               label={t("create.installCommand")}
               placeholder="npm install"
               value={form.installCommand}
+              maxLength={2000}
               onChange={(v) => setField("installCommand", v)}
             />
             <ConfigField
@@ -2552,6 +2878,7 @@ function BuildStep({
               label={t("create.buildCommand")}
               placeholder="npm run build"
               value={form.buildCommand}
+              maxLength={2000}
               onChange={(v) => setField("buildCommand", v)}
             />
             {!isStaticBuild && (
@@ -2560,6 +2887,7 @@ function BuildStep({
                 label={t("create.startCommand")}
                 placeholder="node dist/index.js"
                 value={form.startCommand}
+                maxLength={2000}
                 onChange={(v) => setField("startCommand", v)}
               />
             )}
@@ -2569,6 +2897,20 @@ function BuildStep({
               placeholder="src/,package.json"
               value={form.watchPaths}
               onChange={(v) => setField("watchPaths", v)}
+            />
+            <ConfigField
+              id="runtime-port"
+              label={t("create.runtimePort")}
+              placeholder="3000"
+              value={form.runtimePort}
+              onChange={(v) => setField("runtimePort", v)}
+            />
+            <ConfigField
+              id="static-output-dir"
+              label={t("create.outputDir")}
+              placeholder="dist"
+              value={form.staticOutputDir}
+              onChange={(v) => setField("staticOutputDir", v)}
             />
           </div>
 
@@ -2599,6 +2941,7 @@ function BuildStep({
                     max={65535}
                     placeholder="3000"
                     value={form.healthcheckPort}
+                    className="min-h-11 text-base"
                     onChange={(e) =>
                       setField("healthcheckPort", e.target.value)
                     }
@@ -2717,7 +3060,9 @@ function ResourcesStep({
           <h3 className="text-sm font-medium">{t("create.variables")}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("create.manualVars", { count: envCount })}
-            {dbVars.length > 0 ? t("create.plusDbVars", { count: dbVars.length }) : ""}
+            {dbVars.length > 0
+              ? t("create.plusDbVars", { count: dbVars.length })
+              : ""}
             .
           </p>
           <div className="mt-3 flex flex-wrap gap-1">
@@ -2798,9 +3143,9 @@ function ReviewTile({
 }): React.JSX.Element {
   return (
     <div className="min-w-0 border-b border-border px-4 py-3 xl:border-r xl:border-b-0 xl:last:border-r-0">
-      <p className="text-xs font-medium text-muted-foreground">
-        {label}
-      </p>
+          <p className="text-xs font-medium text-muted-foreground">
+            {label}
+          </p>
       <p
         className={cn(
           "mt-1 truncate text-sm text-foreground",
@@ -2839,6 +3184,7 @@ function DetectedPanel({
   classification: StackClassification
 }): React.JSX.Element {
   const { t } = useTranslation("apps")
+  const evidence = classification.evidence ?? classification.signals
   const labelByConfidence: Record<StackClassification["confidence"], string> = {
     high: t("create.detected"),
     medium: t("create.probable"),
@@ -2850,22 +3196,47 @@ function DetectedPanel({
         <span className="rounded-sm bg-primary/15 px-1.5 py-0.5 font-sans text-xs font-semibold text-primary">
           {labelByConfidence[classification.confidence]}
         </span>
+        <span className="text-xs text-muted-foreground">
+          {t("create.confidence")}: {classification.confidence}
+        </span>
         <span className="text-sm font-medium">
           {classification.framework ?? classification.stack}
         </span>
       </div>
-      {classification.signals.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {classification.signals.map((s) => (
-            <span
-              key={s}
-              className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
-            >
-              {s}
-            </span>
-          ))}
+      {evidence.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t("create.evidence")}
+          </p>
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {evidence.map((s) => (
+              <span
+                key={s}
+                className="max-w-full rounded bg-muted px-1.5 py-0.5 font-mono text-xs break-all text-muted-foreground"
+              >
+                {s}
+              </span>
+            ))}
+          </div>
         </div>
       )}
+      {classification.candidates && classification.candidates.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t("create.candidates")}
+          </p>
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {classification.candidates.map((candidate) => (
+              <span
+                key={candidate.presetId}
+                className="max-w-full rounded bg-amber-500/10 px-1.5 py-0.5 text-xs break-all text-amber-700 dark:text-amber-300"
+              >
+                {candidate.framework ?? candidate.stack}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {classification.warnings.length > 0 && (
         <ul className="space-y-0.5">
           {classification.warnings.map((w) => (
@@ -2878,6 +3249,8 @@ function DetectedPanel({
                 ? t("create.composeImagesOnly")
                 : w === "compose_native_unavailable"
                   ? t("create.composeNativeUnavailable")
+                  : w === "framework_choice_required"
+                    ? t("create.frameworkChoiceRequired")
                   : w}
             </li>
           ))}
@@ -3097,7 +3470,9 @@ function DatabaseStep({
     <div className="flex flex-col gap-4">
       <section className="flex flex-col gap-2">
         <p className="text-sm font-medium">{t("create.steps.database")}</p>
-        <p className="text-xs text-muted-foreground">{t("create.linkDbHint")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("create.linkDbHint")}
+        </p>
         <Select
           value={value.mode}
           onValueChange={(mode) => update({ mode: mode as DatabaseMode })}
@@ -3108,7 +3483,9 @@ function DatabaseStep({
           <SelectContent>
             <SelectGroup>
               <SelectItem value="none">{t("create.noDatabase")}</SelectItem>
-              <SelectItem value="existing">{t("create.linkExisting")}</SelectItem>
+              <SelectItem value="existing">
+                {t("create.linkExisting")}
+              </SelectItem>
               <SelectItem value="new">{t("create.createThenLink")}</SelectItem>
             </SelectGroup>
           </SelectContent>
@@ -3544,7 +3921,9 @@ function EnvStep({
                 }
                 onClick={() => void importSelectedEnvFile()}
               >
-                {isImportingEnv ? t("create.importing") : t("create.importVars")}
+                {isImportingEnv
+                  ? t("create.importing")
+                  : t("create.importVars")}
               </Button>
             </div>
             {envImportError && (
@@ -3602,7 +3981,9 @@ function EnvStep({
                 className="grid gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_8rem_2.25rem]"
               >
                 <div className="space-y-1">
-                  <label className="text-xs font-medium">{t("create.key")}</label>
+                  <label className="text-xs font-medium">
+                    {t("create.key")}
+                  </label>
                   <Input value={key} readOnly className="font-mono" />
                   {importedConflict && (
                     <p className="text-[11px] text-muted-foreground">
@@ -3727,7 +4108,9 @@ function EnvStep({
                         <SelectItem value="runtime">
                           {t("create.runtime")}
                         </SelectItem>
-                        <SelectItem value="build">{t("create.build")}</SelectItem>
+                        <SelectItem value="build">
+                          {t("create.build")}
+                        </SelectItem>
                         <SelectItem value="both">{t("create.both")}</SelectItem>
                       </SelectGroup>
                     </SelectContent>
@@ -3829,6 +4212,7 @@ interface ConfigFieldProps {
   label: string
   placeholder: string
   value: string
+  maxLength?: number
   onChange: (v: string) => void
 }
 
@@ -3837,6 +4221,7 @@ function ConfigField({
   label,
   placeholder,
   value,
+  maxLength,
   onChange,
 }: ConfigFieldProps): React.JSX.Element {
   return (
@@ -3848,9 +4233,10 @@ function ConfigField({
         id={id}
         type="text"
         placeholder={placeholder}
+        maxLength={maxLength}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="font-mono"
+        className="min-h-11 font-mono text-base"
       />
     </div>
   )
@@ -3873,6 +4259,74 @@ function DockerIcon({ className }: { className?: string }): React.JSX.Element {
 // ---------------------------------------------------------------------------
 // Build POST /apps body from form state
 // ---------------------------------------------------------------------------
+
+const COMMAND_FIELD_KEYS: ReadonlyArray<BuildConfigField> = [
+  "installCommand",
+  "buildCommand",
+  "startCommand",
+]
+const INVALID_BUILD_CONFIG_ERROR = "INVALID_BUILD_CONFIG"
+
+function parseCommandOverride(value: string): string | null {
+  const parsed = CommandSchema.safeParse(blankToNull(value))
+  if (!parsed.success) {
+    throw new Error(INVALID_BUILD_CONFIG_ERROR)
+  }
+  return parsed.data
+}
+
+function parsePortOverride(
+  value: string,
+  schema: typeof RuntimePortSchema | typeof HealthcheckPortSchema
+): number | null {
+  const normalized = blankToNull(value)
+  if (normalized === null || normalized === undefined) return null
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(INVALID_BUILD_CONFIG_ERROR)
+  }
+  const parsed = Number(normalized)
+  const result = schema.safeParse(parsed)
+  if (!result.success) {
+    throw new Error(INVALID_BUILD_CONFIG_ERROR)
+  }
+  return result.data
+}
+
+function isBuildConfigValid(form: FormState): boolean {
+  const commandValues = COMMAND_FIELD_KEYS.map((key) => form[key])
+  if (
+    commandValues.some(
+      (value) => !CommandSchema.safeParse(blankToNull(value)).success
+    )
+  ) {
+    return false
+  }
+
+  const normalizedHealthcheckPath = blankToNull(form.healthcheckPath)
+  if (
+    normalizedHealthcheckPath !== null &&
+    normalizedHealthcheckPath !== undefined &&
+    !HealthcheckPathSchema.safeParse(normalizedHealthcheckPath).success
+  ) {
+    return false
+  }
+
+  for (const [value, schema] of [
+    [form.runtimePort, RuntimePortSchema],
+    [form.healthcheckPort, HealthcheckPortSchema],
+  ] as const) {
+    const normalized = blankToNull(value)
+    if (normalized === null || normalized === undefined) continue
+    if (
+      !/^\d+$/.test(normalized) ||
+      !schema.safeParse(Number(normalized)).success
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
 
 export function buildCreateAppBody(
   form: FormState,
@@ -3911,13 +4365,37 @@ export function buildCreateAppBody(
     }
 
     body.buildMethod = form.buildMethod
+    body.frameworkPreset = form.presetId || null
     if (form.rootDir) body.rootDir = form.rootDir
     if (form.dockerfilePath) body.dockerfilePath = form.dockerfilePath
-    if (form.installCommand) body.installCommand = form.installCommand
-    if (form.buildCommand) body.buildCommand = form.buildCommand
-    if (form.startCommand) body.startCommand = form.startCommand
-    if (form.buildMethod === "static") {
+    if (
+      form.presetId ||
+      form.buildFieldTouched.installCommand ||
+      form.installCommand
+    ) {
+      body.installCommand = parseCommandOverride(form.installCommand)
+    }
+    if (
+      form.presetId ||
+      form.buildFieldTouched.buildCommand ||
+      form.buildCommand
+    ) {
+      body.buildCommand = parseCommandOverride(form.buildCommand)
+    }
+    if (
+      form.presetId ||
+      form.buildFieldTouched.startCommand ||
+      form.startCommand
+    ) {
+      body.startCommand = parseCommandOverride(form.startCommand)
+    }
+    if (
+      form.buildMethod === "static" ||
+      form.buildFieldTouched.staticOutputDir
+    ) {
       body.staticOutputDir = form.staticOutputDir.trim() || "dist"
+    }
+    if (form.buildMethod === "static") {
       body.staticSpaFallback = form.staticSpaFallback
     }
 
@@ -3929,26 +4407,51 @@ export function buildCreateAppBody(
       : undefined
     if (watchPaths && watchPaths.length > 0) body.watchPaths = watchPaths
 
-    const parsedPort =
-      form.healthcheckPort.trim() !== ""
-        ? Number.parseInt(form.healthcheckPort.trim(), 10)
-        : undefined
-    const validPort =
-      parsedPort !== undefined &&
-      Number.isFinite(parsedPort) &&
-      parsedPort >= 1 &&
-      parsedPort <= 65535
-        ? parsedPort
-        : undefined
+    const shouldSendRuntimePort = Boolean(
+      form.presetId ||
+      form.buildFieldTouched.runtimePort ||
+      form.runtimePort.trim()
+    )
+    const validRuntimePort = shouldSendRuntimePort
+      ? parsePortOverride(form.runtimePort, RuntimePortSchema)
+      : undefined
+    if (validRuntimePort !== undefined) body.runtimePort = validRuntimePort
 
-    if (form.buildMethod !== "static" && form.healthcheckPath) {
+    const selectedPreset = getBuildPresets().find(
+      (preset) => preset.id === form.presetId
+    )
+    const healthcheckDefaults = selectedPreset?.defaults.healthcheck
+    if (form.buildMethod !== "static") {
+      const normalizedHealthcheckPath = blankToNull(form.healthcheckPath)
+      let healthcheckPath: string | undefined
+      if (normalizedHealthcheckPath !== null) {
+        const parsedHealthcheckPath = HealthcheckPathSchema.safeParse(
+          normalizedHealthcheckPath
+        )
+        if (!parsedHealthcheckPath.success) {
+          throw new Error(INVALID_BUILD_CONFIG_ERROR)
+        }
+        healthcheckPath = parsedHealthcheckPath.data
+      }
+      const shouldSendHealthcheckPort = Boolean(
+        form.presetId ||
+        form.buildFieldTouched.healthcheckPort ||
+        form.healthcheckPort.trim()
+      )
+      const validPort = shouldSendHealthcheckPort
+        ? parsePortOverride(form.healthcheckPort, HealthcheckPortSchema)
+        : undefined
       body.healthcheck = {
-        path: form.healthcheckPath,
-        port: validPort,
-        intervalS: 5,
-        timeoutS: 3,
-        retries: 6,
-        startPeriodS: 0,
+        ...(healthcheckPath ? { path: healthcheckPath } : {}),
+        port: shouldSendHealthcheckPort
+          ? validPort
+          : validRuntimePort !== undefined
+            ? validRuntimePort
+            : (healthcheckDefaults?.port ?? undefined),
+        intervalS: healthcheckDefaults?.intervalS,
+        timeoutS: healthcheckDefaults?.timeoutS,
+        retries: healthcheckDefaults?.retries,
+        startPeriodS: healthcheckDefaults?.startPeriodS,
       }
     }
   }

@@ -102,6 +102,8 @@ export async function listAppsForUser(
     image_ref: string | null
     branch: string | null
     build_method: string | null
+    framework_preset: string | null
+    framework_detection: string | null
     domain: string | null
     container_id: string | null
     icon_url: string | null
@@ -127,6 +129,8 @@ export async function listAppsForUser(
       image_ref: apps.image_ref,
       branch: apps.branch,
       build_method: apps.build_method,
+      framework_preset: apps.framework_preset,
+      framework_detection: apps.framework_detection,
       domain: apps.domain,
       container_id: apps.container_id,
       icon_url: apps.icon_url,

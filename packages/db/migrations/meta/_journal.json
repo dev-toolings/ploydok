@@ -610,6 +610,13 @@
       "when": 1792086901332,
       "tag": "0087_runtime_healthcheck_truth",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792092125200,
+      "tag": "0088_framework_detection",
+      "breakpoints": true
     }
   ]
 }

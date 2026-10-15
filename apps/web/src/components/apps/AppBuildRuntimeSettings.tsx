@@ -28,9 +28,16 @@ import {
 } from "@workspace/ui/components/alert"
 import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
-import { NIXPACKS_SUPPORTED_PHP_VERSIONS_LABEL } from "@ploydok/shared"
+import {
+  CommandSchema,
+  HealthcheckPathSchema,
+  HealthcheckPortSchema,
+  NIXPACKS_SUPPORTED_PHP_VERSIONS_LABEL,
+  RuntimePortSchema,
+} from "@ploydok/shared"
 import { useUpdateAppSettings } from "../../lib/apps-mutations"
-import { useStackClassification } from "../../lib/stack-classifier-hook"
+import { getBuildPresets } from "../../lib/build-presets"
+import { blankToNull } from "../../lib/apps/transforms"
 import type { Stack } from "@ploydok/shared"
 import type { AppDetail, AppSettingsPatch } from "../../lib/apps"
 
@@ -79,270 +86,77 @@ interface BuildRuntimePlaceholders {
   healthcheckPort: string
 }
 
-const BUILD_METHOD_OPTIONS: Array<FieldOption> = [
-  { value: "auto", label: "Auto-detect" },
-  { value: "dockerfile", label: "Dockerfile" },
-  { value: "nixpacks", label: "Nixpacks" },
-  { value: "static", label: "Static site" },
-]
-
 const PHP_STACKS = new Set<Stack>(["laravel", "symfony", "php"])
-
-const DEFAULT_PLACEHOLDERS: BuildRuntimePlaceholders = {
-  branch: "main",
-  rootDir: "/",
-  buildMethod: "auto",
-  dockerfilePath: "Dockerfile",
-  nixpacksConfigPath: "nixpacks.toml",
-  nodeVersion: "22",
-  installCommand: "npm install",
-  buildCommand: "npm run build",
-  startCommand: "npm start",
-  staticOutputDir: "dist",
-  healthcheckPath: "/",
-  runtimePort: "3000",
-  healthcheckPort: "3000",
-}
-
-function withDefaultPlaceholders(
-  overrides: Partial<BuildRuntimePlaceholders>
-): BuildRuntimePlaceholders {
-  return { ...DEFAULT_PLACEHOLDERS, ...overrides }
-}
 
 function getBuildRuntimePlaceholders(
   stack: Stack | undefined,
-  buildMethod: string | undefined
+  buildMethod: string | undefined,
+  frameworkPreset?: string | null
 ): BuildRuntimePlaceholders {
-  if (buildMethod === "static") {
-    return withDefaultPlaceholders({
-      buildMethod: "static",
-      nodeVersion: "22",
-      installCommand: "npm install",
-      buildCommand: "npm run build",
-      startCommand: "managed static server",
-      staticOutputDir: "dist",
-      runtimePort: "80",
-      healthcheckPort: "80",
-    })
-  }
-
-  switch (stack) {
-    case "laravel":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand:
-          "composer install --no-interaction --prefer-dist --optimize-autoloader && npm install",
-        buildCommand: "npm run build",
-        startCommand: "php artisan serve --host=0.0.0.0 --port=$PORT",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    case "symfony":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand:
-          "composer install --no-interaction --prefer-dist --optimize-autoloader && npm install",
-        buildCommand: "composer dump-env prod && php bin/console cache:clear",
-        startCommand: "php -S 0.0.0.0:$PORT -t public",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    case "php":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand:
-          "composer install --no-interaction --prefer-dist --optimize-autoloader",
-        buildCommand: "composer dump-autoload --optimize",
-        startCommand: "php -S 0.0.0.0:$PORT -t public",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    case "next":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run start",
-        runtimePort: "3000",
-        healthcheckPort: "3000",
-      })
-    case "hono":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run start",
-        runtimePort: "3000",
-        healthcheckPort: "3000",
-      })
-    case "remix":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run start",
-      })
-    case "astro":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "npm run preview -- --host 0.0.0.0 --port $PORT",
-        runtimePort: "4321",
-        healthcheckPort: "4321",
-      })
-    case "node":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-      })
-    case "bun":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "22",
-        installCommand: "bun install",
-        buildCommand: "bun run build",
-        startCommand: "bun run start",
-      })
-    case "deno":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "deno install",
-        buildCommand: "deno task build",
-        startCommand: "deno task start",
-      })
-    case "django":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python manage.py collectstatic --noinput",
-        startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "flask":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python -m compileall .",
-        startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "fastapi":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python -m compileall .",
-        startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "python":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "pip install -r requirements.txt",
-        buildCommand: "python -m compileall .",
-        startCommand: "python app.py",
-        runtimePort: "8000",
-        healthcheckPort: "8000",
-      })
-    case "go":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "go mod download",
-        buildCommand: "go build -o app ./...",
-        startCommand: "./app",
-        runtimePort: "8080",
-        healthcheckPort: "8080",
-      })
-    case "rust":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "cargo fetch",
-        buildCommand: "cargo build --release",
-        startCommand: "./target/release/app",
-        runtimePort: "8080",
-        healthcheckPort: "8080",
-      })
-    case "ruby":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "bundle install",
-        buildCommand: "bundle exec rake assets:precompile",
-        startCommand: "bundle exec rails server -b 0.0.0.0 -p $PORT",
-      })
-    case "elixir":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "mix deps.get",
-        buildCommand: "mix assets.deploy",
-        startCommand: "mix phx.server",
-        runtimePort: "4000",
-        healthcheckPort: "4000",
-      })
-    case "java":
-      return withDefaultPlaceholders({
-        buildMethod: "nixpacks",
-        nodeVersion: "not required",
-        installCommand: "./mvnw -B dependency:go-offline",
-        buildCommand: "./mvnw -B package -DskipTests",
-        startCommand: "java -jar target/*.jar",
-        runtimePort: "8080",
-        healthcheckPort: "8080",
-      })
-    case "static":
-      return withDefaultPlaceholders({
-        buildMethod: "static",
-        nodeVersion: "22",
-        installCommand: "npm install",
-        buildCommand: "npm run build",
-        startCommand: "managed static server",
-        staticOutputDir: "dist",
-        runtimePort: "80",
-        healthcheckPort: "80",
-      })
-    default:
-      return DEFAULT_PLACEHOLDERS
+  const presets = getBuildPresets()
+  const preset =
+    presets.find((candidate) => candidate.id === frameworkPreset) ??
+    presets.find((candidate) =>
+      buildMethod === "static"
+        ? candidate.id === "static"
+        : candidate.stack === stack || candidate.id === stack
+    )
+  const defaults = preset?.defaults
+  const empty = ""
+  return {
+    branch: "main",
+    rootDir: "/",
+    buildMethod: buildMethod ?? defaults?.buildMethod ?? "auto",
+    dockerfilePath: "Dockerfile",
+    nixpacksConfigPath: "nixpacks.toml",
+    nodeVersion: "22",
+    installCommand: defaults?.installCommand ?? empty,
+    buildCommand: defaults?.buildCommand ?? empty,
+    startCommand: defaults?.startCommand ?? empty,
+    staticOutputDir: defaults?.outputDirectory ?? empty,
+    healthcheckPath: defaults?.healthcheck.path ?? "/",
+    runtimePort:
+      defaults?.port === null || defaults?.port === undefined
+        ? empty
+        : String(defaults.port),
+    healthcheckPort:
+      defaults?.healthcheck.port === null ||
+      defaults?.healthcheck.port === undefined
+        ? empty
+        : String(defaults.healthcheck.port),
   }
 }
 
 function buildFields(
   placeholders: BuildRuntimePlaceholders,
-  isStatic: boolean
+  isStatic: boolean,
+  t: (key: string) => string
 ): Array<FieldDef> {
+  const buildMethodOptions: Array<FieldOption> = [
+    { value: "auto", label: t("create.auto") },
+    { value: "dockerfile", label: t("create.dockerfile") },
+    { value: "nixpacks", label: t("create.nixpacks") },
+    { value: "static", label: t("create.staticSite") },
+  ]
   const base: Array<FieldDef> = [
-    { key: "branch", label: "Branch", placeholder: placeholders.branch },
+    {
+      key: "branch",
+      label: t("create.branch"),
+      placeholder: placeholders.branch,
+    },
     {
       key: "rootDir",
-      label: "Root directory",
+      label: t("create.rootDir"),
       placeholder: placeholders.rootDir,
       mono: true,
     },
     {
       key: "buildMethod",
-      label: "Build method",
+      label: t("create.buildMethod"),
       placeholder: placeholders.buildMethod,
-      hint: "auto · dockerfile · nixpacks · static",
+      hint: t("build.buildMethodHint"),
       mono: true,
-      options: BUILD_METHOD_OPTIONS,
+      options: buildMethodOptions,
     },
   ]
 
@@ -357,19 +171,19 @@ function buildFields(
       },
       {
         key: "installCommand",
-        label: "Install command",
+        label: t("create.installCommand"),
         placeholder: placeholders.installCommand,
         mono: true,
       },
       {
         key: "buildCommand",
-        label: "Build command",
+        label: t("create.buildCommand"),
         placeholder: placeholders.buildCommand,
         mono: true,
       },
       {
         key: "staticOutputDir",
-        label: "Output directory",
+        label: t("create.outputDir"),
         placeholder: placeholders.staticOutputDir,
         mono: true,
       },
@@ -398,25 +212,25 @@ function buildFields(
     },
     {
       key: "installCommand",
-      label: "Install command",
+      label: t("create.installCommand"),
       placeholder: placeholders.installCommand,
       mono: true,
     },
     {
       key: "buildCommand",
-      label: "Build command",
+      label: t("create.buildCommand"),
       placeholder: placeholders.buildCommand,
       mono: true,
     },
     {
       key: "startCommand",
-      label: "Start command",
+      label: t("create.startCommand"),
       placeholder: placeholders.startCommand,
       mono: true,
     },
     {
       key: "healthcheckPath",
-      label: "Healthcheck path",
+      label: t("build.healthcheckPath"),
       placeholder: placeholders.healthcheckPath,
       mono: true,
     },
@@ -430,22 +244,16 @@ export function AppBuildRuntimeSettings({
 }): React.JSX.Element {
   const { t } = useTranslation(["apps", "common"])
   const update = useUpdateAppSettings(app.id)
-  const repoSource = getRepoSource(app.gitProvider)
-  const stackClassification = useStackClassification(
-    repoSource,
-    app.repoFullName,
-    app.branch || undefined,
-    app.rootDir || undefined
-  )
+  const detectedStack = app.frameworkDetection?.stack as Stack | undefined
   const placeholders = React.useMemo(
     () =>
       getBuildRuntimePlaceholders(
-        stackClassification.data?.stack,
-        app.buildMethod
+        detectedStack,
+        app.buildMethod,
+        app.frameworkPreset
       ),
-    [app.buildMethod, stackClassification.data?.stack]
+    [app.buildMethod, app.frameworkPreset, detectedStack]
   )
-  const detectedStack = stackClassification.data?.stack
   const [editing, setEditing] = React.useState(false)
   const [formError, setFormError] = React.useState<string | null>(null)
   const [formData, setFormData] = React.useState<AppSettingsPatch>(() =>
@@ -454,8 +262,8 @@ export function AppBuildRuntimeSettings({
   const selectedBuildMethod = formData.buildMethod ?? app.buildMethod
   const isStatic = selectedBuildMethod === "static"
   const fields = React.useMemo(
-    () => buildFields(placeholders, isStatic),
-    [isStatic, placeholders]
+    () => buildFields(placeholders, isStatic, t),
+    [isStatic, placeholders, t]
   )
   const showPhpNixpacksSupport =
     Boolean(detectedStack && PHP_STACKS.has(detectedStack)) &&
@@ -479,6 +287,10 @@ export function AppBuildRuntimeSettings({
 
   const handleSave = async (): Promise<void> => {
     setFormError(null)
+    if (!isValidSettingsPatch(formData)) {
+      setFormError(t("build.invalidSettings"))
+      return
+    }
     try {
       await update.mutateAsync(formData)
       setEditing(false)
@@ -517,6 +329,13 @@ export function AppBuildRuntimeSettings({
           </Alert>
         ) : null}
 
+        {app.frameworkDetection ? (
+          <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-3">
+            {t("build.frameworkDetectionAtCreation")}:{" "}
+            {app.frameworkDetection.framework ?? app.frameworkDetection.stack}
+          </p>
+        ) : null}
+
         {fields.map((field) => (
           <SettingsField
             key={field.key}
@@ -526,7 +345,12 @@ export function AppBuildRuntimeSettings({
             onChange={(value) =>
               setFormData((previous) => ({
                 ...previous,
-                [field.key]: value || undefined,
+                [field.key]:
+                  field.key === "installCommand" ||
+                  field.key === "buildCommand" ||
+                  field.key === "startCommand"
+                    ? blankToNull(value)
+                    : value || undefined,
               }))
             }
           />
@@ -690,13 +514,38 @@ function formDataFromApp(app: AppDetail): AppSettingsPatch {
   }
 }
 
-function getRepoSource(
-  gitProvider: string | undefined
-): "github" | "gitlab" | undefined {
-  if (gitProvider === "github" || gitProvider === "gitlab") {
-    return gitProvider
+function isValidSettingsPatch(formData: AppSettingsPatch): boolean {
+  for (const value of [
+    formData.installCommand,
+    formData.buildCommand,
+    formData.startCommand,
+  ]) {
+    if (
+      value !== undefined &&
+      !CommandSchema.safeParse(blankToNull(value)).success
+    ) {
+      return false
+    }
   }
-  return undefined
+
+  const healthcheckPath = blankToNull(formData.healthcheckPath)
+  if (
+    healthcheckPath !== null &&
+    healthcheckPath !== undefined &&
+    !HealthcheckPathSchema.safeParse(healthcheckPath).success
+  ) {
+    return false
+  }
+
+  for (const [value, schema] of [
+    [formData.runtimePort, RuntimePortSchema],
+    [formData.healthcheckPort, HealthcheckPortSchema],
+  ] as const) {
+    if (value === null || value === undefined) continue
+    if (!schema.safeParse(value).success) return false
+  }
+
+  return true
 }
 
 function SettingsField({
@@ -746,6 +595,13 @@ function SettingsField({
           type="text"
           value={value}
           placeholder={field.placeholder}
+          maxLength={
+            field.key === "installCommand" ||
+            field.key === "buildCommand" ||
+            field.key === "startCommand"
+              ? 2000
+              : undefined
+          }
           className={cn(field.mono && "font-mono")}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -803,8 +659,9 @@ function PortField({
       onChange(null)
       return
     }
-    const parsed = Number.parseInt(raw, 10)
-    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 65535) {
+    if (!/^\d+$/.test(raw.trim())) return
+    const parsed = Number(raw)
+    if (RuntimePortSchema.safeParse(parsed).success) {
       onChange(parsed)
     }
   }

@@ -60,6 +60,10 @@ import { purgeCloudflareForApp } from "../cloudflare/purge.js"
 import { listRuntimeAppVolumeMounts } from "../services/app-volumes.js"
 import { classifyAppDomainWithInstanceBase } from "../domains/app-domain.js"
 import {
+  healthcheckShell,
+  quotePosixShellLiteral,
+} from "./healthcheck-shell.js"
+import {
   currentDeployLease,
   currentDeployLeaseCondition,
   DeployLeaseLostError,
@@ -898,16 +902,7 @@ export async function runBlueGreen(
         healthcheck: {
           test: [
             "CMD-SHELL",
-            `for host in 127.0.0.1 "$(hostname 2>/dev/null)"; do ` +
-              `[ -z "$host" ] && continue; ` +
-              `if command -v curl >/dev/null 2>&1; then ` +
-              `code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://$host:${hcPort}${hcPath}" || true)"; ` +
-              `case "$code" in [234][0-9][0-9]) exit 0;; esac; ` +
-              `fi; ` +
-              `if command -v wget >/dev/null 2>&1; then ` +
-              `wget -q -O /dev/null --timeout=5 "http://$host:${hcPort}${hcPath}" && exit 0; ` +
-              `fi; ` +
-              `done; exit 1`,
+            healthcheckShell(hcPort, hcPath),
           ],
           intervalSeconds: hcIntervalS,
           timeoutSeconds: hcTimeoutS,
@@ -1350,7 +1345,9 @@ export async function rollbackApp(
             // replying is enough evidence that the process is up. curl
             // without `-f` exits 0 on any status; it only fails on
             // connection refused or timeout.
-            `curl -sS -m 5 -o /dev/null http://127.0.0.1:${hcPort}${hcPath} || exit 1`,
+            `curl -sS -m 5 -o /dev/null ${quotePosixShellLiteral(
+              `http://127.0.0.1:${hcPort}${hcPath}`
+            )} || exit 1`,
           ],
           intervalSeconds: hcIntervalS,
           timeoutSeconds: hcTimeoutS,
