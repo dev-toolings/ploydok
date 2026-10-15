@@ -2,6 +2,7 @@
 import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
+import { RiAddLine, RiExternalLinkLine, RiMore2Line } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
@@ -17,11 +18,18 @@ import {
   AlertDialogTitle,
 } from "@workspace/ui/components/alert-dialog"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@workspace/ui/components/dropdown-menu"
+import {
   useCreateGitHubAppFlow,
   useForgetLocalGitHubApp,
   useGitHubAppConfig,
   useGitHubAppCredentialsStatus,
   useGitHubCacheStatus,
+  useGitHubOrganizationLookup,
   useInstallations,
   useRemoveGitHubInstallation,
   useResetGitHubApp,
@@ -30,6 +38,7 @@ import {
 import { useMe } from "../../../lib/auth"
 import { useGitProviderStatus } from "../../../lib/git-providers"
 import { apiBaseUrl } from "../../../lib/api/base"
+import { usePendingAction } from "../../../lib/hooks/use-pending-action"
 import { CachedReposPanel } from "./CachedReposPanel"
 import { GitHubAppSetupCard, GitHubIcon } from "./GitHubAppSetupCard"
 import { SyncProgressDialog } from "./SyncProgressDialog"
@@ -37,6 +46,7 @@ import { useSyncWithProgress } from "./useSyncWithProgress"
 import type {
   AppInstallation,
   GitHubAppCredentialsStatus,
+  GitHubAppSummary,
 } from "../../../lib/github"
 
 type CredentialsStatus = GitHubAppCredentialsStatus["status"] | undefined
@@ -301,12 +311,7 @@ export function GitHubPanel(): React.JSX.Element {
     return (
       <div className="space-y-6">
         <GitHubUserConnection status={status} />
-        {status?.configured && (
-          <InstallationsCard
-            role="member"
-            installUrl={connectionHref(status.install_url)}
-          />
-        )}
+        {status?.configured && <InstallationsCard role="member" />}
       </div>
     )
   }
@@ -335,50 +340,45 @@ export function GitHubPanel(): React.JSX.Element {
         </p>
       </div>
 
-      <div className="space-y-4 rounded-2xl bg-panel p-6">
-        {appSuccess && (
-          <p
-            className="text-sm text-green-600 dark:text-green-400"
-            role="status"
-          >
-            {t("github.configuredSuccess")}
-          </p>
-        )}
-        {appLoading ? (
+      {appSuccess && (
+        <p className="text-sm text-green-600 dark:text-green-400" role="status">
+          {t("github.configuredSuccess")}
+        </p>
+      )}
+
+      {appLoading ? (
+        <div className="rounded-2xl bg-panel p-6">
           <GitHubStatusSkeleton />
-        ) : appConfig?.configured ? (
-          <div className="space-y-6">
-            {(appConfig.apps ?? []).map((app) => (
-              <GitHubAppConfiguredState
-                key={app.id}
-                name={app.name}
-                slug={app.slug}
-                ownerLogin={app.owner_login}
-                isPending={resettingAppId === app.id}
-                onReset={() => void handleResetApp(app.id)}
-                error={null}
-              />
-            ))}
-            {resetError && resettingAppId === null && (
-              <p className="text-sm text-destructive" role="alert">
-                {resetError}
-              </p>
-            )}
-            <AddGitHubOrganizationApp
-              isPending={createApp.isPending}
-              onCreate={(organization) => void createApp.start(organization)}
-              error={createApp.error}
-            />
-          </div>
-        ) : (
+        </div>
+      ) : appConfig?.configured ? (
+        <InstallationsCard
+          role="admin"
+          accounts={{
+            apps: appConfig.apps ?? [],
+            installationsEnabled: canLoadGitHubInstallations(
+              true,
+              credentialsStatus.data?.status
+            ),
+            resettingAppId,
+            resetError,
+            onResetApp: (appId) => void handleResetApp(appId),
+            organizationApp: {
+              isPending: createApp.isPending,
+              error: createApp.error,
+              onCreate: (organization) => void createApp.start(organization),
+            },
+          }}
+        />
+      ) : (
+        <div className="rounded-2xl bg-panel p-6">
           <GitHubAppSetupCard
             isPending={createApp.isPending}
             onCreate={() => void createApp.start()}
             onImported={() => setAppSuccess(true)}
             error={createApp.error}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       <GitHubCredentialsRecovery unreadable={credentialsUnreadable} />
 
@@ -388,16 +388,6 @@ export function GitHubPanel(): React.JSX.Element {
             message: credentialsStatus.error.message,
           })}
         </p>
-      )}
-
-      {canLoadGitHubInstallations(
-        appConfig?.configured === true,
-        credentialsStatus.data?.status
-      ) && (
-        <InstallationsCard
-          role="admin"
-          installUrl={connectionHref(appConfig?.install_url)}
-        />
       )}
     </div>
   )
@@ -446,15 +436,83 @@ function GitHubUserConnection({
 
 type InstallationRole = "admin" | "member"
 
+/** One GitHub owner: its App (admin view) and its installation, if any. */
+export interface GitHubAccount {
+  key: string
+  app: GitHubAppSummary | null
+  installation: AppInstallation | null
+}
+
+/**
+ * Pairs each App with its installation. A private App is installable only on
+ * its owner, so it has at most one; installations recorded before their App
+ * was known are matched on the owner login, then listed on their own.
+ */
+export function buildGitHubAccounts(
+  apps: ReadonlyArray<GitHubAppSummary>,
+  installations: ReadonlyArray<AppInstallation>
+): Array<GitHubAccount> {
+  const used = new Set<number>()
+  const accounts: Array<GitHubAccount> = apps.map((app) => {
+    const installation =
+      installations.find((inst) => inst.githubAppId === app.id) ??
+      installations.find(
+        (inst) =>
+          !inst.githubAppId &&
+          !!app.owner_login &&
+          inst.accountLogin.toLowerCase() === app.owner_login.toLowerCase()
+      ) ??
+      null
+    if (installation) used.add(installation.id)
+    return { key: app.id, app, installation }
+  })
+  for (const installation of installations) {
+    if (used.has(installation.id)) continue
+    accounts.push({
+      key: `installation-${installation.id}`,
+      app: null,
+      installation,
+    })
+  }
+  return accounts
+}
+
+interface AdminAccountsProps {
+  apps: ReadonlyArray<GitHubAppSummary>
+  installationsEnabled: boolean
+  resettingAppId: string | null
+  resetError: string | null
+  onResetApp: (appId: string) => void
+  organizationApp: {
+    isPending: boolean
+    error: string | null
+    onCreate: (organization: string) => void
+  }
+}
+
 export function InstallationsCard({
   role,
-  installUrl: installUrlFallback,
+  accounts,
 }: {
   role: InstallationRole
-  installUrl: string | null
+  accounts?: AdminAccountsProps
 }): React.JSX.Element {
   const { t } = useTranslation("settings")
-  const { data, isLoading, isFetching, error, refetch } = useInstallations()
+  const { data, isLoading, isFetching, error, refetch } = useInstallations({
+    enabled: accounts?.installationsEnabled ?? true,
+  })
+  const [resetTarget, setResetTarget] = React.useState<
+    GitHubAppSummary | undefined
+  >(undefined)
+  const [installingAppId, setInstallingAppId] = React.useState<string | null>(
+    null
+  )
+  const install = usePendingAction(
+    async (url: string): Promise<void> => {
+      window.location.href = url
+    },
+    { keepPendingOnSuccess: true }
+  )
   const remove = useRemoveGitHubInstallation()
   const [pendingId, setPendingId] = React.useState<number | null>(null)
   const [revokeError, setRevokeError] = React.useState<string | null>(null)
@@ -508,11 +566,6 @@ export function InstallationsCard({
     return () => clearTimeout(timer)
   }, [refetch, t])
 
-  const handleStartInstall = (url: string): void => {
-    if (typeof window === "undefined") return
-    window.location.href = url
-  }
-
   const handleRemove = async (installation: AppInstallation): Promise<void> => {
     setRevokeError(null)
     setPendingId(installation.id)
@@ -532,9 +585,13 @@ export function InstallationsCard({
     }
   }
 
-  const installTargets = data?.installTargets ?? []
-  const installUrl =
-    installTargets[0]?.url ?? data?.installUrl ?? installUrlFallback ?? ""
+  const handleInstall = (app: GitHubAppSummary): void => {
+    const url = connectionHref(app.install_url)
+    if (!url) return
+    setInstallingAppId(app.id)
+    void install.run(url).catch(() => undefined)
+  }
+
   const hasInstallation =
     Boolean(justInstalled) || Boolean(data && data.installations.length > 0)
 
@@ -546,42 +603,17 @@ export function InstallationsCard({
       >
         <div>
           <h2 className="text-base font-medium">
-            {t("github.installations")}
+            {accounts ? t("github.accounts.title") : t("github.installations")}
           </h2>
           <p className="text-sm text-muted-foreground">
-            {role === "admin"
-              ? t("github.installationsHintAdmin")
-              : t("github.installationsHintMember")}
+            {accounts
+              ? t("github.accounts.hint")
+              : role === "admin"
+                ? t("github.installationsHintAdmin")
+                : t("github.installationsHintMember")}
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:justify-end">
-          {role === "admin" &&
-            (installTargets.length > 1
-              ? installTargets.map((target) => (
-                  <Button
-                    key={target.appId}
-                    className="w-full sm:w-auto"
-                    size="sm"
-                    onClick={() => handleStartInstall(target.url)}
-                  >
-                    {t("github.installOn", {
-                      owner: target.ownerLogin ?? target.name,
-                    })}
-                  </Button>
-                ))
-              : installUrl && (
-                  <Button
-                    className="w-full sm:w-auto"
-                    size="sm"
-                    onClick={() => handleStartInstall(installUrl)}
-                  >
-                    {installTargets[0]?.ownerLogin
-                      ? t("github.installOn", {
-                          owner: installTargets[0].ownerLogin,
-                        })
-                      : t("github.addAccount")}
-                  </Button>
-                ))}
           <Button
             className="w-full sm:w-auto"
             variant="outline"
@@ -607,32 +639,79 @@ export function InstallationsCard({
         </p>
       )}
 
-      <div className="space-y-4 rounded-2xl bg-panel p-6">
-        {isLoading ? (
-          <GitHubStatusSkeleton />
-        ) : error ? (
-          <p className="text-sm text-destructive" role="alert">
-            {t("github.loadInstallationsFailed", { message: error.message })}
-          </p>
-        ) : !data || data.installations.length === 0 ? (
-          <InstallationsEmptyState />
-        ) : (
-          <ul className="divide-y divide-border">
-            {data.installations.map((inst) => (
-              <InstallationRow
-                key={inst.id}
-                installation={inst}
-                isPending={pendingId === inst.id}
-                role={role}
-                onRemove={() => {
-                  setRevokeError(null)
-                  setSelectedInstallation(inst)
-                }}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+      {accounts ? (
+        <div className="space-y-4 rounded-2xl bg-panel p-6">
+          {accounts.installationsEnabled && isLoading ? (
+            <GitHubStatusSkeleton />
+          ) : (
+            <ul className="divide-y divide-border">
+              {buildGitHubAccounts(
+                accounts.apps,
+                data?.installations ?? []
+              ).map((account) => (
+                <GitHubAccountRow
+                  key={account.key}
+                  account={account}
+                  installPending={
+                    install.pending && installingAppId === account.app?.id
+                  }
+                  menuPending={
+                    (account.installation !== null &&
+                      pendingId === account.installation.id) ||
+                    (account.app !== null &&
+                      accounts.resettingAppId === account.app.id)
+                  }
+                  onInstall={() => account.app && handleInstall(account.app)}
+                  onRevoke={() => {
+                    if (!account.installation) return
+                    setRevokeError(null)
+                    setSelectedInstallation(account.installation)
+                  }}
+                  onReset={() => account.app && setResetTarget(account.app)}
+                />
+              ))}
+            </ul>
+          )}
+          {error && (
+            <p className="text-sm text-destructive" role="alert">
+              {t("github.loadInstallationsFailed", { message: error.message })}
+            </p>
+          )}
+          {accounts.resetError && (
+            <p className="text-sm text-destructive" role="alert">
+              {accounts.resetError}
+            </p>
+          )}
+          <AddGitHubOrganizationApp {...accounts.organizationApp} />
+        </div>
+      ) : (
+        <div className="space-y-4 rounded-2xl bg-panel p-6">
+          {isLoading ? (
+            <GitHubStatusSkeleton />
+          ) : error ? (
+            <p className="text-sm text-destructive" role="alert">
+              {t("github.loadInstallationsFailed", { message: error.message })}
+            </p>
+          ) : !data || data.installations.length === 0 ? (
+            <InstallationsEmptyState />
+          ) : (
+            <ul className="divide-y divide-border">
+              {data.installations.map((inst) => (
+                <InstallationRow
+                  key={inst.id}
+                  installation={inst}
+                  isPending={pendingId === inst.id}
+                  role={role}
+                  onRemove={() => {
+                    setRevokeError(null)
+                    setSelectedInstallation(inst)
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {role === "admin" && hasInstallation && (
         <GitHubCacheSection
@@ -706,7 +785,157 @@ export function InstallationsCard({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog
+        open={resetTarget !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setResetTarget(undefined)
+        }}
+      >
+        <AlertDialogContent className="max-w-[calc(100vw-2rem)]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("github.resetAppConfirm")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("github.resetAppHint", { name: resetTarget?.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className={responsiveDialogActionClassName}>
+              {t("common:cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className={responsiveDialogActionClassName}
+              variant="destructive"
+              onClick={() => {
+                if (resetTarget) accounts?.onResetApp(resetTarget.id)
+                setResetTarget(undefined)
+              }}
+            >
+              {t("github.resetApp")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
+  )
+}
+
+function GitHubAccountRow({
+  account,
+  installPending,
+  menuPending,
+  onInstall,
+  onRevoke,
+  onReset,
+}: {
+  account: GitHubAccount
+  installPending: boolean
+  menuPending: boolean
+  onInstall: () => void
+  onRevoke: () => void
+  onReset: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation("settings")
+  const { app, installation } = account
+  const login =
+    installation?.accountLogin || app?.owner_login || app?.name || ""
+  const type = installation?.accountType || app?.owner_type || null
+  const count = installation?.repositoryCount ?? null
+  const status = !installation
+    ? t("github.accounts.notInstalled")
+    : installation.repositorySelection === "all"
+      ? t("github.allRepositories")
+      : count === null
+        ? t("github.accounts.selectedRepositories")
+        : t("github.repository", { count })
+
+  return (
+    <li className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-4">
+        {installation?.avatarUrl ? (
+          <img
+            src={installation.avatarUrl}
+            alt=""
+            className="size-10 shrink-0 rounded-full"
+          />
+        ) : (
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted">
+            <GitHubIcon className="size-5 text-muted-foreground" />
+          </div>
+        )}
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 text-sm font-medium">
+            <span className="truncate">@{login}</span>
+            {type && (
+              <span className="text-xs font-normal text-muted-foreground">
+                {type === "Organization"
+                  ? t("github.accounts.organization")
+                  : t("github.accounts.personal")}
+              </span>
+            )}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            <span
+              className={cn(
+                !installation && "text-amber-700 dark:text-amber-400"
+              )}
+            >
+              {status}
+            </span>
+            {installation?.suspendedAt && (
+              <span className="ml-1 text-destructive">
+                · {t("github.suspended")}
+              </span>
+            )}
+            {app && (
+              <>
+                {" · "}
+                <span className="font-mono">{app.slug}</span>
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 sm:shrink-0">
+        {app && !installation && (
+          <Button size="sm" loading={installPending} onClick={onInstall}>
+            {t("github.accounts.install")}
+          </Button>
+        )}
+        {installation?.htmlUrl && (
+          <Button size="sm" variant="outline" asChild>
+            <a href={installation.htmlUrl} target="_blank" rel="noreferrer">
+              {t("github.accounts.manage")}
+              <RiExternalLinkLine aria-hidden="true" />
+            </a>
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              loading={menuPending}
+              aria-label={t("github.accounts.more", { login })}
+            >
+              <RiMore2Line aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {installation && (
+              <DropdownMenuItem onSelect={onRevoke}>
+                {t("github.accounts.revokeInstallation")}
+              </DropdownMenuItem>
+            )}
+            {app && (
+              <DropdownMenuItem variant="destructive" onSelect={onReset}>
+                {t("github.accounts.deleteApp")}
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </li>
   )
 }
 
@@ -898,9 +1127,32 @@ function AddGitHubOrganizationApp({
   error: string | null
 }): React.JSX.Element {
   const { t } = useTranslation("settings")
+  const [open, setOpen] = React.useState(false)
   const [organization, setOrganization] = React.useState("")
+  const [debounced, setDebounced] = React.useState("")
   const trimmed = organization.trim()
   const valid = GITHUB_LOGIN_PATTERN.test(trimmed)
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDebounced(valid ? trimmed : ""), 400)
+    return () => clearTimeout(timer)
+  }, [trimmed, valid])
+
+  const lookup = useGitHubOrganizationLookup(debounced)
+  const settled = debounced === trimmed && valid
+  const found =
+    settled && lookup.data && !lookup.data.hasApp ? lookup.data : null
+
+  if (!open) {
+    return (
+      <div className="border-t border-border pt-4">
+        <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+          <RiAddLine aria-hidden="true" />
+          {t("github.orgApp.open")}
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <form
@@ -908,7 +1160,7 @@ function AddGitHubOrganizationApp({
       noValidate
       onSubmit={(event) => {
         event.preventDefault()
-        if (valid) onCreate(trimmed)
+        if (found) onCreate(found.login)
       }}
     >
       <div className="space-y-1">
@@ -917,21 +1169,70 @@ function AddGitHubOrganizationApp({
           {t("github.orgApp.hint")}
         </p>
       </div>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <div className="flex-1 space-y-1">
-          <Label htmlFor="github-org-app-login">
-            {t("github.orgApp.label")}
-          </Label>
-          <Input
-            id="github-org-app-login"
-            value={organization}
-            onChange={(event) => setOrganization(event.target.value)}
-            placeholder={t("github.orgApp.placeholder")}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        <Button type="submit" disabled={!valid} loading={isPending}>
+      <div className="space-y-1">
+        <Label htmlFor="github-org-app-login">{t("github.orgApp.label")}</Label>
+        <Input
+          id="github-org-app-login"
+          value={organization}
+          onChange={(event) => setOrganization(event.target.value)}
+          placeholder={t("github.orgApp.placeholder")}
+          autoComplete="off"
+          autoFocus
+          spellCheck={false}
+        />
+      </div>
+      <div className="min-h-10 text-sm" aria-live="polite">
+        {trimmed && !valid ? (
+          <p className="text-destructive">{t("github.orgApp.invalid")}</p>
+        ) : !settled || lookup.isFetching ? (
+          trimmed ? (
+            <p className="text-muted-foreground">
+              {t("github.orgApp.checking")}
+            </p>
+          ) : null
+        ) : lookup.error ? (
+          <p className="text-destructive">
+            {lookup.error.status === 404
+              ? t("github.orgApp.notFound", { login: trimmed })
+              : t("github.orgApp.lookupFailed")}
+          </p>
+        ) : lookup.data?.hasApp ? (
+          <p className="text-muted-foreground">
+            {t("github.orgApp.alreadyConnected", { login: lookup.data.login })}
+          </p>
+        ) : found ? (
+          <div className="flex items-center gap-3">
+            {found.avatarUrl ? (
+              <img
+                src={found.avatarUrl}
+                alt=""
+                className="size-10 rounded-full"
+              />
+            ) : null}
+            <div className="min-w-0">
+              <p className="truncate font-medium">
+                {found.name ?? found.login}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                @{found.login}
+              </p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setOpen(false)
+            setOrganization("")
+          }}
+        >
+          {t("common:cancel")}
+        </Button>
+        <Button type="submit" size="sm" disabled={!found} loading={isPending}>
           {isPending
             ? t("github.orgApp.redirecting")
             : t("github.orgApp.create")}
@@ -943,106 +1244,5 @@ function AddGitHubOrganizationApp({
         </p>
       )}
     </form>
-  )
-}
-
-interface GitHubAppConfiguredStateProps {
-  name: string
-  slug: string
-  ownerLogin: string | null
-  isPending: boolean
-  onReset: () => void
-  error: string | null
-}
-
-function GitHubAppConfiguredState({
-  name,
-  slug,
-  ownerLogin,
-  isPending,
-  onReset,
-  error,
-}: GitHubAppConfiguredStateProps): React.JSX.Element {
-  const { t } = useTranslation("settings")
-  const [resetDialogOpen, setResetDialogOpen] = React.useState(false)
-
-  const handleResetConfirm = (): void => {
-    setResetDialogOpen(false)
-    onReset()
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-4">
-        <div className="flex size-10 items-center justify-center rounded-full bg-muted">
-          <GitHubIcon className="size-5 text-muted-foreground" />
-        </div>
-        <div>
-          <p className="text-sm font-medium">
-            <span className="font-semibold">{name}</span>{" "}
-            <span className="text-xs text-muted-foreground">({slug})</span>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {ownerLogin
-              ? t("github.ownedBy", { owner: ownerLogin })
-              : t("github.registeredHint")}
-          </p>
-        </div>
-        <div className="ml-auto">
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-pos-100 dark:bg-[#192e03]/60 px-2.5 py-0.5 text-xs font-medium text-pos-700 dark:text-[#9ae600]">
-            <span
-              className="size-1.5 rounded-full bg-current"
-              aria-hidden="true"
-            />
-            {t("github.configured")}
-          </span>
-        </div>
-      </div>
-
-      {error && (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      )}
-
-      <div className="flex items-center gap-2 border-t border-border pt-2">
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={() => setResetDialogOpen(true)}
-          loading={isPending}
-        >
-          {isPending ? t("github.uninstalling") : t("github.resetApp")}
-        </Button>
-      </div>
-
-      <AlertDialog
-        open={resetDialogOpen}
-        onOpenChange={(open) => {
-          if (!isPending) setResetDialogOpen(open)
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("github.resetAppConfirm")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("github.resetAppHint", { name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isPending}>
-              {t("common:cancel")}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              loading={isPending}
-              onClick={handleResetConfirm}
-            >
-              {isPending ? t("github.uninstalling") : t("github.resetApp")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
   )
 }

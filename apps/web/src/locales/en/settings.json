@@ -140,15 +140,32 @@
       "generic": "GitHub installation did not complete correctly. Please retry.",
       "github_app_required": "Several GitHub Apps are configured. Choose the account to install on."
     },
-    "installOn": "Install on {{owner}}",
-    "ownedBy": "GitHub App owned by {{owner}}. It can only be installed on this account.",
     "orgApp": {
       "title": "Connect a GitHub organization",
-      "hint": "GitHub only lets a private App be installed on the account that owns it. Create one App per GitHub organization, then install it from the list below.",
+      "hint": "GitHub does not let Ploydok list your organizations. Type the login as it appears in the organization URL. You must be an owner of that organization.",
       "label": "GitHub organization",
       "placeholder": "my-organization",
       "create": "Create the App for this organization",
-      "redirecting": "Redirecting to GitHub..."
+      "redirecting": "Redirecting to GitHub...",
+      "open": "Connect a GitHub organization",
+      "invalid": "A GitHub login uses letters, digits and hyphens only.",
+      "checking": "Checking on GitHub...",
+      "notFound": "No GitHub organization named \"{{login}}\".",
+      "alreadyConnected": "@{{login}} is already connected.",
+      "lookupFailed": "GitHub could not be reached. Try again in a moment."
+    },
+    "accounts": {
+      "title": "GitHub accounts",
+      "hint": "Each GitHub account or organization has its own Ploydok App. Install it to give Ploydok access to its repositories.",
+      "notInstalled": "App created, not installed yet",
+      "selectedRepositories": "selected repositories",
+      "organization": "Organization",
+      "personal": "Personal account",
+      "install": "Install",
+      "manage": "Manage on GitHub",
+      "more": "More actions for @{{login}}",
+      "revokeInstallation": "Revoke installation",
+      "deleteApp": "Remove App from Ploydok"
     }
   },
   "gitlab": {
