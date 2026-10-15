@@ -1256,7 +1256,9 @@ export function createAppsRouter(db: Db): Hono {
               probeResults[key] = await ghProvider.fileExists(
                 body.installationId!,
                 body.repoFullName!,
-                key,
+                body.rootDir && body.rootDir !== "."
+                  ? `${body.rootDir}/${key}`
+                  : key,
                 body.branch!
               )
             } catch {
@@ -1272,7 +1274,9 @@ export function createAppsRouter(db: Db): Hono {
               manifests[key] = await ghProvider.readFile(
                 body.installationId!,
                 body.repoFullName!,
-                key,
+                body.rootDir && body.rootDir !== "."
+                  ? `${body.rootDir}/${key}`
+                  : key,
                 body.branch!
               )
             } catch {

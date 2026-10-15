@@ -30,6 +30,7 @@ import { getInstallationToken } from "../../github/installation-tokens"
 import { assertGitLabProjectSelection } from "../../gitlab/connection"
 import { cloneRepo } from "../git"
 import { detectBuildMethod } from "../detect"
+import { resolveRepositoryRoot } from "../repository-targets"
 import { detectDockerfilePort } from "../detect-port"
 import { buildImage } from "../buildkit"
 import { logBus } from "../log-bus"
@@ -1028,6 +1029,27 @@ export async function handleDeploy(
     }
     // Capture for finally block commit status hooks
     resolvedCommitShaFinal = resolvedCommitSha
+
+    const resolvedRoot = await resolveRepositoryRoot({
+      workspacePath,
+      rootDir: app.root_dir,
+      hasExplicitConfig:
+        Boolean(
+          app.dockerfile_path ||
+          app.nixpacks_config_path ||
+          app.install_command ||
+          app.build_command ||
+          app.start_command
+        ) || ![null, "auto", "nixpacks"].includes(app.build_method),
+    })
+    if (resolvedRoot !== app.root_dir) {
+      app.root_dir = resolvedRoot
+      await db
+        .update(apps)
+        .set({ root_dir: resolvedRoot, updated_at: new Date() })
+        .where(and(eq(apps.id, app.id), currentDeployLeaseCondition()))
+      onLog(`[deploy] detected application root ${resolvedRoot}`)
+    }
 
     // 2. Detect build method.
     const detectedOverride =

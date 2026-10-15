@@ -42,6 +42,7 @@ import { getSharedAgent, getSharedCaddy } from "../../debug/singletons"
 import { env } from "../../env"
 import { detectDockerfilePort } from "../detect-port"
 import { detectBuildMethod } from "../detect"
+import { resolveRepositoryRoot } from "../repository-targets"
 import { buildImage } from "../buildkit"
 import { cloneRepo, cleanupWorkspace } from "../git"
 import { workerLog } from "../logger"
@@ -613,6 +614,22 @@ export async function handlePreviewDeploy(
     workspacePath = cloneResult.workspacePath
 
     const resolvedHeadSha = await checkoutPreviewHead(workspacePath, headSha)
+    const resolvedRoot = await resolveRepositoryRoot({
+      workspacePath,
+      rootDir: app.root_dir,
+      hasExplicitConfig:
+        Boolean(
+          app.dockerfile_path ||
+          app.nixpacks_config_path ||
+          app.install_command ||
+          app.build_command ||
+          app.start_command
+        ) || ![null, "auto", "nixpacks"].includes(app.build_method),
+    })
+    if (resolvedRoot !== app.root_dir) {
+      app.root_dir = resolvedRoot
+    }
+
     const normalizedMethod =
       app.build_method === "docker" || app.build_method === "dockerfile"
         ? "docker"
@@ -628,6 +645,10 @@ export async function handlePreviewDeploy(
       ...(app.root_dir ? { rootDir: app.root_dir } : {}),
       ...(app.dockerfile_path ? { dockerfilePath: app.dockerfile_path } : {}),
     })
+
+    if (detected.method === "compose") {
+      throw new Error("Preview deployments do not support compose apps yet")
+    }
 
     const classification = await classifyWorkspaceStack({
       workspacePath,
@@ -651,11 +672,7 @@ export async function handlePreviewDeploy(
       )
       runtimePort = await detectDockerfilePort(dockerfilePath)
     }
-    if (
-      detected.method !== "static" &&
-      detected.method !== "compose" &&
-      runtimePort == null
-    ) {
+    if (detected.method !== "static" && runtimePort == null) {
       runtimePort = defaultRuntimePortForStack(detected.method, classification)
     }
     if (detected.method !== "static" && runtimePort == null) {

@@ -195,7 +195,13 @@
     "nixpacksCompose": "Compose detected — native support is unavailable. Select Nixpacks only if the repository also works without Compose.",
     "noProjectMatch": "No project matches “{{query}}”.",
     "noProjects": "No projects found.",
-    "loadProjectsFailed": "Failed to load projects: {{message}}"
+    "loadProjectsFailed": "Failed to load projects: {{message}}",
+    "repositoryTarget": "Application directory",
+    "selectRepositoryTarget": "Select an application",
+    "repositoryTargetHint": "Detected from repository files. Deploy each service separately, or select a directory containing your Compose configuration.",
+    "repositoryTargetRequired": "Several applications were found. Select a directory before continuing.",
+    "repositoryDetectionFailed": "Repository detection is unavailable. Enter the application directory manually (. for the repository root) and select a build method.",
+    "productionStartRequired": "Enter the production start command for this server adapter."
   },
   "status": {
     "running": "Running",

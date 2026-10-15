@@ -159,6 +159,42 @@ export class GitLabProvider implements GitProvider {
     return content
   }
 
+  async listFiles(
+    token: string,
+    fullName: string,
+    ref: string
+  ): Promise<string[]> {
+    const files: string[] = []
+    for (let page = 1; page <= 100; page++) {
+      const query = new URLSearchParams({
+        ref,
+        recursive: "true",
+        per_page: "100",
+        page: String(page),
+      })
+      const res = await fetch(
+        `${this.apiBase}/projects/${encodeURIComponent(fullName)}/repository/tree?${query}`,
+        { headers: this.headers(token) }
+      )
+      if (res.status !== 200)
+        throw new Error(`GitLab repository tree returned ${res.status}`)
+      const entries = (await res.json()) as {
+        path: string
+        type: string
+        mode?: string
+      }[]
+      files.push(
+        ...entries
+          .filter((entry) => entry.type === "blob" && entry.mode !== "120000")
+          .map((entry) => entry.path)
+      )
+      if (!res.headers.get("x-next-page")) return files
+    }
+    throw new Error(
+      "Repository tree is incomplete; select a root directory manually"
+    )
+  }
+
   /** Build a clone URL embedding the OAuth token (for `git clone`). */
   cloneUrlWithToken(
     fullName: string,

@@ -507,3 +507,49 @@ describe("classifyStack — suggestedEnvVars", () => {
     expect(r.suggestedEnvVars).toEqual({})
   })
 })
+
+describe("TanStack Start production adapter", () => {
+  const signals = probes(["package.json", "bun.lock", "vite.config.ts"])
+  const pkg = {
+    dependencies: { "@tanstack/react-start": "1", nitro: "3" },
+    scripts: { build: "vite build" },
+  }
+  const config =
+    'import { nitro } from "nitro/vite"; export default { plugins: [nitro()] }'
+
+  it("infers Nitro's server entry with the repository runtime", () => {
+    const manifests = {
+      "package.json": JSON.stringify(pkg),
+      "vite.config.ts": config,
+    }
+    expect(
+      classifyStackWithManifests(signals, manifests).suggestedStartCommand
+    ).toBe("bun .output/server/index.mjs")
+    expect(
+      classifyStackWithManifests({ ...signals, "bun.lock": false }, manifests)
+        .suggestedStartCommand
+    ).toBe("node .output/server/index.mjs")
+  })
+
+  it("preserves start scripts and leaves custom adapters explicit", () => {
+    const withStart = {
+      ...pkg,
+      scripts: { ...pkg.scripts, start: "custom-server" },
+    }
+    expect(
+      classifyStackWithManifests(signals, {
+        "package.json": JSON.stringify(withStart),
+        "vite.config.ts": config,
+      }).suggestedStartCommand
+    ).toBeUndefined()
+    const custom = classifyStackWithManifests(signals, {
+      "package.json": JSON.stringify(pkg),
+      "vite.config.ts": config.replace(
+        "nitro()",
+        'nitro({ preset: "cloudflare" })'
+      ),
+    })
+    expect(custom.suggestedStartCommand).toBeUndefined()
+    expect(custom.requiresStartCommand).toBe(true)
+  })
+})
