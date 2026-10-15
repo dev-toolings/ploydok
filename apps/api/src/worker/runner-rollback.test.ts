@@ -270,6 +270,7 @@ describe("rollbackApp routing gate", () => {
     expect(events.indexOf("route-check:old.example.com")).toBeGreaterThan(
       events.indexOf("health")
     )
+    expect(events).not.toContain("route-check:current.example.com")
     expect(upstreams).toEqual([
       { host: expect.stringContaining("-green"), port: 3000 },
     ])

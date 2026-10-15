@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, mock } from "bun:test"
 import { EventEmitter } from "node:events"
+import { apps } from "@ploydok/db"
 
 type DnsMode = "missing" | "valid"
 type TlsMode = "issued" | "failed"
@@ -52,6 +53,37 @@ mock.module("node:tls", () => ({ ...fakeTls, default: fakeTls }))
 
 function makeDb(updates: Array<Record<string, unknown>>) {
   return {
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updates.push(values)
+          return { where: async () => [] }
+        },
+      }
+    },
+  } as never
+}
+
+function makeDbWithAppSnapshot(
+  updates: Array<Record<string, unknown>>,
+  snapshot: Record<string, unknown>
+) {
+  return {
+    select(selection?: Record<string, unknown>) {
+      const selected = Object.keys(selection ?? {})
+      return {
+        from(table: unknown) {
+          const rows = table === apps && selected.includes("routing_status")
+            ? [snapshot]
+            : []
+          return {
+            where() {
+              return { limit: async () => rows }
+            },
+          }
+        },
+      }
+    },
     update() {
       return {
         set(values: Record<string, unknown>) {
@@ -228,5 +260,83 @@ describe("publishHealthyAppRoute", () => {
       routing_dns_status: "valid",
       routing_tls_status: "failed",
     })
+  })
+
+  it("switches an already served proxied custom host without a fresh TXT lookup", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    const updates: Array<Record<string, unknown>> = []
+    let routeCalls = 0
+
+    const result = await publishHealthyAppRoute({
+      db: makeDbWithAppSnapshot(updates, {
+        id: "app-1",
+        domain: "proxied.example.com",
+        domain_source: "custom",
+        routing_status: "ready",
+        routing_dns_status: "unknown",
+        routing_tls_status: "issued",
+      }),
+      appId: "app-1",
+      hostname: "proxied.example.com",
+      proxied: true,
+      inspectDns: async () => ({
+        status: "unknown",
+        records: [{ type: "A", value: "104.16.1.1" }],
+        expectedRecords: [],
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      inspectTls: async () => ({
+        status: "not_required",
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "ready",
+      routeApplied: true,
+      dnsStatus: "unknown",
+    })
+    expect(routeCalls).toBe(1)
+  })
+
+  it("does not apply a new proxied host without an ownership proof", async () => {
+    const { publishHealthyAppRoute } = await import("./routing")
+    let routeCalls = 0
+
+    const result = await publishHealthyAppRoute({
+      db: makeDb([]),
+      appId: "app-new",
+      hostname: "new-proxied.example.com",
+      proxied: true,
+      inspectDns: async () => ({
+        status: "unknown",
+        records: [{ type: "A", value: "104.16.1.1" }],
+        expectedRecords: [],
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      inspectTls: async () => ({
+        status: "not_required",
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      verifyOwnership: async () => false,
+      applyRoute: async () => {
+        routeCalls++
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: "action_required",
+      routeApplied: false,
+      dnsStatus: "unknown",
+    })
+    expect(result.error).toContain("DOMAIN_OWNERSHIP_REQUIRED")
+    expect(routeCalls).toBe(0)
   })
 })

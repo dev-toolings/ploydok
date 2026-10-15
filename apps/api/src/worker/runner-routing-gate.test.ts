@@ -2,10 +2,12 @@
 import { describe, expect, it, mock } from "bun:test"
 import { EventEmitter } from "node:events"
 
-let routeMode: "dns-soft" | "primary-throw" = "dns-soft"
+let routeMode: "dns-soft" | "ready" | "primary-throw" = "dns-soft"
 const caddyUpstreams: Array<{ host: string; port: number }> = []
 const stoppedContainers: string[] = []
 const removedContainers: string[] = []
+let currentContainerId = "old-blue"
+let activeCaddyUpstream: { host: string; port: number } | null = null
 
 mock.module("@ploydok/agent-proto", () => {
   class AgentClient {
@@ -85,11 +87,13 @@ mock.module("../caddy/client.js", () => ({
       _host: string,
       upstream: { host: string; port: number }
     ) {
-      caddyUpstreams.push(upstream)
+      const next = { ...upstream }
+      caddyUpstreams.push(next)
+      activeCaddyUpstream = next
     }
 
     async getUpstream() {
-      return null
+      return activeCaddyUpstream
     }
 
     async removeUpstream() {}
@@ -100,17 +104,28 @@ mock.module("../domains/routing.js", () => ({
   publishHealthyAppRoute: async (input: {
     applyRoute: () => Promise<void>
   }) => {
+    if (routeMode === "dns-soft") {
+      return {
+        status: "action_required",
+        hostname: "custom.example.com",
+        routeApplied: false,
+        dnsStatus: "missing",
+        tlsStatus: "pending",
+        error: "DOMAIN_DNS_REQUIRED",
+      }
+    }
     if (routeMode === "primary-throw") {
       await input.applyRoute()
       throw new Error("primary route failed")
     }
+    await input.applyRoute()
     return {
-      status: "action_required",
+      status: "ready",
       hostname: "custom.example.com",
-      routeApplied: false,
-      dnsStatus: "missing",
-      tlsStatus: "pending",
-      error: "DOMAIN_DNS_REQUIRED",
+      routeApplied: true,
+      dnsStatus: "valid",
+      tlsStatus: "not_required",
+      error: null,
     }
   },
   syncAppDomainAliases: async () => ({ updated: 0, errors: [] }),
@@ -160,7 +175,9 @@ mock.module("./app-deploy-lock.js", () => ({
 function makeDb(updates: Array<Record<string, unknown>>) {
   const app = {
     id: "app-1",
-    container_id: "old-blue",
+    get container_id() {
+      return currentContainerId
+    },
     slug: "demo",
     domain: "custom.example.com",
     restart_policy: "unless-stopped",
@@ -211,7 +228,14 @@ function makeDb(updates: Array<Record<string, unknown>>) {
           updates.push(values)
           return {
             where() {
-              return { returning: async () => [{ id: "app-1" }] }
+              return {
+                returning: async () => {
+                  if (typeof values.container_id === "string") {
+                    currentContainerId = values.container_id
+                  }
+                  return [{ id: "app-1" }]
+                },
+              }
             },
           }
         },
@@ -223,6 +247,8 @@ function makeDb(updates: Array<Record<string, unknown>>) {
 describe("runBlueGreen routing gate", () => {
   it("retains the old container when DNS soft-fails before the primary route is applied", async () => {
     routeMode = "dns-soft"
+    currentContainerId = "old-blue"
+    activeCaddyUpstream = null
     caddyUpstreams.length = 0
     stoppedContainers.length = 0
     removedContainers.length = 0
@@ -246,6 +272,8 @@ describe("runBlueGreen routing gate", () => {
 
   it("compensates the new container and restores Caddy after a primary route throw", async () => {
     routeMode = "primary-throw"
+    currentContainerId = "old-blue"
+    activeCaddyUpstream = { host: "old-blue", port: 3000 }
     caddyUpstreams.length = 0
     stoppedContainers.length = 0
     removedContainers.length = 0
@@ -268,5 +296,52 @@ describe("runBlueGreen routing gate", () => {
     expect(stoppedContainers).toContain("new-container")
     expect(removedContainers).toContain("new-container")
     expect(updates).toEqual([])
+  })
+
+  it("keeps Caddy's active old slot safe across a later deploy after DNS gating", async () => {
+    const originalSetTimeout = globalThis.setTimeout
+    routeMode = "dns-soft"
+    currentContainerId = "ploydok-app-app-1-blue"
+    activeCaddyUpstream = {
+      host: "ploydok-app-demo-app-1-blue",
+      port: 3000,
+    }
+    caddyUpstreams.length = 0
+    stoppedContainers.length = 0
+    removedContainers.length = 0
+    const updates: Array<Record<string, unknown>> = []
+    const { runBlueGreen } = await import("./runner.js")
+
+    globalThis.setTimeout = ((callback: unknown, ...args: Array<unknown>) => {
+      if (typeof callback === "function") callback(...args)
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    }) as typeof setTimeout
+
+    try {
+      await runBlueGreen({
+        appId: "app-1",
+        imageRef: "registry.example/app:latest",
+        env: {},
+        db: makeDb(updates) as never,
+      })
+      routeMode = "ready"
+      await runBlueGreen({
+        appId: "app-1",
+        imageRef: "registry.example/app:next",
+        env: {},
+        db: makeDb(updates) as never,
+      })
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+
+    expect(caddyUpstreams).toEqual([
+      { host: "ploydok-app-demo-app-1-green", port: 3000 },
+    ])
+    expect(stoppedContainers).toEqual([
+      "ploydok-app-demo-app-1-blue",
+      "ploydok-app-app-1-blue",
+    ])
+    expect(removedContainers).toEqual(stoppedContainers)
   })
 })

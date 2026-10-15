@@ -53,6 +53,16 @@ describe("canRestoreAppRoute", () => {
       })
     ).toBe(false)
   })
+
+  test("does not resurrect a proxied custom host blocked before publication", () => {
+    expect(
+      canRestoreAppRoute({
+        domain_source: "custom",
+        routing_status: "action_required",
+        routing_dns_status: "unknown",
+      })
+    ).toBe(false)
+  })
 })
 
 // Le chemin publie dans la config Caddy est celui vu par le container, pas
@@ -134,6 +144,7 @@ function app(
 ): AppForReconcile {
   return {
     id: overrides.id,
+    slug: overrides.slug ?? "demo",
     domain:
       "domain" in overrides ? overrides.domain! : `${overrides.id}.test.local`,
     container_id:
@@ -409,6 +420,111 @@ describe("reconcileCaddyRoutes", () => {
       failed: 0,
     })
     expect(calls.upserts).toHaveLength(0)
+  })
+
+  test("cleans a retained owned slot only after the new route is applied", async () => {
+    const routeCalls: Array<{ host: string; upstream: { host: string; port: number } }> = []
+    const stopped: string[] = []
+    const removed: string[] = []
+    const caddy = {
+      async ensureBootstrap() {},
+      async getUpstream() {
+        return { host: "ploydok-app-demo-a1-blue", port: 3000 }
+      },
+      async setUpstream(
+        _appId: string,
+        host: string,
+        upstream: { host: string; port: number }
+      ) {
+        routeCalls.push({ host, upstream })
+      },
+      async upsertStaticRoute() {},
+    } as unknown as CaddyClient
+    const agent = {
+      async inspectContainerHealth() {
+        return {
+          status: 1,
+          running: true,
+          state: "running",
+          containerMissing: false,
+        }
+      },
+      async listContainers() {
+        return {
+          containers: [
+            {
+              id: "container-blue",
+              name: "ploydok-app-demo-a1-blue",
+              appId: "a1",
+            },
+          ],
+        }
+      },
+      async containerStop(request: { containerId: string }) {
+        stopped.push(request.containerId)
+      },
+      async containerRemove(request: { containerId: string }) {
+        removed.push(request.containerId)
+      },
+    }
+    const db = {
+      select() {
+        const query = {
+          from() {
+            return query
+          },
+          where() {
+            return {
+              limit: async () => [],
+              orderBy() {
+                return { limit: async () => [] }
+              },
+            }
+          },
+        }
+        return query
+      },
+      update() {
+        return {
+          set() {
+            return { where: async () => [] }
+          },
+        }
+      },
+    }
+
+    const result = await reconcileCaddyRoutes({
+      caddy,
+      logger: silentLogger,
+      db: db as never,
+      agent: agent as never,
+      apps: [
+        app({
+          id: "a1",
+          domain: "a1.demo.localhost",
+          container_id: "ploydok-app-demo-a1-green",
+          slug: "demo",
+          domain_source: "generated",
+          routing_status: "ready",
+          routing_dns_status: "unknown",
+        }),
+      ],
+    })
+
+    expect(result).toEqual({
+      bootstrapped: true,
+      synced: 1,
+      skipped: 0,
+      failed: 0,
+    })
+    expect(routeCalls).toEqual([
+      {
+        host: "a1.demo.localhost",
+        upstream: { host: "ploydok-app-demo-a1-green", port: 3000 },
+      },
+    ])
+    expect(stopped).toEqual(["container-blue"])
+    expect(removed).toEqual(["container-blue"])
   })
 })
 
