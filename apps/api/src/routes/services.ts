@@ -135,6 +135,12 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
     } catch (err) {
       const code = (err as { code?: string }).code
       if (code === "VALIDATION_ERROR") return c.json({ error: { code, message: (err as Error).message } }, 400)
+      if (code === "DOMAIN_CONFLICT") {
+        return c.json(
+          { error: { code: "DOMAIN_CONFLICT", message: "Hostname is already in use" } },
+          409
+        )
+      }
       if (code === "NOT_FOUND") {
         return c.json(
           { error: { code: "NOT_FOUND", message: "Project not found" } },

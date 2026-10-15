@@ -11,6 +11,7 @@ import {
   memberships,
   passkeys,
   apps,
+  services,
   builds,
   secrets,
   app_delete_jobs,
@@ -85,6 +86,12 @@ describe("deriveCurrentBuildMetadata", () => {
 })
 
 describe("default app domains", () => {
+  it("keeps truncated id tokens valid when a separator lands at the end", () => {
+    expect(buildDefaultAppDomain({
+      slug: "fixture", appId: "ABCDEFG_more", publicHost: "localhost",
+    })).toBe("fixture-abcdefga.demo.localhost")
+  })
+
   it("uses explicit domain base when configured", () => {
     expect(
       deriveDefaultAppDomainBase({
@@ -297,7 +304,7 @@ async function createTestApp(db: TestDb, opts: CreateAppOpts) {
     container_id: null,
     runtime_mode: opts.runtimeMode ?? "swarm",
     restart_policy: "unless-stopped",
-    domain: `${slug}.demo.localhost`,
+    domain: `${slug}-${nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "a")}.demo.localhost`,
     build_method: "auto",
     healthcheck_path: "/",
     healthcheck_port: null,
@@ -615,6 +622,33 @@ describe.skipIf(skip)("POST /apps", () => {
     })
   })
 
+  it("rejects another tenant's app and service hostname at preview and creation", async () => {
+    const other = await createTestUser(db)
+    const otherProject = await createTestProject(db, other.id)
+    const client = buildTestApp(db, fakeUser(userId, "preview-user@test.invalid"))
+    for (const kind of ["app", "service"] as const) {
+      const token = nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "a")
+      const domain = `owned-${kind}-${token}.example.test`
+      const values = { id: nanoid(), project_id: otherProject.id, name: "Owned", slug: token, domain }
+      if (kind === "app") await db.insert(apps).values(values)
+      else await db.insert(services).values({ ...values, template_id: "fixture", compose_raw: "services: {}" })
+
+      const preview = await client.request(`/apps/domain-preview?domain=${domain.toUpperCase()}`)
+      expect(preview.status).toBe(200)
+      const result = await preview.json() as { available: boolean; collisions: Array<Record<string, unknown>> }
+      expect(result.available).toBe(false)
+      expect(result.collisions).toEqual([{ resource: kind }])
+
+      const create = await client.request("/apps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, name: "Candidate", gitProvider: "image", imageRef: "nginx:stable", domain: domain.toUpperCase() }),
+      })
+      expect(create.status).toBe(409)
+      expect(await create.json()).toMatchObject({ error: { code: "DOMAIN_CONFLICT" } })
+    }
+  }, 15_000)
+
   it("creates an app with valid body → 201 + app in response", async () => {
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await app.request("/apps", {
@@ -644,8 +678,14 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(body.app.name).toBe("My App")
     expect(body.app.slug).toBe("my-app")
     expect(body.app.status).toBe("pending")
+    const domainBase = deriveDefaultAppDomainBase({
+      explicitBase: Bun.env["PLOYDOK_DOMAIN_BASE"],
+      publicHost: Bun.env["PLOYDOK_PUBLIC_HOST"],
+    })
     expect(body.app.domain).toMatch(
-      /^my-app-[a-z0-9-]{8}\.demo\.localhost$/
+      new RegExp(
+        `^my-app-[a-z0-9-]{8}\\.${domainBase.replace(/\./g, "\\.")}$`
+      )
     )
     expect(body.app.restartPolicy).toBe("unless-stopped")
     expect(body.app.id).toBeString()
@@ -1534,7 +1574,7 @@ describe.skipIf(skip)("DELETE /apps/:id", () => {
 async function createTestBuild(
   db: TestDb,
   appId: string,
-  status: "pending" | "running" | "succeeded" | "failed" | "cancelled",
+  status: "pending" | "running" | "succeeded" | "succeeded_with_warning" | "failed" | "cancelled",
   opts: {
     imageTag?: string
     commitSha?: string
@@ -1801,13 +1841,13 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
     projectId = project.id
   })
 
-  it("rollback with explicit succeeded buildId → 200", async () => {
+  it.each(["succeeded", "succeeded_with_warning"] as const)("rollback with explicit %s buildId returns 200", async (status) => {
     const { id: appId } = await createTestApp(db, {
       userId,
       projectId,
       runtimeMode: "docker",
     })
-    const { id: buildId } = await createTestBuild(db, appId, "succeeded")
+    const { id: buildId } = await createTestBuild(db, appId, status)
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await honoApp.request(`/apps/${appId}/rollback`, {

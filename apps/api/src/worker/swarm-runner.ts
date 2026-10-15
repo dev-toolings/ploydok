@@ -3,7 +3,7 @@
 // Swarm runtime runner for app-level load balancing.
 
 import * as grpc from "@grpc/grpc-js"
-import { and, eq } from "drizzle-orm"
+import { and, desc, eq, inArray } from "drizzle-orm"
 import { AgentClient } from "@ploydok/agent-proto"
 import type {
   ListServiceTasksResponse,
@@ -11,11 +11,14 @@ import type {
   ServiceRollbackResponse,
   ServiceUpdateImageResponse,
   SwarmEnsureSingleNodeResponse,
+  SwarmTaskSnapshot,
 } from "@ploydok/agent-proto"
 import { apps, builds, projects } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { createAgentClient } from "../agent/client.js"
 import { CaddyClient } from "../caddy/client.js"
+import { publishHealthyAppRoute, syncAppDomainAliases } from "../domains/routing.js"
+import { assertDomainAvailable, withDomainLock } from "../domains/availability.js"
 import { ensureCaddyOnProjectNetwork } from "../caddy/attachment.js"
 import { getSharedAgent } from "../debug/singletons.js"
 import { listRuntimeAppVolumeMounts } from "../services/app-volumes.js"
@@ -70,7 +73,7 @@ function runtimeServiceName(app: { id: string; slug: string }): string {
   return `ploydok-app-${slug || "app"}-${token}`
 }
 
-function healthcheckShell(port: number, path: string): string {
+export function appHttpHealthcheckShell(port: number, path: string): string {
   return (
     `for host in 127.0.0.1 "$(hostname 2>/dev/null)"; do ` +
     `[ -z "$host" ] && continue; ` +
@@ -104,9 +107,12 @@ function taskIsRunning(status: string): boolean {
   return normalized.includes("up ") || normalized.includes("running")
 }
 
-function taskIsHealthy(status: string): boolean {
-  const normalized = status.toLowerCase()
-  return taskIsRunning(status) && !normalized.includes("unhealthy")
+export function taskIsHealthy(task: SwarmTaskSnapshot): boolean {
+  if (task.healthStatus !== undefined) {
+    return task.running === true && task.healthStatus === "healthy"
+  }
+  // Older agents expose health only in the Docker status text.
+  return taskIsRunning(task.status) && /\(healthy\)/i.test(task.status)
 }
 
 async function waitForServiceHealthy(opts: {
@@ -119,11 +125,12 @@ async function waitForServiceHealthy(opts: {
   const timeoutAt = Date.now() + (opts.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS)
   let last: ListServiceTasksResponse | null = null
   while (Date.now() < timeoutAt) {
+    await fenceDeploySideEffect()
     last = await grpcUnary<ListServiceTasksResponse>(
       opts.agent.listServiceTasks.bind(opts.agent),
       { serviceName: opts.serviceName }
     )
-    const healthy = last.tasks.filter((task) => taskIsHealthy(task.status))
+    const healthy = last.tasks.filter(taskIsHealthy)
     if (healthy.length >= opts.replicas) return last
     logBus.publish(
       opts.channel,
@@ -269,7 +276,7 @@ export async function runSwarmDeploy(
       command: [],
       user: "",
       healthcheck: {
-        test: ["CMD-SHELL", healthcheckShell(hcPort, hcPath)],
+        test: ["CMD-SHELL", appHttpHealthcheckShell(hcPort, hcPath)],
         intervalSeconds: app.healthcheck_interval_s ?? 5,
         timeoutSeconds: app.healthcheck_timeout_s ?? 3,
         retries: app.healthcheck_retries ?? 6,
@@ -318,12 +325,21 @@ export async function runSwarmDeploy(
 
     if (app.domain) {
       await fenceDeploySideEffect()
-      await caddy.setUpstream(
-        appId,
-        app.domain,
-        { host: serviceName, port: runtimePort },
-        { cdn: app }
-      )
+      await publishHealthyAppRoute({
+        db, appId, hostname: app.domain,
+        beforePersist: fenceDeploySideEffect,
+        applyRoute: async () => {
+          await fenceDeploySideEffect()
+          await caddy.setUpstream(appId, app.domain!, {
+            host: serviceName, port: runtimePort,
+          }, { cdn: app })
+          const aliases = await syncAppDomainAliases({
+            db, appId, caddy, upstream: { host: serviceName, port: runtimePort },
+            beforeSideEffect: fenceDeploySideEffect,
+          })
+          if (aliases.errors.length) throw new Error("Alias routing requires attention")
+        },
+      })
       await fenceDeploySideEffect()
       await purgeCloudflareForApp(db, appId)
     }
@@ -461,6 +477,8 @@ export async function rollbackSwarmApp(
   const appRows = await db
     .select({
       service: apps.swarm_service_name,
+      domain: apps.domain,
+      runtime_port: apps.runtime_port,
       replicas: apps.replicas,
       update_parallelism: apps.update_parallelism,
       update_delay_s: apps.update_delay_s,
@@ -474,38 +492,52 @@ export async function rollbackSwarmApp(
   const app = appRows[0]
   if (!app?.service) throw new Error(`App ${appId} has no Swarm service`)
 
+  const targets = await db.select({
+    id: builds.id, image_tag: builds.image_tag, routing_domain: builds.routing_domain,
+  }).from(builds).where(and(
+    eq(builds.app_id, appId),
+    ...(targetBuildId ? [eq(builds.id, targetBuildId)] : [inArray(builds.status, ["succeeded", "succeeded_with_warning"])]),
+  )).orderBy(desc(builds.created_at)).limit(targetBuildId ? 1 : 2)
+  const target = targets[targetBuildId ? 0 : 1]
+  if (!target) throw new Error(`Rollback target not found for app ${appId}`)
+  const domain = target.routing_domain ?? app.domain
   const agent = createAgentClient()
   try {
-    if (targetBuildId) {
-      const rows = await db
-        .select({ image_tag: builds.image_tag })
-        .from(builds)
-        .where(and(eq(builds.id, targetBuildId), eq(builds.app_id, appId)))
-        .limit(1)
-      const image = rows[0]?.image_tag
-      if (!image)
-        throw new Error(`Rollback build ${targetBuildId} has no image tag`)
-      await grpcUnary(agent.serviceUpdateImage.bind(agent), {
-        serviceName: app.service,
-        image,
-        replicas: app.replicas ?? 1,
-        updateParallelism: app.update_parallelism ?? 1,
-        updateDelaySeconds: app.update_delay_s ?? 10,
-        updateMonitorSeconds: app.update_monitor_s ?? 30,
-        updateOrder: app.update_order ?? "start-first",
-        failureAction: app.failure_action ?? "rollback",
-      })
-    } else {
-      await grpcUnary(agent.serviceRollback.bind(agent), {
-        serviceName: app.service,
-      })
-    }
+    if (!target.image_tag) throw new Error(`Rollback build ${target.id} has no image tag`)
+    await grpcUnary(agent.serviceUpdateImage.bind(agent), {
+      serviceName: app.service,
+      image: target.image_tag,
+      replicas: app.replicas ?? 1,
+      updateParallelism: app.update_parallelism ?? 1,
+      updateDelaySeconds: app.update_delay_s ?? 10,
+      updateMonitorSeconds: app.update_monitor_s ?? 30,
+      updateOrder: app.update_order ?? "start-first",
+      failureAction: app.failure_action ?? "rollback",
+    })
     await waitForServiceHealthy({
       agent,
       serviceName: app.service,
       replicas: app.replicas ?? 1,
       channel: `runtime:${appId}`,
     })
+    if (domain) {
+      await withDomainLock(db, domain, async (tx, hostname) => {
+        await assertDomainAvailable(tx, hostname, { excludeAppId: appId })
+        await tx.update(apps).set({ domain: hostname }).where(eq(apps.id, appId))
+      })
+      const caddy = new CaddyClient()
+      await publishHealthyAppRoute({
+        db, appId, hostname: domain,
+        applyRoute: async () => {
+          const upstream = { host: app.service!, port: app.runtime_port ?? 3000 }
+          await caddy.setUpstream(appId, domain, upstream)
+          const aliases = await syncAppDomainAliases({ db, appId, caddy, upstream })
+          if (aliases.errors.length) throw new Error("Alias routing requires attention")
+        },
+      })
+    }
+    await db.update(apps).set({ domain, status: "running", updated_at: new Date() })
+      .where(eq(apps.id, appId))
   } finally {
     agent.close()
   }

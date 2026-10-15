@@ -260,6 +260,28 @@ series is absent for 5 minutes.
 3. Cross-check `/health/ready`; resolve the dependency and require the metric to
    return to zero.
 
+## Application domain readiness
+
+The application creation wizard checks the selected generated or custom hostname
+against application, alias and service ownership before continuing. Creation
+checks ownership again under a database lock. A successful preview is not a
+reservation, and missing DNS does not prevent creating the application.
+
+Use the records displayed by the wizard to point the hostname at the instance.
+DNS readiness is based on a real lookup. TLS is reported as issued only after
+a verified certificate handshake; HTTP instances report TLS as not required.
+The final URL follows the instance public scheme and port.
+
+Workers apply routing only after the new runtime passes its health gate. DNS,
+certificate or route provisioning problems leave the healthy application
+running with a separate `action_required` routing state. Check the domain from
+the application banner after fixing DNS or certificate provisioning.
+
+Successful builds retain their primary hostname for rollback. A restored
+container or service must become healthy before routing switches to it. Legacy
+builds without a hostname snapshot retain the application's current hostname.
+Existing installed application domains are not rewritten by the migration.
+
 ## Monitoring upgrades
 
 The signed installer is the migration mechanism for runtime descriptors,

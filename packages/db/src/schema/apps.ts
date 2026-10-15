@@ -134,6 +134,23 @@ export const apps = pgTable("apps", {
     .notNull()
     .default("unless-stopped"),
   domain: text("domain"),
+  domain_source: text("domain_source", {
+    enum: ["generated", "custom"],
+  })
+    .notNull()
+    .default("generated"),
+  routing_status: text("routing_status", {
+    enum: ["pending", "ready", "action_required"],
+  })
+    .notNull()
+    .default("pending"),
+  routing_error: text("routing_error"),
+  routing_dns_status: text("routing_dns_status", {
+    enum: ["valid", "missing", "mismatch", "error"],
+  }),
+  routing_tls_status: text("routing_tls_status", {
+    enum: ["issued", "pending", "failed", "not_required"],
+  }),
   // Registry GC override (null → fall back to global default of 3).
   keep_per_repo: integer("keep_per_repo"),
   // Healthcheck (intervals in seconds to match migration)

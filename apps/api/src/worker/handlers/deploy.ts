@@ -39,17 +39,20 @@ import { diskGuard, gcKeepLast, tagManifest } from "../registry"
 import { workerLog } from "../logger"
 import { eventBus } from "../event-bus"
 import { runBlueGreen } from "../runner"
-import { runSwarmDeploy } from "../swarm-runner"
+import { runSwarmDeploy, appHttpHealthcheckShell } from "../swarm-runner"
 import {
   deployPlannedComposeStack,
   planComposeSwarmDeploy,
   readComposeFileFromWorkspace,
   swarmAgentFromGrpc,
+  waitForSwarmServiceCondition,
+  removeComposeSwarmServices,
 } from "../compose-swarm"
 import { createAgentClient } from "../../agent/client.js"
 import { ensureCaddyOnProjectNetwork } from "../../caddy/attachment.js"
 import { ensureProjectSwarmNetwork } from "../../services/projects.js"
 import { CaddyClient } from "../../caddy/client.js"
+import { publishHealthyAppRoute, syncAppDomainAliases } from "../../domains/routing.js"
 import {
   dispatchStaticDeploy,
   gcOldShas,
@@ -86,6 +89,7 @@ import {
   DeployCancelledError,
   DeployLeaseLostError,
   fenceDeploySideEffect,
+  runOwnedDeployReconciliation,
 } from "../app-deploy-lock"
 
 export function deploymentOutcomeForError(
@@ -1288,18 +1292,51 @@ export async function handleDeploy(
           "ploydok.owner_id": app.owner_id,
         },
       })
-      const swarm = swarmAgentFromGrpc(createAgentClient())
+      const entrypoint = plan.services.find((service) => service.name === plan.entrypoint?.name)
+      if (entrypoint && !entrypoint.healthcheck) {
+        entrypoint.healthcheck = {
+          test: ["CMD-SHELL", appHttpHealthcheckShell(plan.entrypoint!.port, "/")],
+          intervalSeconds: 5, timeoutSeconds: 5, retries: 6, startPeriodSeconds: 30,
+        }
+      }
+      const swarmClient = createAgentClient()
+      const swarm = swarmAgentFromGrpc(swarmClient)
       await fenceDeploySideEffect()
       const names = await deployPlannedComposeStack(swarm, plan, {
         onPoll: fenceDeploySideEffect,
+      }).catch((error) => {
+        swarmClient.close()
+        throw error
       })
+      try {
+        if (entrypoint) await waitForSwarmServiceCondition(swarm, {
+          serviceName: entrypoint.name, condition: "service_healthy",
+          replicas: entrypoint.replicas, restartPolicy: entrypoint.restartPolicy,
+          onPoll: fenceDeploySideEffect,
+        })
+      } catch (error) {
+        await runOwnedDeployReconciliation(() => removeComposeSwarmServices(swarm, names))
+        throw error
+      } finally {
+        swarmClient.close()
+      }
       if (app.domain && plan.entrypoint) {
         await fenceDeploySideEffect()
-        await new CaddyClient().setUpstream(
-          app.id,
-          app.domain,
-          { host: plan.entrypoint.name, port: plan.entrypoint.port }
-        )
+        await publishHealthyAppRoute({
+          db, appId: app.id, hostname: app.domain,
+          beforePersist: fenceDeploySideEffect,
+          applyRoute: async () => {
+            await fenceDeploySideEffect()
+            const caddy = new CaddyClient()
+            const upstream = { host: plan.entrypoint!.name, port: plan.entrypoint!.port }
+            await caddy.setUpstream(app.id, app.domain!, upstream)
+            const aliases = await syncAppDomainAliases({
+              db, appId: app.id, caddy, upstream,
+              beforeSideEffect: fenceDeploySideEffect,
+            })
+            if (aliases.errors.length) throw new Error("Alias routing requires attention")
+          },
+        })
         onLog(
           `[deploy] Caddy upstream ${plan.entrypoint.name}:${plan.entrypoint.port}`
         )
@@ -1354,12 +1391,25 @@ export async function handleDeploy(
 
       if (app.domain) {
         await fenceDeploySideEffect()
-        await getSharedCaddy().upsertStaticRoute({
-          appId: app.id,
-          host: app.domain,
-          root: caddyStaticRootForApp(app.id),
-          spaFallback: app.static_spa_fallback ?? true,
-          cdn: app,
+        await publishHealthyAppRoute({
+          db, appId: app.id, hostname: app.domain,
+          beforePersist: fenceDeploySideEffect,
+          applyRoute: async () => {
+            await fenceDeploySideEffect()
+            await getSharedCaddy().upsertStaticRoute({
+              appId: app.id,
+              host: app.domain!,
+              root: caddyStaticRootForApp(app.id),
+              spaFallback: app.static_spa_fallback ?? true,
+              cdn: app,
+            })
+            const aliases = await syncAppDomainAliases({
+              db, appId: app.id, caddy: getSharedCaddy(),
+              static: { root: caddyStaticRootForApp(app.id), spaFallback: app.static_spa_fallback ?? true },
+              beforeSideEffect: fenceDeploySideEffect,
+            })
+            if (aliases.errors.length) throw new Error("Alias routing requires attention")
+          },
         })
         await fenceDeploySideEffect()
         await purgeCloudflareForApp(db, app.id)
@@ -1919,6 +1969,9 @@ export async function handleDeploy(
             .update(builds)
             .set({
               status: finalStatus,
+              ...((finalStatus === "succeeded" || finalStatus === "succeeded_with_warning") && {
+                routing_domain: app.domain,
+              }),
               finished_at: finalPatch.finishedAt,
               log_path: logPath,
               ...(finalPatch.errorMessage !== undefined && {

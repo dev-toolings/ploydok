@@ -17,7 +17,7 @@
 //   restartApp  — stopApp + runBlueGreen from the last succeeded build image.
 
 import * as fs from "node:fs"
-import { and, desc, eq } from "drizzle-orm"
+import { and, desc, eq, inArray } from "drizzle-orm"
 import * as grpc from "@grpc/grpc-js"
 import { AgentClient } from "@ploydok/agent-proto"
 import type {
@@ -33,6 +33,8 @@ import { ContainerHealthStatus } from "@ploydok/agent-proto"
 import { apps, builds, projects } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { CaddyClient } from "../caddy/client.js"
+import { publishHealthyAppRoute, syncAppDomainAliases } from "../domains/routing.js"
+import { assertDomainAvailable, withDomainLock } from "../domains/availability.js"
 import { logBus } from "./log-bus.js"
 import { eventBus } from "./event-bus.js"
 import { workerLog } from "./logger.js"
@@ -329,7 +331,7 @@ async function getCurrentColor(db: Db, appId: string): Promise<ContainerColor> {
   const buildRows = await db
     .select({ container_id: builds.container_id })
     .from(builds)
-    .where(and(eq(builds.app_id, appId), eq(builds.status, "succeeded")))
+    .where(and(eq(builds.app_id, appId), inArray(builds.status, ["succeeded", "succeeded_with_warning"])))
     .orderBy(desc(builds.created_at))
     .limit(1)
 
@@ -910,16 +912,23 @@ export async function runBlueGreen(
 
     // 4. Switch Caddy upstream.
     await fenceDeploySideEffect()
-    await caddyClient.setUpstream(
-      appId,
-      domain,
-      {
-        host: newName,
-        port: runtimePort,
+    await publishHealthyAppRoute({
+      db, appId, hostname: domain,
+      beforePersist: fenceDeploySideEffect,
+      applyRoute: async () => {
+        await fenceDeploySideEffect()
+        await caddyClient.setUpstream(appId, domain, {
+          host: newName, port: runtimePort,
+        }, { cdn: appRow })
+        caddySwitched = true
+        const aliases = await syncAppDomainAliases({
+          db, appId, caddy: caddyClient,
+          upstream: { host: newName, port: runtimePort },
+          beforeSideEffect: fenceDeploySideEffect,
+        })
+        if (aliases.errors.length) throw new Error("Alias routing requires attention")
       },
-      { cdn: appRow }
-    )
-    caddySwitched = true
+    })
     await fenceDeploySideEffect()
     await purgeCloudflareForApp(db, appId)
     logBus.publish(channel, `[runner] Caddy upstream updated`)
@@ -983,6 +992,12 @@ export async function runBlueGreen(
           : caddyClient.removeUpstream(appId)
       await runOwnedDeployReconciliation(async () => {
         await restoreCaddy
+        if (appRow.container_id) {
+          await syncAppDomainAliases({
+            db, appId, caddy: caddyClient,
+            upstream: { host: appRow.container_id, port: runtimePort },
+          })
+        }
         await purgeCloudflareForApp(db, appId)
       }).catch((cleanupError) =>
         workerLog.error(
@@ -1069,6 +1084,7 @@ export async function rollbackApp(
     id: string
     image_tag: string | null
     container_id: string | null
+    routing_domain: string | null
   }
 
   if (targetBuildId) {
@@ -1078,6 +1094,7 @@ export async function rollbackApp(
         id: builds.id,
         image_tag: builds.image_tag,
         container_id: builds.container_id,
+        routing_domain: builds.routing_domain,
       })
       .from(builds)
       .where(and(eq(builds.id, targetBuildId), eq(builds.app_id, appId)))
@@ -1096,9 +1113,10 @@ export async function rollbackApp(
         id: builds.id,
         image_tag: builds.image_tag,
         container_id: builds.container_id,
+        routing_domain: builds.routing_domain,
       })
       .from(builds)
-      .where(and(eq(builds.app_id, appId), eq(builds.status, "succeeded")))
+      .where(and(eq(builds.app_id, appId), inArray(builds.status, ["succeeded", "succeeded_with_warning"])))
       .orderBy(desc(builds.created_at))
       .limit(2)
 
@@ -1174,7 +1192,7 @@ export async function rollbackApp(
   const hcTimeoutS = appRow.healthcheck_timeout_s ?? 3
   const hcRetries = appRow.healthcheck_retries ?? 6
   const hcStartPeriodS = appRow.healthcheck_start_period_s ?? 30
-  const domain = appRow.domain ?? `${appId}.ploydok.local`
+  const domain = previousBuild.routing_domain ?? appRow.domain ?? `${appId}.ploydok.local`
   const caddyClient = new CaddyClient(opts?.caddyBaseUrl)
 
   const containerEnv = containerEnvWithPort(
@@ -1256,16 +1274,38 @@ export async function rollbackApp(
     })
     logBus.publish(channel, `[runner] rollback container started`)
 
-    // Switch Caddy immediately (no grace — rollback must be fast).
-    await caddyClient.setUpstream(
+    // A restored runtime must pass the same health gate before receiving traffic.
+    const healthy = await pollHealthcheck({
+      agent,
+      containerId: createResp.containerId,
+      intervalMs: hcIntervalS * 1_000,
+      retries: hcRetries,
+      startPeriodMs: hcStartPeriodS * 1_000,
       appId,
-      domain,
-      {
-        host: rollbackName,
-        port: runtimePort,
+      color: rollbackColor,
+    })
+    if (!healthy) {
+      await stopContainer(agent, createResp.containerId)
+      throw new DeployFailedError(appId, "Rollback runtime did not become healthy")
+    }
+
+    await withDomainLock(db, domain, async (tx, hostname) => {
+      await assertDomainAvailable(tx, hostname, { excludeAppId: appId })
+      await tx.update(apps).set({ domain: hostname }).where(eq(apps.id, appId))
+    })
+    await publishHealthyAppRoute({
+      db, appId, hostname: domain,
+      applyRoute: async () => {
+        await caddyClient.setUpstream(appId, domain, {
+          host: rollbackName, port: runtimePort,
+        }, { cdn: appRow })
+        const aliases = await syncAppDomainAliases({
+          db, appId, caddy: caddyClient,
+          upstream: { host: rollbackName, port: runtimePort },
+        })
+        if (aliases.errors.length) throw new Error("Alias routing requires attention")
       },
-      { cdn: appRow }
-    )
+    })
     await purgeCloudflareForApp(db, appId)
     logBus.publish(channel, `[runner] Caddy switched to rollback container`)
 
@@ -1278,6 +1318,7 @@ export async function rollbackApp(
       .update(apps)
       .set({
         container_id: rollbackName,
+        domain,
         status: "running",
         updated_at: new Date(),
       })
@@ -1316,7 +1357,7 @@ export async function restartApp(
   const rows = await db
     .select({ image_tag: builds.image_tag })
     .from(builds)
-    .where(and(eq(builds.app_id, appId), eq(builds.status, "succeeded")))
+    .where(and(eq(builds.app_id, appId), inArray(builds.status, ["succeeded", "succeeded_with_warning"])))
     .orderBy(desc(builds.created_at))
     .limit(1)
 

@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach } from "bun:test"
 import { Hono } from "hono"
 import { nanoid } from "nanoid"
-import { users, projects, apps, memberships, passkeys } from "@ploydok/db"
+import { users, projects, apps, memberships, passkeys, services } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { createAppsDomainsRouter } from "./apps-domains"
 import type { AuthUser } from "../auth/middleware"
@@ -98,6 +98,30 @@ async function createTestApp(
     healthcheck_start_period_s: 0,
   })
   return { id, slug }
+}
+
+async function createTestService(db: TestDb, projectId: string, domain: string) {
+  const id = nanoid()
+  const now = new Date()
+  await db.insert(services).values({
+    id,
+    project_id: projectId,
+    name: `Service ${id}`,
+    slug: `service-${id.slice(0, 8)}`,
+    template_id: "test-template",
+    template_version: "1",
+    status: "created",
+    runtime_mode: "swarm",
+    compose_raw: "services: {}",
+    generated_env: {},
+    secrets_encrypted: false,
+    domain,
+    container_ids: [],
+    swarm_service_names: [],
+    created_at: now,
+    updated_at: now,
+  })
+  return { id }
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +371,120 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       body: JSON.stringify({ hostname: "cross.example.com" }),
     })
     expect(res.status).toBe(409)
+  })
+
+  it("rejects a case-insensitive hostname collision across tenants → 409", async () => {
+    const other = await createTestUser(db)
+    await grantSecondFactor(db, other.id)
+    const otherProject = await createTestProject(db, other.id)
+    const otherApp = await createTestApp(db, {
+      userId: other.id,
+      projectId: otherProject.id,
+    })
+
+    const ownerApp = buildTestApp(db, fakeUser(userId))
+    const otherOwnerApp = buildTestApp(db, fakeUser(other.id))
+
+    const first = await ownerApp.request(`/apps/${appId}/domains`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostname: "Tenant-Collision.Example.com" }),
+    })
+    expect(first.status).toBe(201)
+
+    const second = await otherOwnerApp.request(
+      `/apps/${otherApp.id}/domains`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostname: "tenant-collision.example.com" }),
+      }
+    )
+    expect(second.status).toBe(409)
+    const body = (await second.json()) as { error: { code: string } }
+    expect(body.error.code).toBe("CONFLICT")
+  })
+
+  it("rejects a case-insensitive collision with a service hostname", async () => {
+    const other = await createTestUser(db)
+    const otherProject = await createTestProject(db, other.id)
+    await createTestService(db, otherProject.id, "Service-Collision.Example.com")
+
+    const ownerApp = buildTestApp(db, fakeUser(userId))
+    const response = await ownerApp.request(`/apps/${appId}/domains`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostname: "service-collision.example.com" }),
+    })
+
+    expect(response.status).toBe(409)
+    const body = (await response.json()) as { error: { code: string } }
+    expect(body.error.code).toBe("CONFLICT")
+  })
+
+  it("allows sibling hostnames under the same parent across tenants", async () => {
+    const other = await createTestUser(db)
+    await grantSecondFactor(db, other.id)
+    const otherProject = await createTestProject(db, other.id)
+    const otherApp = await createTestApp(db, {
+      userId: other.id,
+      projectId: otherProject.id,
+    })
+
+    const ownerApp = buildTestApp(db, fakeUser(userId))
+    const otherOwnerApp = buildTestApp(db, fakeUser(other.id))
+
+    const first = await ownerApp.request(`/apps/${appId}/domains`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostname: "other.example.com" }),
+    })
+    expect(first.status).toBe(201)
+
+    const sibling = await otherOwnerApp.request(
+      `/apps/${otherApp.id}/domains`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostname: "api.example.com" }),
+      }
+    )
+    expect(sibling.status).toBe(201)
+  })
+
+  it("rejects a hostname covered by a wildcard domain", async () => {
+    const other = await createTestUser(db)
+    await grantSecondFactor(db, other.id)
+    const otherProject = await createTestProject(db, other.id)
+    const otherApp = await createTestApp(db, {
+      userId: other.id,
+      projectId: otherProject.id,
+    })
+
+    const ownerApp = buildTestApp(db, fakeUser(userId))
+    const otherOwnerApp = buildTestApp(db, fakeUser(other.id))
+
+    const wildcard = await ownerApp.request(`/apps/${appId}/domains`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        hostname: "collision-wild.example.com",
+        wildcard: true,
+        tls_mode: "dns01",
+        dns01_provider: "cloudflare",
+      }),
+    })
+    expect(wildcard.status).toBe(201)
+
+    const child = await otherOwnerApp.request(
+      `/apps/${otherApp.id}/domains`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostname: "api.collision-wild.example.com" }),
+      }
+    )
+    expect(child.status).toBe(409)
   })
 
   it("returns 404 when app belongs to another user", async () => {

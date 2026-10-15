@@ -68,9 +68,11 @@ import {
   useStackClassification,
 } from "../../lib/stack-classifier-hook"
 import { useRegistryCredentials } from "../../lib/registry-credentials"
+import { usePendingAction } from "../../lib/hooks/use-pending-action"
 import { RepoSelector } from "./RepoSelector"
 import { GitLabRepoSelector } from "./GitLabRepoSelector"
 import { PlanSelector } from "./PlanSelector"
+import type { TFunction } from "i18next"
 import type { ApiError } from "../../lib/api"
 import type { Database, DbKind, DbPlan } from "../../lib/databases"
 import type { PlanSelectorValue } from "./PlanSelector"
@@ -98,7 +100,40 @@ interface CreateAppModalProps {
 }
 
 type SourceKind = GitProviderKind
-type StepId = "source" | "build" | "env" | "database" | "resources"
+type StepId =
+  | "source"
+  | "build"
+  | "env"
+  | "database"
+  | "domain"
+  | "resources"
+
+type DomainMode = "generated" | "custom"
+
+type DomainDnsStatus = "valid" | "missing" | "mismatch" | "error"
+type DomainTlsStatus = "pending" | "issued" | "failed" | "not_required"
+
+interface DomainDnsRecord {
+  type: string
+  name: string
+  value: string
+}
+
+interface DomainAvailabilityResponse {
+  available: boolean
+  normalizedHostname: string
+  publicUrl: string
+  expectedRecords: Array<DomainDnsRecord>
+  collisions: Array<{ resource: string }>
+  dns: {
+    status: DomainDnsStatus
+    error?: string | null
+  }
+  tls: {
+    status: DomainTlsStatus
+    error?: string | null
+  }
+}
 
 interface InitialEnvVar {
   id: string
@@ -144,6 +179,8 @@ export interface FormState {
   database: DatabaseSelection
   plan: PlanSelectorValue
   domainSuffix: string
+  domainMode: DomainMode
+  customDomain: string
   createRequestId: string
 }
 
@@ -180,6 +217,8 @@ const INITIAL_FORM: FormState = {
   },
   plan: { plan: "small" },
   domainSuffix: "",
+  domainMode: "generated",
+  customDomain: "",
   createRequestId: "",
 }
 
@@ -288,6 +327,24 @@ function buildGeneratedPublicUrl(
   return `${config.publicScheme}://${domain}${port}`
 }
 
+const CUSTOM_DOMAIN_REGEX = new RegExp(
+  "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+  "i"
+)
+
+function normalizeCustomDomain(value: string): string {
+  return value
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.$/, "")
+    .toLowerCase()
+}
+
+function domainLooksValid(value: string): boolean {
+  return CUSTOM_DOMAIN_REGEX.test(normalizeCustomDomain(value))
+}
+
 // ---------------------------------------------------------------------------
 // CreateAppModal
 // ---------------------------------------------------------------------------
@@ -309,6 +366,13 @@ export function CreateAppModal({
   const [pendingBranch, setPendingBranch] = React.useState("")
   const [submitError, setSubmitError] = React.useState<string | null>(null)
   const [submitInFlight, setSubmitInFlight] = React.useState(false)
+  const [domainCheck, setDomainCheck] = React.useState<{
+    hostname: string
+    result: DomainAvailabilityResponse
+  } | null>(null)
+  const [domainCheckError, setDomainCheckError] = React.useState<string | null>(
+    null
+  )
   const submitInFlightRef = React.useRef(false)
   const createApp = useCreateApp()
   const createDatabase = useCreateDatabase()
@@ -339,6 +403,11 @@ export function CreateAppModal({
             hint: t("create.hints.env"),
           },
           {
+            id: "domain",
+            label: t("create.steps.domain"),
+            hint: t("create.hints.domain"),
+          },
+          {
             id: "resources",
             label: t("create.steps.resources"),
             hint: t("create.hints.resources"),
@@ -364,6 +433,11 @@ export function CreateAppModal({
             id: "env",
             label: t("create.steps.env"),
             hint: t("create.hints.env"),
+          },
+          {
+            id: "domain",
+            label: t("create.steps.domain"),
+            hint: t("create.hints.domain"),
           },
           {
             id: "resources",
@@ -456,15 +530,35 @@ export function CreateAppModal({
     generatedDomain,
     defaultDomainConfig.data
   )
-  const isSubmitting =
+  const domainCheckAction = usePendingAction(
+    async (hostname: string): Promise<DomainAvailabilityResponse> => {
+      return apiFetch<DomainAvailabilityResponse>(
+        `/apps/domain-preview?${new URLSearchParams({ domain: hostname }).toString()}`
+      )
+    }
+  )
+  const selectedDomain =
+    form.domainMode === "custom"
+      ? normalizeCustomDomain(form.customDomain)
+      : generatedDomain
+  const selectedPublicUrl =
+    form.domainMode === "custom"
+      ? buildGeneratedPublicUrl(selectedDomain, defaultDomainConfig.data)
+      : generatedPublicUrl
+  const checkedDomainResult =
+    domainCheck && domainCheck.result.normalizedHostname === selectedDomain
+      ? domainCheck.result
+      : null
+  const domainCheckPending = domainCheckAction.pending
+  const mutationSubmitting =
     submitInFlight ||
     createApp.isPending ||
     createDatabase.isPending ||
     linkDatabase.isPending
   const requestClose = React.useCallback(() => {
-    if (submitInFlightRef.current) return
+    if (submitInFlightRef.current || domainCheckPending) return
     onClose()
-  }, [onClose])
+  }, [onClose, domainCheckPending])
 
   React.useEffect(() => {
     if (!open) {
@@ -475,6 +569,8 @@ export function CreateAppModal({
       setPendingBranch("")
       setSubmitError(null)
       setSubmitInFlight(false)
+      setDomainCheck(null)
+      setDomainCheckError(null)
       submitInFlightRef.current = false
     }
   }, [open, initialSource])
@@ -487,6 +583,14 @@ export function CreateAppModal({
       createRequestId: prev.createRequestId || randomCreateRequestId(),
     }))
   }, [open])
+
+  React.useEffect(() => {
+    if (!domainCheck) return
+    if (domainCheck.hostname !== selectedDomain) {
+      setDomainCheck(null)
+      setDomainCheckError(null)
+    }
+  }, [domainCheck, selectedDomain])
 
   React.useEffect(() => {
     if (!branchDialogOpen || branches.length === 0) return
@@ -576,8 +680,6 @@ export function CreateAppModal({
     return () => window.removeEventListener("keydown", onKey)
   }, [open, requestClose, branchDialogOpen])
 
-  if (!open) return null
-
   const setField = <TKey extends keyof FormState>(
     key: TKey,
     value: FormState[TKey]
@@ -666,6 +768,14 @@ export function CreateAppModal({
         return /^[a-z0-9-]+$/.test(form.database.newDatabaseName.trim())
       }
     }
+    if (currentStep === "domain") {
+      return (
+        (form.domainMode === "generated"
+          ? Boolean(generatedDomain)
+          : domainLooksValid(form.customDomain)) &&
+        checkedDomainResult?.available === true
+      )
+    }
     return true
   }
 
@@ -688,7 +798,7 @@ export function CreateAppModal({
     setSubmitError(null)
     try {
       const requestId = form.createRequestId || randomCreateRequestId()
-      const body = buildCreateAppBody(form, organizationId, generatedDomain)
+      const body = buildCreateAppBody(form, organizationId, selectedDomain)
       body.idempotencyKey = `${requestId}:app`
       const databaseId = await resolveDatabaseForCreate({
         form,
@@ -720,13 +830,52 @@ export function CreateAppModal({
       setSubmitError(
         err instanceof Error ? err.message : t("create.failed")
       )
+      throw err
     } finally {
       submitInFlightRef.current = false
       setSubmitInFlight(false)
     }
   }
 
+  const submitAction = usePendingAction(handleSubmit, {
+    keepPendingOnSuccess: Boolean(onCreated),
+  })
+  const isSubmitting = mutationSubmitting || submitAction.pending
+
+  const checkSelectedDomain = async (): Promise<DomainAvailabilityResponse | null> => {
+    const hostname = selectedDomain
+    if (!hostname || (form.domainMode === "custom" && !domainLooksValid(hostname))) {
+      setDomainCheckError(t("create.domainInvalid"))
+      setDomainCheck(null)
+      return null
+    }
+
+    setDomainCheckError(null)
+    try {
+      const result = await domainCheckAction.run(hostname)
+      setDomainCheck({ hostname, result })
+      return result
+    } catch (error) {
+      setDomainCheck(null)
+      setDomainCheckError(
+        error instanceof Error ? error.message : t("create.domainCheckFailed")
+      )
+      return null
+    }
+  }
+
+  const handleNext = async (): Promise<void> => {
+    if (isSubmitting || domainCheckPending) return
+    if (currentStep === "domain") {
+      const result = await checkSelectedDomain()
+      if (!result?.available) return
+    }
+    setStepIdx((s) => Math.min(totalSteps - 1, s + 1))
+  }
+
   const isLast = stepIdx === totalSteps - 1
+
+  if (!open) return null
 
   return (
     <>
@@ -771,7 +920,7 @@ export function CreateAppModal({
           </div>
           <button
             onClick={requestClose}
-            disabled={isSubmitting}
+            disabled={isSubmitting || domainCheckPending}
             className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             aria-label={t("create.closeWindow")}
           >
@@ -792,7 +941,7 @@ export function CreateAppModal({
                       onClick={() => {
                         if (idx <= stepIdx) setStepIdx(idx)
                       }}
-                      disabled={idx > stepIdx || isSubmitting}
+                      disabled={idx > stepIdx || isSubmitting || domainCheckPending}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors",
                         state === "current" &&
@@ -895,6 +1044,23 @@ export function CreateAppModal({
                   databases={databases ?? []}
                 />
               )}
+              {currentStep === "domain" && (
+                <DomainStep
+                  form={form}
+                  setField={setField}
+                  generatedDomain={generatedDomain}
+                  generatedPublicUrl={generatedPublicUrl}
+                  selectedPublicUrl={
+                    checkedDomainResult?.publicUrl || selectedPublicUrl
+                  }
+                  availability={checkedDomainResult}
+                  checking={domainCheckPending}
+                  error={domainCheckError}
+                  canCheck={Boolean(selectedDomain) &&
+                    (form.domainMode === "generated" || domainLooksValid(form.customDomain))}
+                  onCheck={() => void checkSelectedDomain()}
+                />
+              )}
               {currentStep === "database" && (
                 <DatabaseStep
                   value={form.database}
@@ -923,7 +1089,7 @@ export function CreateAppModal({
                     ? requestClose
                     : () => setStepIdx((s) => Math.max(0, s - 1))
                 }
-                disabled={isSubmitting}
+                disabled={isSubmitting || domainCheckPending}
               >
                 {stepIdx === 0 ? t("create.cancel") : t("common:previous")}
               </Button>
@@ -934,10 +1100,9 @@ export function CreateAppModal({
                 {!isLast ? (
                   <Button
                     size="sm"
-                    onClick={() =>
-                      setStepIdx((s) => Math.min(totalSteps - 1, s + 1))
-                    }
-                    disabled={!canGoNext()}
+                    onClick={() => void handleNext()}
+                    loading={domainCheckPending}
+                    disabled={!canGoNext() || isSubmitting}
                     className="gap-1"
                   >
                     {t("create.continue")}
@@ -946,7 +1111,9 @@ export function CreateAppModal({
                 ) : (
                   <Button
                     size="sm"
-                    onClick={() => void handleSubmit()}
+                    onClick={() => {
+                      void submitAction.run().catch(() => undefined)
+                    }}
                     loading={isSubmitting}
                     disabled={!canGoNext()}
                   >
@@ -1792,6 +1959,308 @@ function ImageSection({
           onCheckedChange={onTrackLatestChange}
         />
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Domain selection
+// ---------------------------------------------------------------------------
+
+function DomainStep({
+  form,
+  setField,
+  generatedDomain,
+  generatedPublicUrl,
+  selectedPublicUrl,
+  availability,
+  checking,
+  error,
+  canCheck,
+  onCheck,
+}: {
+  form: FormState
+  setField: <TKey extends keyof FormState>(
+    key: TKey,
+    value: FormState[TKey]
+  ) => void
+  generatedDomain: string
+  generatedPublicUrl: string
+  selectedPublicUrl: string
+  availability: DomainAvailabilityResponse | null
+  checking: boolean
+  error: string | null
+  canCheck: boolean
+  onCheck: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation("apps")
+  const customDomain = normalizeCustomDomain(form.customDomain)
+
+  return (
+    <div className="space-y-5">
+      <section className="space-y-1">
+        <h3 className="text-base font-medium">{t("create.domainTitle")}</h3>
+        <p className="text-sm leading-6 text-muted-foreground">
+          {t("create.domainHint")}
+        </p>
+      </section>
+
+      <fieldset className="grid gap-3">
+        <legend className="sr-only">{t("create.domainChoice")}</legend>
+        <DomainChoiceCard
+          active={form.domainMode === "generated"}
+          title={t("create.generatedDomain")}
+          description={t("create.generatedDomainHint")}
+          value={generatedPublicUrl || t("create.domainLoading")}
+          disabled={checking}
+          onSelect={() => setField("domainMode", "generated")}
+        />
+        <DomainChoiceCard
+          active={form.domainMode === "custom"}
+          title={t("create.customDomain")}
+          description={t("create.customDomainHint")}
+          value={customDomain || t("create.customDomainPlaceholder")}
+          disabled={checking}
+          onSelect={() => setField("domainMode", "custom")}
+        />
+      </fieldset>
+
+      {form.domainMode === "custom" ? (
+        <div className="space-y-2">
+          <label htmlFor="create-custom-domain" className="text-sm font-medium">
+            {t("create.customDomainLabel")}
+          </label>
+          <Input
+            id="create-custom-domain"
+            type="text"
+            inputMode="url"
+            autoComplete="url"
+            placeholder={t("create.customDomainPlaceholder")}
+            value={form.customDomain}
+            disabled={checking}
+            onChange={(event) => setField("customDomain", event.target.value)}
+            className="min-h-11 font-mono text-base sm:text-sm"
+            aria-describedby="create-custom-domain-hint"
+          />
+          <p id="create-custom-domain-hint" className="text-xs text-muted-foreground">
+            {t("create.customDomainInputHint")}
+          </p>
+        </div>
+      ) : null}
+
+      <section className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("create.finalUrl")}
+            </p>
+            <p className="mt-1 break-all font-mono text-sm text-foreground">
+              {selectedPublicUrl || t("create.domainLoading")}
+            </p>
+          </div>
+          {checking ? (
+            <span className="text-xs text-muted-foreground">
+              {t("create.checkingDomain")}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            loading={checking}
+            disabled={!canCheck}
+            onClick={onCheck}
+            className="min-h-11"
+          >
+            {availability ? t("create.refreshDomainCheck") : t("create.checkDomain")}
+          </Button>
+        </div>
+
+        {error ? (
+          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+
+        {availability && !availability.available ? (
+          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {t("create.domainCollision")}
+          </p>
+        ) : null}
+
+        {availability?.available ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <StatusDot tone="success" />
+              <span>{t("create.domainAvailable")}</span>
+            </div>
+            <DomainStatePanel
+              title={t("create.dnsState")}
+              state={availability.dns.status}
+              label={dnsStatusLabel(availability.dns.status, t)}
+              description={
+                availability.dns.status === "valid"
+                  ? t("create.dnsReadyHint")
+                  : t("create.dnsPendingHint")
+              }
+            />
+            <DomainStatePanel
+              title={t("create.tlsState")}
+              state={availability.tls.status}
+              label={tlsStatusLabel(availability.tls.status, t)}
+              description={t("create.tlsHint")}
+            />
+            <DnsRecords records={availability.expectedRecords} />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {t("create.domainCheckHint")}
+          </p>
+        )}
+      </section>
+
+      <p className="text-xs leading-5 text-muted-foreground">
+        {generatedDomain && form.domainMode === "generated"
+          ? t("create.generatedDomainBaseHint")
+          : t("create.customDomainDnsHint")}
+      </p>
+    </div>
+  )
+}
+
+function DomainChoiceCard({
+  active,
+  title,
+  description,
+  value,
+  onSelect,
+  disabled,
+}: {
+  active: boolean
+  title: string
+  description: string
+  value: string
+  onSelect: () => void
+  disabled: boolean
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      disabled={disabled}
+      onClick={onSelect}
+      className={cn(
+        "flex min-h-16 w-full min-w-0 flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        active
+          ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20"
+          : "border-border bg-card hover:border-primary/30 hover:bg-muted/40"
+      )}
+    >
+      <span className="text-sm font-medium">{title}</span>
+      <span className="text-xs text-muted-foreground">{description}</span>
+      <span className="max-w-full break-all font-mono text-xs text-foreground">
+        {value}
+      </span>
+    </button>
+  )
+}
+
+function StatusDot({ tone }: { tone: "success" | "warning" | "danger" }): React.JSX.Element {
+  const classes = {
+    success: "bg-emerald-500",
+    warning: "bg-amber-500",
+    danger: "bg-destructive",
+  }
+  return <span aria-hidden className={cn("size-2 rounded-full", classes[tone])} />
+}
+
+function DomainStatePanel({
+  title,
+  state,
+  label,
+  description,
+}: {
+  title: string
+  state: DomainDnsStatus | DomainTlsStatus
+  label: string
+  description: string
+}): React.JSX.Element {
+  const tone =
+    state === "valid" || state === "issued" || state === "not_required"
+      ? "success"
+      : state === "failed" || state === "mismatch" || state === "error"
+        ? "danger"
+        : "warning"
+  return (
+    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-background p-3">
+      <div className="flex min-w-0 items-start gap-2">
+        <StatusDot tone={tone} />
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      <span className="shrink-0 text-xs font-medium text-muted-foreground">{label}</span>
+    </div>
+  )
+}
+
+function dnsStatusLabel(
+  status: DomainDnsStatus,
+  t: TFunction<"apps">
+): string {
+  const labels: Record<DomainDnsStatus, string> = {
+    valid: t("create.dnsReady"),
+    missing: t("create.dnsMissing"),
+    mismatch: t("create.dnsMismatch"),
+    error: t("create.dnsError"),
+  }
+  return labels[status]
+}
+
+function tlsStatusLabel(
+  status: DomainTlsStatus,
+  t: TFunction<"apps">
+): string {
+  const labels: Record<DomainTlsStatus, string> = {
+    pending: t("create.tlsPending"),
+    issued: t("create.tlsIssued"),
+    failed: t("create.tlsActionRequired"),
+    not_required: t("create.tlsNotRequired"),
+  }
+  return labels[status]
+}
+
+function DnsRecords({ records }: { records: Array<DomainDnsRecord> }): React.JSX.Element {
+  const { t } = useTranslation("apps")
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium text-muted-foreground">{t("create.expectedDnsRecords")}</p>
+      {records.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t("create.noDnsRecords")}</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[28rem] text-left text-xs">
+            <thead className="bg-muted/40 text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">{t("create.dnsType")}</th>
+                <th className="px-3 py-2 font-medium">{t("create.dnsName")}</th>
+                <th className="px-3 py-2 font-medium">{t("create.dnsValue")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((record, index) => (
+                <tr key={`${record.type}-${record.name}-${index}`} className="border-t border-border">
+                  <td className="px-3 py-2 font-mono">{record.type}</td>
+                  <td className="break-all px-3 py-2 font-mono">{record.name}</td>
+                  <td className="break-all px-3 py-2 font-mono">{record.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

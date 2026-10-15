@@ -14,7 +14,7 @@ export interface Domain {
   id: string
   hostname: string
   /** TLS certificate lifecycle status. */
-  tlsStatus: "pending" | "issued" | "failed"
+  tlsStatus: "pending" | "issued" | "failed" | "not_required"
   createdAt: string | null
 }
 

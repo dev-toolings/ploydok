@@ -5,6 +5,7 @@ import type { Db } from "@ploydok/db"
 import { getAppForUser } from "@ploydok/db/queries"
 import { verifyDomain } from "../../domains/verifier.js"
 import { getCaddyTlsOptionsForDomain } from "../../domains/caddy-tls.js"
+import { inspectDomainTls } from "../../domains/routing.js"
 import { CaddyClient } from "../../caddy/client.js"
 import { claimQueuedRow } from "../queue-claim.js"
 import { auditClaimed, auditUnauthorized } from "../queue-audit.js"
@@ -26,7 +27,7 @@ export async function handleDomainVerify(
 
   logger.info({ domainId }, "domain.verify job started")
 
-  // Claim the domain row with CAS — allow retry transitions from "running" → "running"
+  // Claim the domain row with CAS: allow retry transitions from "running" → "running"
   const claimed = await claimQueuedRow<typeof domains.$inferSelect>({
     db,
     table: domains,
@@ -103,6 +104,19 @@ export async function handleDomainVerify(
     }
   }
 
+  if (
+    parentApp?.status &&
+    parentApp.status !== "running" &&
+    parentApp.status !== "serving"
+  ) {
+    const reason = "Runtime is not healthy; TLS and routing wait for go-live"
+    await db
+      .update(domains)
+      .set({ verify_error: reason, updated_at: new Date() })
+      .where(eq(domains.id, domainId))
+    throw new Error(reason)
+  }
+
   const result = await verifyDomain(db, domainId)
 
   if (!result.ok) {
@@ -118,43 +132,67 @@ export async function handleDomainVerify(
     throw new Error(`domain verification failed: ${result.reason}`)
   }
 
-  // Verification passed — mark issued and register Caddy route
-  await db
-    .update(domains)
-    .set({ tls_status: "issued", verify_error: null, updated_at: new Date() })
-    .where(eq(domains.id, domainId))
-
   logger.info(
     { domainId, appId: claimed.app_id },
-    "domain verified — registering Caddy route"
+    "domain verified, registering Caddy route"
   )
 
   try {
     const upstream = await caddyClient.getUpstream(claimed.app_id)
-    if (upstream) {
-      const tls = await getCaddyTlsOptionsForDomain(
-        db,
-        claimed.app_id,
-        claimed.tls_mode,
-        claimed.dns01_provider
-      )
-      await caddyClient.upsertRoute({
-        host: claimed.hostname,
-        upstream: `${upstream.host}:${upstream.port}`,
-        appId: `domain-${domainId}`,
-        ...(tls ? { tls } : {}),
-        ...(parentApp ? { middlewares: { cdn: parentApp } } : {}),
-      })
-      logger.info(
-        { domainId, hostname: claimed.hostname },
-        "Caddy domain route registered"
-      )
+    if (!upstream) {
+      const reason = "Runtime is not healthy; route registration requires go-live"
+      await db
+        .update(domains)
+        .set({ tls_status: "pending", verify_error: reason, updated_at: new Date() })
+        .where(eq(domains.id, domainId))
+      throw new Error(reason)
     }
+
+    const tls = await getCaddyTlsOptionsForDomain(
+      db,
+      claimed.app_id,
+      claimed.tls_mode,
+      claimed.dns01_provider
+    )
+    await caddyClient.upsertRoute({
+      host: claimed.hostname,
+      upstream: `${upstream.host}:${upstream.port}`,
+      appId: `domain-${domainId}`,
+      ...(tls ? { tls } : {}),
+      ...(parentApp ? { middlewares: { cdn: parentApp } } : {}),
+    })
+    const tlsCheck = await inspectDomainTls(claimed.hostname)
+    if (tlsCheck.status === "failed" || tlsCheck.status === "pending") {
+      const reason = tlsCheck.error ?? "TLS certificate requires attention"
+      await db
+        .update(domains)
+        .set({ tls_status: "failed", verify_error: reason, updated_at: new Date() })
+        .where(eq(domains.id, domainId))
+      logger.warn(
+        { domainId, hostname: claimed.hostname, reason },
+        "domain verified but TLS remains an action required"
+      )
+      return
+    }
+    await db
+      .update(domains)
+      .set({ tls_status: tlsCheck.status, verify_error: null, updated_at: new Date() })
+      .where(eq(domains.id, domainId))
+    logger.info(
+      { domainId, hostname: claimed.hostname },
+      "Caddy domain route registered"
+    )
   } catch (err) {
-    // Non-fatal: domain is verified in DB, Caddy registration is best-effort
+    const reason = err instanceof Error ? err.message : String(err)
+    await db
+      .update(domains)
+      .set({ tls_status: "failed", verify_error: reason, updated_at: new Date() })
+      .where(eq(domains.id, domainId))
+    // DNS/ACME/Caddy errors become an operator action after go-live. The app
+    // runtime has already been verified and must not be marked as failed.
     logger.warn(
       { domainId, err },
-      "Caddy registration failed after domain verify — continuing"
+      "domain route or TLS provisioning requires attention"
     )
   }
 }
