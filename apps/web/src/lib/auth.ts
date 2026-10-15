@@ -5,6 +5,7 @@ import {
   useQuery,
   useQueryClient
 } from "@tanstack/react-query";
+import { useMatch } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { apiFetch, criticalRetryDelay, shouldRetryCriticalQuery } from "./api";
 import i18n from "./i18n";
@@ -31,6 +32,18 @@ export function useMe(): UseQueryResult<Me, ApiError> {
     retryDelay: criticalRetryDelay,
     meta: { critical: true },
   });
+}
+
+/**
+ * The signed-in user under `_authed`: the `/me` query once loaded, else the
+ * user the route guard already fetched for this request. Server render and
+ * first client render read the same request-scoped value, so the shell paints
+ * once instead of waiting for a second `/me` round trip.
+ */
+export function useSessionMe(): Me | undefined {
+  const { data } = useMe();
+  const authed = useMatch({ from: "/_authed", shouldThrow: false });
+  return data ?? authed?.context.me;
 }
 
 // ---------------------------------------------------------------------------
