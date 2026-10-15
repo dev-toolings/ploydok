@@ -566,6 +566,57 @@ describe("POST /github/webhook", () => {
   })
 })
 
+describe("GET /github/app/organization-lookup", () => {
+  it("confirms an organization and flags one that already has an App", async () => {
+    const realFetch = globalThis.fetch
+    mockGitHubAppConfig = { owner_login: "dev-toolings" }
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === "https://api.github.com/orgs/acme") {
+        return new Response(
+          JSON.stringify({ login: "acme", name: "Acme", avatar_url: "a.png" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url.toLowerCase() === "https://api.github.com/orgs/dev-toolings") {
+        return new Response(JSON.stringify({ login: "dev-toolings" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return new Response("{}", { status: 404 })
+    }) as unknown as typeof fetch
+    try {
+      const found = await buildApp(FAKE_USER).request(
+        "/github/app/organization-lookup?login=acme"
+      )
+      expect(await found.json()).toEqual({
+        login: "acme",
+        name: "Acme",
+        avatarUrl: "a.png",
+        hasApp: false,
+      })
+
+      const taken = await buildApp(FAKE_USER).request(
+        "/github/app/organization-lookup?login=DEV-toolings"
+      )
+      expect(((await taken.json()) as { hasApp: boolean }).hasApp).toBe(true)
+
+      const missing = await buildApp(FAKE_USER).request(
+        "/github/app/organization-lookup?login=nobody-here"
+      )
+      expect(missing.status).toBe(404)
+
+      const invalid = await buildApp(FAKE_USER).request(
+        "/github/app/organization-lookup?login=../x"
+      )
+      expect(invalid.status).toBe(400)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+})
+
 describe("POST /github/app/manifest", () => {
   it("registers an organization App under that organization", async () => {
     const res = await buildApp(FAKE_USER).request("/github/app/manifest", {

@@ -74,6 +74,8 @@ export interface ImportGitHubAppPayload {
 
 export interface AppInstallation {
   id: number
+  /** Ploydok id of the GitHub App that owns this installation. */
+  githubAppId?: string
   accountLogin: string
   accountType: string
   granted?: boolean
@@ -428,10 +430,11 @@ export function useForgetLocalGitHubApp() {
 // useInstallations — GET /github/installations
 // ---------------------------------------------------------------------------
 
-export function useInstallations() {
+export function useInstallations(options: { enabled?: boolean } = {}) {
   return useQuery<InstallationsResponse, ApiError>({
     queryKey: ["github", "installations"],
     queryFn: () => apiFetch<InstallationsResponse>("/github/installations"),
+    enabled: options.enabled ?? true,
     // Short stale so returning from GitHub install flow refreshes immediately.
     staleTime: 5_000,
     refetchOnWindowFocus: true,
@@ -440,6 +443,27 @@ export function useInstallations() {
       if (error.status === 401 || error.status === 503) return false
       return failureCount < 2
     },
+  })
+}
+
+export interface GitHubOrganizationLookup {
+  login: string
+  name: string | null
+  avatarUrl: string
+  hasApp: boolean
+}
+
+/** Confirms a typed login is an existing GitHub organization. */
+export function useGitHubOrganizationLookup(login: string) {
+  return useQuery<GitHubOrganizationLookup, ApiError>({
+    queryKey: ["github", "organization-lookup", login.toLowerCase()],
+    queryFn: () =>
+      apiFetch<GitHubOrganizationLookup>(
+        `/github/app/organization-lookup?login=${encodeURIComponent(login)}`
+      ),
+    enabled: login.length > 0,
+    staleTime: 60_000,
+    retry: false,
   })
 }
 

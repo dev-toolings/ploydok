@@ -187,6 +187,7 @@ githubRouter.use("/app/import", githubAppAdmin)
 githubRouter.use("/app/config", githubAppAdmin)
 githubRouter.use("/app/config/local", githubAppAdmin)
 githubRouter.use("/app/credentials/status", githubAppAdmin)
+githubRouter.use("/app/organization-lookup", githubAppAdmin)
 
 async function markGitHubInstallationSyncPending(opts: {
   installationId: string
@@ -2600,6 +2601,52 @@ githubRouter.get("/app/config", async (c) => {
       owner_type: app.owner_type,
       install_url: getInstallationStartUrl(undefined, app.id),
     })),
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GET /github/app/organization-lookup?login=  (instance admin only)
+// GitHub lists no organization to a private App before it is installed there,
+// and private memberships are hidden from public listings, so the admin types
+// the login. This confirms it is an existing organization before registering.
+// ---------------------------------------------------------------------------
+
+githubRouter.get("/app/organization-lookup", async (c) => {
+  const login = c.req.query("login")?.trim() ?? ""
+  if (!GITHUB_LOGIN_PATTERN.test(login)) {
+    return c.json({ error: "invalid_github_organization" }, 400)
+  }
+  let res: Response
+  try {
+    res = await fetch(`https://api.github.com/orgs/${encodeURIComponent(login)}`, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "ploydok",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(10_000),
+    })
+  } catch (err) {
+    log.warn({ err, login }, "github organization lookup failed")
+    return c.json({ error: "github_api_error" }, 502)
+  }
+  if (res.status === 404) {
+    return c.json({ error: "github_organization_not_found" }, 404)
+  }
+  if (!res.ok) return c.json({ error: "github_api_error" }, 502)
+  const org = (await res.json()) as {
+    login?: unknown
+    name?: unknown
+    avatar_url?: unknown
+  }
+  const taken = (await listGitHubAppConfigs(db)).some(
+    (app) => app.owner_login?.toLowerCase() === login.toLowerCase()
+  )
+  return c.json({
+    login: typeof org.login === "string" ? org.login : login,
+    name: typeof org.name === "string" ? org.name : null,
+    avatarUrl: typeof org.avatar_url === "string" ? org.avatar_url : "",
+    hasApp: taken,
   })
 })
 

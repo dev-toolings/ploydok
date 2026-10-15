@@ -140,15 +140,32 @@
       "generic": "L'installation GitHub ne s'est pas terminée correctement. Réessayez.",
       "github_app_required": "Plusieurs Apps GitHub sont configurées. Choisissez le compte sur lequel installer."
     },
-    "installOn": "Installer sur {{owner}}",
-    "ownedBy": "App GitHub appartenant à {{owner}}. Elle ne peut être installée que sur ce compte.",
     "orgApp": {
       "title": "Connecter une organisation GitHub",
-      "hint": "GitHub n'autorise l'installation d'une App privée que sur le compte qui la possède. Créez une App par organisation GitHub, puis installez-la depuis la liste ci-dessous.",
+      "hint": "GitHub ne permet pas à Ploydok de lister vos organisations. Saisissez l'identifiant tel qu'il apparaît dans l'URL de l'organisation. Vous devez en être owner.",
       "label": "Organisation GitHub",
       "placeholder": "mon-organisation",
       "create": "Créer l'App pour cette organisation",
-      "redirecting": "Redirection vers GitHub..."
+      "redirecting": "Redirection vers GitHub...",
+      "open": "Connecter une organisation GitHub",
+      "invalid": "Un identifiant GitHub ne contient que des lettres, des chiffres et des tirets.",
+      "checking": "Vérification sur GitHub...",
+      "notFound": "Aucune organisation GitHub nommée « {{login}} ».",
+      "alreadyConnected": "@{{login}} est déjà connectée.",
+      "lookupFailed": "GitHub est injoignable. Réessayez dans un instant."
+    },
+    "accounts": {
+      "title": "Comptes GitHub",
+      "hint": "Chaque compte ou organisation GitHub a sa propre App Ploydok. Installez-la pour donner à Ploydok l'accès à ses dépôts.",
+      "notInstalled": "App créée, pas encore installée",
+      "selectedRepositories": "dépôts sélectionnés",
+      "organization": "Organisation",
+      "personal": "Compte personnel",
+      "install": "Installer",
+      "manage": "Gérer sur GitHub",
+      "more": "Autres actions pour @{{login}}",
+      "revokeInstallation": "Révoquer l'installation",
+      "deleteApp": "Retirer l'App de Ploydok"
     }
   },
   "gitlab": {

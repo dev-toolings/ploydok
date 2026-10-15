@@ -246,6 +246,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
   let replaceSnapshotSpy: ReturnType<typeof spyOn>
   let legacyBackfillSpy: ReturnType<typeof spyOn>
   let ownerAppSpy: ReturnType<typeof spyOn>
+  let bindAppSpy: ReturnType<typeof spyOn>
 
   beforeEach(async () => {
     const { ghProvider } = await import("../../routes/github")
@@ -322,6 +323,10 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
       providerReposQueries,
       "getGitHubAppConfigForInstallation"
     ).mockResolvedValue(null)
+    bindAppSpy = spyOn(
+      providerReposQueries,
+      "bindGitHubInstallationApp"
+    ).mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -330,6 +335,7 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     replaceSnapshotSpy.mockRestore()
     legacyBackfillSpy.mockRestore()
     ownerAppSpy.mockRestore()
+    bindAppSpy.mockRestore()
   })
 
   it("publishes installation freshness and all pages as one snapshot", async () => {
@@ -353,6 +359,34 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     expect(installation.id).toBe("github:999")
     expect(installation.account_login).toBe("org")
     expect(rows).toHaveLength(3)
+  })
+
+  it("binds a webhook-less installation to its App before listing repos", async () => {
+    const { handleSyncProviderRepos } = await import("./sync-provider-repos")
+    const db = mockDb()
+    const order: string[] = []
+    bindAppSpy.mockImplementation(async () => {
+      order.push("bind")
+    })
+    const listRepos = listReposSpy.getMockImplementation()
+    listReposSpy.mockImplementation(async (...args: unknown[]) => {
+      order.push("listRepos")
+      return listRepos!(...args)
+    })
+
+    await handleSyncProviderRepos(db as never, {
+      provider: "github",
+      installationId: "999",
+    })
+
+    expect(bindAppSpy).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        external_id: "999",
+        github_app_id: "singleton",
+      })
+    )
+    expect(order[0]).toBe("bind")
   })
 
   it("keeps the previous cache when a GitHub page fails", async () => {
