@@ -247,7 +247,7 @@ export function Shell({ appId }: ShellProps): React.JSX.Element {
     <div className="flex h-full w-full">
       <div className="flex min-w-0 flex-1 flex-col bg-[#09090b]">
         <div className="flex h-9 shrink-0 items-center justify-between border-b border-zinc-800 px-3">
-          <span className="font-sans text-[12px] tracking-normal text-zinc-400 uppercase">
+          <span className="font-sans text-[12px] tracking-normal text-zinc-400">
             {mode === "rw" ? t("shell.write") : t("shell.readOnly")}
           </span>
           <button

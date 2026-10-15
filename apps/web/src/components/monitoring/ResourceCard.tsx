@@ -58,12 +58,12 @@ function KindBadge({
     app: {
       icon: RiBox3Line,
       label: "APP",
-      cls: "bg-sky-500/10 text-sky-600 border-sky-500/20 dark:text-sky-400",
+      cls: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff] border-sky-500/20",
     },
     infra: {
       icon: RiServerLine,
       label: "INFRA",
-      cls: "bg-violet-500/10 text-violet-600 border-violet-500/20 dark:text-violet-400",
+      cls: "bg-violet-100 dark:bg-[#2f0d68]/60 text-violet-700 dark:text-[#a684ff] border-violet-500/20",
     },
     database: {
       icon: RiServerLine,
@@ -73,7 +73,7 @@ function KindBadge({
     agent: {
       icon: RiSettings3Line,
       label: "AGENT",
-      cls: "bg-amber-500/10 text-amber-600 border-amber-500/20 dark:text-amber-400",
+      cls: "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700] border-amber-500/20",
     },
     unknown: {
       icon: RiBox3Line,
@@ -85,7 +85,7 @@ function KindBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-sans text-[9px] tracking-wide",
+        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-sans text-[9px] tracking-wide",
         style.cls
       )}
     >
@@ -131,7 +131,7 @@ function StatusChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
+        "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium capitalize",
         tone.bg,
         tone.text
       )}
@@ -260,8 +260,8 @@ export function ResourceCard({
 
       {/* Memory usage meter */}
       <div className="space-y-1">
-        <div className="flex items-baseline justify-between font-sans text-[10px] text-muted-foreground">
-          <span className="tracking-wide uppercase">{t("memoryBudget")}</span>
+        <div className="flex items-baseline justify-between font-sans text-xs text-muted-foreground">
+          <span className="">{t("memoryBudget")}</span>
           <span className="tabular-nums">
             <span className="text-foreground">{formatBytes(snapshot.mem_bytes)}</span>
             <span className="opacity-50"> / </span>
@@ -296,10 +296,10 @@ export function ResourceCard({
         {snapshot.last_ping_ms !== undefined ? (
           <span
             className={cn(
-              "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5",
+              "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
               snapshot.last_ping_ok
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                : "bg-destructive/10 text-destructive"
+                ? "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]"
+                : "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e]"
             )}
             title={snapshot.last_ping_ok ? t("pingOk") : t("pingFailed")}
           >

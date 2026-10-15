@@ -10,12 +10,13 @@ import {
   RiAddLine,
   RiApps2Line,
   RiArchiveLine,
-  RiArrowUpDownLine,
+  RiArrowDownSLine,
   RiBookOpenLine,
   RiCloseLine,
   RiCodeBoxLine,
   RiDashboardLine,
   RiDatabase2Line,
+  RiExpandUpDownLine,
   RiFileListLine,
   RiHardDriveLine,
   RiHistoryLine,
@@ -36,7 +37,7 @@ import {
   RiShapesLine,
   RiShieldCheckLine,
   RiShieldKeyholeLine,
-  RiSidebarFoldLine,
+  RiSideBarFill,
   RiStackLine,
   RiSunLine,
   RiTeamLine,
@@ -98,7 +99,7 @@ import {
 } from "../../lib/organizations"
 import { AppStatusBadge } from "../apps/AppStatusBadge"
 import { useTheme } from "../theme/ThemeToggle"
-import { CommandBar } from "./CommandBar"
+import { CommandBar, detectMac } from "./CommandBar"
 import { CommandPaletteRoot } from "./CommandPalette"
 import { NotificationBell } from "./NotificationBell"
 import {
@@ -276,23 +277,71 @@ function TwoFactorPrompt(): React.JSX.Element {
   )
 }
 
-function SidebarProfileSkeleton(): React.JSX.Element {
+function SidebarProfileSkeleton({
+  expanded,
+}: {
+  expanded: boolean
+}): React.JSX.Element {
   return (
     <div
       aria-hidden="true"
       aria-busy="true"
       className={cx(
-        "flex w-full items-center gap-2 overflow-hidden rounded-xl bg-sidebar-accent p-2",
-        "group-data-[sidebar-state=collapsed]/shell:justify-center"
+        "flex items-center overflow-hidden",
+        expanded
+          ? "w-full gap-2 rounded-[12px] border-2 border-transparent bg-[#ebebeb] py-2 pr-4 pl-[10px] dark:bg-neutral-800"
+          : "size-9 justify-center"
       )}
     >
       <Skeleton className="size-8 shrink-0 rounded-full" />
-      <span className="grid flex-1 gap-1 text-left leading-tight group-data-[sidebar-state=collapsed]/shell:hidden">
-        <Skeleton className="h-3 w-20" />
-        <Skeleton className="h-2.5 w-28" />
-      </span>
-      <Skeleton className="size-3.5 group-data-[sidebar-state=collapsed]/shell:hidden" />
+      {expanded ? (
+        <span className="grid flex-1 gap-1.5">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-28" />
+        </span>
+      ) : null}
     </div>
+  )
+}
+
+function SidebarQuickSearch({
+  expanded,
+}: {
+  expanded: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation("common")
+  const { setOpen } = useCommandPaletteContext()
+  const [isMac, setIsMac] = React.useState(false)
+
+  React.useEffect(() => {
+    setIsMac(detectMac())
+  }, [])
+
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      aria-label={t("commandPalette.open")}
+      title={expanded ? undefined : t("nav.quickSearch")}
+      className={cx(
+        "flex shrink-0 cursor-pointer items-center gap-2 rounded-full bg-[#ebebeb] p-2 transition-[width,border-radius,background-color] duration-300 ease-in-out outline-none hover:bg-[#d4d4d4]/55 focus-visible:ring-2 focus-visible:ring-[#3080ff] focus-visible:ring-offset-2 dark:bg-neutral-800 dark:hover:bg-neutral-700/55",
+        expanded ? "w-full" : "size-9 justify-center"
+      )}
+    >
+      <span className="flex min-w-0 flex-1 items-center gap-2">
+        <RiSearchLine className="size-5 shrink-0 text-neutral-500" />
+        {expanded ? (
+          <span className="text-sm font-medium whitespace-nowrap text-neutral-500">
+            {t("nav.quickSearch")}
+          </span>
+        ) : null}
+      </span>
+      {expanded ? (
+        <kbd className="inline-flex items-center justify-center rounded-md bg-[#d4d4d4] px-1 py-0.5 font-sans text-xs leading-4 font-semibold tracking-normal whitespace-nowrap text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400">
+          {isMac ? "⌘K" : "Ctrl K"}
+        </kbd>
+      ) : null}
+    </button>
   )
 }
 
@@ -359,7 +408,7 @@ const APP_DETAIL_RE = /^\/(?:orgs\/[^/]+\/)?apps\/[^/]+(\/|$)/
 function resolveWrapperClass(pathname: string): string {
   if (APP_LOGS_RE.test(pathname)) return "overflow-hidden"
   if (APP_DETAIL_RE.test(pathname)) return "overflow-y-auto"
-  return "gap-4 overflow-y-auto"
+  return "overflow-y-auto"
 }
 
 function isNavActive(pathname: string, target: string): boolean {
@@ -521,6 +570,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const {
     mode: themeMode,
     resolved: resolvedTheme,
+    setMode: setThemeMode,
     toggle: toggleTheme,
   } = useTheme()
   const {
@@ -582,6 +632,9 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
     .join("")
     .slice(0, 2)
     .toUpperCase()
+  const workspaceInitial = (currentOrganization?.name ?? t("nav.myOrganization"))
+    .charAt(0)
+    .toUpperCase()
   const availableOrganizations = React.useMemo(() => {
     const rows = [...organizations]
     if (
@@ -603,9 +656,6 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
 
   const expanded = sidebarOpen || mobileNavOpen
   const state = expanded ? "expanded" : "collapsed"
-  const brandTarget = currentOrgSlug
-    ? organizationDashboardPath(currentOrgSlug)
-    : "/dashboard"
   const navGroups: Array<{ title: string; items: Array<ResolvedNavItem> }> = [
     {
       title: t("nav.workspace"),
@@ -670,8 +720,8 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   }
 
   const wrapperStyle: React.CSSProperties = {
-    ["--sidebar-width" as string]: "260px",
-    ["--sidebar-width-icon" as string]: "72px",
+    ["--sidebar-width" as string]: "276px",
+    ["--sidebar-width-icon" as string]: "60px",
     ["--sidebar-inset-radius" as string]: "calc(var(--radius) * 4)",
     ["--sidebar-animation-duration" as string]: "300ms",
     ["--sidebar-animation-ease" as string]: "cubic-bezier(0.32, 0.72, 0, 1)",
@@ -699,7 +749,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
           data-slot="sidebar"
           data-state={state}
           data-collapsible={state === "collapsed" ? "icon" : ""}
-          data-variant="inset"
+          data-variant="floating"
           data-mobile-open={mobileNavOpen ? "true" : "false"}
           className="peer"
         >
@@ -718,7 +768,6 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
             className={cx(
               "fixed inset-y-0 left-0 z-50 flex h-dvh p-2 md:z-10",
               "w-[min(18rem,85vw)] md:w-[var(--sidebar-width)]",
-              "max-md:border-r max-md:border-border max-md:bg-sidebar max-md:shadow-2xl",
               "transition-transform duration-(--sidebar-animation-duration) ease-(--sidebar-animation-ease)",
               "md:transition-[width]",
               mobileNavOpen
@@ -727,224 +776,232 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               "group-data-[sidebar-state=collapsed]/shell:md:w-[calc(var(--sidebar-width-icon)+1rem)]"
             )}
           >
-            <div className="flex size-full flex-col rounded-3xl border border-border bg-sidebar p-4">
-              {/* Header */}
-              <div className="flex h-14 flex-row items-center p-2">
-                {expanded ? (
-                  <>
-                    <Link
-                      to={brandTarget as never}
-                      preload={false}
-                      className="flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2 overflow-hidden rounded-[10px] px-2 py-2 text-sm font-medium text-neutral-950 outline-none hover:bg-neutral-200 dark:text-neutral-50"
-                      aria-label="Ploydok"
-                    >
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#90c5ff] text-sm font-bold text-[#1c398e]">
-                        P
-                      </span>
-                      <span className="font-medium">Ploydok</span>
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => setMobileNavOpen(false)}
-                      className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent md:hidden"
-                      aria-label={t("nav.closeNavigation")}
-                    >
-                      <RiCloseLine className="size-5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={toggleSidebar}
-                      className="hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent md:flex"
-                      aria-label={t("nav.collapseSidebar")}
-                      aria-expanded
-                    >
-                      <RiSidebarFoldLine className="size-4" />
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={toggleSidebar}
-                    className="group/brand relative flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors outline-none hover:bg-sidebar-accent"
-                    aria-label={t("nav.expandSidebar")}
-                    aria-expanded={false}
-                  >
-                    <span className="flex size-4 items-center justify-center rounded-[4px] bg-primary text-[9px] font-bold text-primary-foreground transition-opacity group-hover/brand:opacity-0">
-                      P
-                    </span>
-                    <RiSidebarFoldLine className="absolute size-4 rotate-180 text-muted-foreground opacity-0 transition-opacity group-hover/brand:opacity-100" />
-                  </button>
-                )}
-              </div>
-
-              {/* Content */}
-              <div className="flex scrollbar-thin min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto">
-                {/* Team selector */}
-                <div>
-                  {expanded ? (
-                    <div className="flex flex-col gap-1.5">
-                      <span className="px-2 text-xs font-medium text-neutral-500">
-                        Workspace
-                      </span>
-                      {workspaceLoading ? (
-                        <div
-                          aria-hidden
-                          aria-busy="true"
-                          className="flex h-10 w-full items-center gap-3 rounded-[10px] bg-sidebar-accent px-3"
-                        >
-                          <Skeleton className="size-5 shrink-0" />
-                          <Skeleton className="h-3 w-24" />
-                        </div>
-                      ) : (
-                        <div className="relative">
-                          <span
-                            aria-hidden
-                            className="pointer-events-none absolute top-1/2 left-3 z-10 size-5 -translate-y-1/2 rounded-md bg-gradient-to-br from-emerald-300 via-teal-400 to-sky-500"
-                          />
-                          <Select
-                            open={workspaceSelectOpen}
-                            onOpenChange={setWorkspaceSelectOpen}
-                            value={
-                              currentOrgSlug ?? currentOrganization?.slug ?? ""
-                            }
-                            onValueChange={handleWorkspaceSelect}
-                          >
-                            <SelectTrigger className="h-10 w-full cursor-pointer rounded-[10px] border-0 !bg-sidebar-accent pl-11 text-left !text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/20">
-                              <SelectValue
-                                placeholder={t("nav.selectWorkspacePlaceholder")}
-                              />
-                            </SelectTrigger>
-                            <SelectContent
-                              align="start"
-                              className="w-[--radix-select-trigger-width]"
-                            >
-                              <SelectGroup>
-                                {availableOrganizations.map((organization) => (
-                                  <SelectItem
-                                    key={organization.id}
-                                    value={organization.slug}
-                                    className="cursor-pointer"
-                                  >
-                                    {organization.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectGroup>
-                              <SelectGroup>
-                                <SelectItem
-                                  value={CREATE_WORKSPACE_VALUE}
-                                  className="cursor-pointer"
-                                >
-                                  <span className="flex items-center gap-2">
-                                    <RiAddLine className="size-4 shrink-0" />
-                                    <span>{t("workspaceDialog.submit")}</span>
-                                  </span>
-                                </SelectItem>
-                              </SelectGroup>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-                    </div>
-                  ) : workspaceLoading ? (
+            <aside
+              className={cx(
+                "flex size-full shrink-0 flex-col justify-between overflow-hidden rounded-[24px] border border-white bg-sidebar shadow-[var(--shadow-elevated)] transition-[padding] duration-300 ease-in-out dark:border-[#26262a] dark:shadow-[0_1px_0_0_#0000001a,0_1px_12px_0_#00000029,0_0_1px_0_#0000006b]",
+                expanded ? "p-3" : "px-[11px] py-3"
+              )}
+            >
+              <div className="-m-2 flex min-h-0 w-[calc(100%+16px)] flex-col gap-3 overflow-y-auto p-2 [scrollbar-width:none]">
+                {/* Header: workspace menu + collapse */}
+                <div
+                  className={cx(
+                    "flex w-full transition-[gap] duration-300 ease-in-out",
+                    expanded
+                      ? "flex-row items-center justify-between"
+                      : "flex-col-reverse items-center gap-3"
+                  )}
+                >
+                  {workspaceLoading ? (
                     <div
                       aria-hidden
                       aria-busy="true"
-                      className="flex h-8 w-full items-center justify-center"
+                      className="flex h-8 min-w-0 items-center gap-2"
                     >
-                      <Skeleton className="size-6 shrink-0" />
+                      <Skeleton className="size-8 shrink-0 rounded-full" />
+                      {expanded ? <Skeleton className="h-3 w-24" /> : null}
+                    </div>
+                  ) : expanded ? (
+                    <div className="-m-2 min-w-0 overflow-hidden p-2">
+                      <Select
+                        open={workspaceSelectOpen}
+                        onOpenChange={setWorkspaceSelectOpen}
+                        value={currentOrgSlug ?? currentOrganization?.slug ?? ""}
+                        onValueChange={handleWorkspaceSelect}
+                      >
+                        <SelectTrigger
+                          aria-label={t("nav.openWorkspaceSwitcher")}
+                          className={cx(
+                            "relative h-8 w-auto max-w-[206px] min-w-0 cursor-pointer justify-start gap-2 rounded-full border-0 !bg-transparent p-0 text-sm font-medium text-neutral-950 shadow-none dark:text-neutral-50",
+                            "before:pointer-events-none before:absolute before:-inset-x-1.5 before:-inset-y-[5px] before:rounded-full before:border-2 before:border-transparent before:transition-colors hover:before:border-[#d4d4d4] dark:hover:before:border-neutral-500",
+                            "focus-visible:ring-2 focus-visible:ring-[#3080ff] focus-visible:ring-offset-2",
+                            "[&>svg:last-child]:hidden"
+                          )}
+                        >
+                          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-[#d4d4d4] text-base leading-[22px] font-semibold text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300">
+                            {workspaceInitial}
+                          </span>
+                          <span className="flex min-w-0 items-center gap-0.5">
+                            <span className="truncate">
+                              <SelectValue
+                                placeholder={t("nav.selectWorkspacePlaceholder")}
+                              />
+                            </span>
+                            <RiExpandUpDownLine className="size-4 shrink-0 text-neutral-400" />
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent
+                          align="start"
+                          className="min-w-[220px]"
+                        >
+                          <SelectGroup>
+                            {availableOrganizations.map((organization) => (
+                              <SelectItem
+                                key={organization.id}
+                                value={organization.slug}
+                                className="cursor-pointer"
+                              >
+                                {organization.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                          <SelectGroup>
+                            <SelectItem
+                              value={CREATE_WORKSPACE_VALUE}
+                              className="cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2">
+                                <RiAddLine className="size-4 shrink-0" />
+                                <span>{t("workspaceDialog.submit")}</span>
+                              </span>
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
                     </div>
                   ) : (
                     <button
                       type="button"
                       onClick={handleCollapsedWorkspaceClick}
-                      className={cx(
-                        "flex h-8 w-full cursor-pointer items-center justify-center overflow-hidden rounded-md p-0 text-sm outline-none hover:bg-sidebar-accent"
-                      )}
+                      className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#d4d4d4] text-base leading-[22px] font-semibold text-neutral-500 outline-none focus-visible:ring-2 focus-visible:ring-[#3080ff] focus-visible:ring-offset-2 dark:bg-neutral-700 dark:text-neutral-300"
                       aria-label={t("nav.openWorkspaceSwitcher")}
-                      title={
-                        currentOrganization?.name ?? t("nav.myOrganization")
-                      }
+                      title={currentOrganization?.name ?? t("nav.myOrganization")}
                     >
-                      <span className="size-6 shrink-0 rounded-md bg-gradient-to-br from-emerald-300 via-teal-400 to-sky-500" />
+                      {workspaceInitial}
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setMobileNavOpen(false)}
+                    className="cursor-pointer text-neutral-500 outline-none md:hidden"
+                    aria-label={t("nav.closeNavigation")}
+                  >
+                    <RiCloseLine className="size-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleSidebar}
+                    className="hidden cursor-pointer text-neutral-500 transition-transform duration-300 ease-in-out outline-none focus-visible:ring-2 focus-visible:ring-[#3080ff] md:block"
+                    aria-label={
+                      expanded ? t("nav.collapseSidebar") : t("nav.expandSidebar")
+                    }
+                    aria-expanded={expanded}
+                  >
+                    <RiSideBarFill
+                      className={cx(
+                        "size-5 transition-transform duration-300 ease-in-out",
+                        expanded && "-scale-x-100"
+                      )}
+                    />
+                  </button>
                 </div>
+
+                <SidebarQuickSearch expanded={expanded} />
 
                 {navGroups.map((group) => (
                   <div key={group.title} className="flex flex-col gap-1">
-                    <div className="flex h-7 shrink-0 items-center overflow-hidden px-2 text-xs font-medium text-neutral-500 group-data-[sidebar-state=collapsed]/shell:hidden">
-                      {group.title}
-                    </div>
-                    <ul className="flex w-full min-w-0 flex-col gap-1">
+                    {expanded ? (
+                      <div className="flex h-6 shrink-0 items-center overflow-hidden px-2.5 text-xs font-medium text-neutral-500">
+                        {group.title}
+                      </div>
+                    ) : null}
+                    <ul
+                      className={cx(
+                        "flex w-full min-w-0 flex-col gap-1",
+                        expanded && "px-0.5"
+                      )}
+                    >
                       {group.items.map((item) => {
                         const Icon = item.icon
                         if (item.loading) {
                           return (
-                            <li
-                              key={item.id}
-                              aria-hidden="true"
-                              className="relative"
-                            >
+                            <li key={item.id} aria-hidden="true">
                               <div
                                 aria-busy="true"
-                                className="flex h-8 w-full items-center gap-2 overflow-hidden rounded-[10px] px-2 py-1.5 group-data-[sidebar-state=collapsed]/shell:justify-center"
+                                className={cx(
+                                  "flex h-9 items-center gap-2 overflow-hidden rounded-[10px] p-2",
+                                  expanded ? "w-full" : "w-9 justify-center"
+                                )}
                               >
-                                <Skeleton className="size-4 shrink-0" />
-                                <Skeleton className="h-3 w-10 group-data-[sidebar-state=collapsed]/shell:hidden" />
+                                <Skeleton className="size-5 shrink-0" />
+                                {expanded ? (
+                                  <Skeleton className="h-3 w-16" />
+                                ) : null}
                               </div>
                             </li>
                           )
                         }
                         if (item.comingSoon || !item.to) {
                           return (
-                            <li key={item.id} className="relative">
+                            <li key={item.id}>
                               <span
                                 title={item.tooltip ?? t("unavailable")}
                                 aria-disabled="true"
                                 className={cx(
-                                  "flex w-full cursor-not-allowed items-center gap-2 overflow-hidden rounded-[10px] px-2 py-1.5 text-sm text-neutral-400 outline-none",
-                                  "group-data-[sidebar-state=collapsed]/shell:justify-center"
+                                  "flex h-9 cursor-not-allowed items-center justify-between overflow-hidden rounded-[10px] p-2 text-neutral-400 dark:text-neutral-600",
+                                  expanded ? "w-full" : "w-9 justify-center"
                                 )}
                               >
-                                <Icon className="size-4 shrink-0" />
-                                <span className="truncate group-data-[sidebar-state=collapsed]/shell:hidden">
-                                  {item.label}
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <Icon className="size-5 shrink-0" />
+                                  {expanded ? (
+                                    <span className="truncate text-sm font-medium">
+                                      {item.label}
+                                    </span>
+                                  ) : null}
                                 </span>
-                                <span
-                                  aria-hidden="true"
-                                  className="ml-auto rounded-sm bg-neutral-200 px-1 py-px text-xs font-semibold text-neutral-500 group-data-[sidebar-state=collapsed]/shell:hidden"
-                                >
-                                  {item.comingSoon
-                                    ? t("planned")
-                                    : t("unavailable")}
-                                </span>
+                                {expanded ? (
+                                  <span
+                                    aria-hidden="true"
+                                    className="inline-flex shrink-0 items-center justify-center rounded-sm bg-[#ebebeb] px-1 py-px text-xs leading-4 font-semibold whitespace-nowrap text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+                                  >
+                                    {item.comingSoon
+                                      ? t("planned")
+                                      : t("unavailable")}
+                                  </span>
+                                ) : null}
                               </span>
                             </li>
                           )
                         }
                         const active = isNavActive(pathname, item.to)
                         return (
-                          <li key={item.id} className="relative">
+                          <li key={item.id}>
                             <Link
                               to={item.to}
                               preload={false}
                               title={item.label}
+                              aria-current={active ? "page" : undefined}
                               className={cx(
-                                "flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-[10px] px-2 py-1.5 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#3080ff] focus-visible:ring-offset-2",
-                                "group-data-[sidebar-state=collapsed]/shell:justify-center",
+                                "flex h-9 items-center justify-between overflow-hidden rounded-[10px] p-2 transition-[width,background-color] duration-300 ease-in-out outline-none focus-visible:ring-2 focus-visible:ring-[#3080ff] focus-visible:ring-offset-2",
+                                expanded ? "w-full" : "w-9 justify-center",
                                 active
-                                  ? "bg-[image:var(--gradient-primary)] text-white shadow-[0_0_0_1px_#3080ff,inset_0_1px_0_0_#ffffff40]"
-                                  : "text-neutral-500 hover:bg-neutral-200 dark:hover:bg-neutral-800"
+                                  ? "bg-[#ebebeb] dark:bg-neutral-800"
+                                  : "hover:bg-[#ebebeb] dark:hover:bg-neutral-800"
                               )}
                             >
-                              <Icon
-                                className={cx(
-                                  "size-4 shrink-0",
-                                  active ? "text-white" : "text-neutral-500"
-                                )}
-                              />
-                              <span className="truncate group-data-[sidebar-state=collapsed]/shell:hidden">
-                                {item.label}
+                              <span className="flex min-w-0 items-center gap-2">
+                                <Icon
+                                  className={cx(
+                                    "size-5 shrink-0",
+                                    active
+                                      ? "text-neutral-950 dark:text-neutral-50"
+                                      : "text-neutral-500"
+                                  )}
+                                />
+                                {expanded ? (
+                                  <span
+                                    className={cx(
+                                      "truncate text-sm font-medium",
+                                      active
+                                        ? "text-neutral-950 dark:text-neutral-50"
+                                        : "text-neutral-500"
+                                    )}
+                                  >
+                                    {item.label}
+                                  </span>
+                                ) : null}
                               </span>
                             </Link>
                           </li>
@@ -956,42 +1013,115 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               </div>
 
               {/* Footer */}
-              <div className="mt-3 flex flex-col gap-1">
+              <div
+                className={cx(
+                  "mt-3 flex w-full shrink-0 flex-col gap-3",
+                  !expanded && "items-center"
+                )}
+              >
                 {me && !me.has_totp ? <TwoFactorPrompt /> : null}
 
-                {/* User */}
-                <ul className="relative mt-1 flex w-full min-w-0 flex-col gap-1">
-                  <li className="relative">
-                    {meLoading ? (
-                      <SidebarProfileSkeleton />
+                {expanded ? (
+                  <div className="relative inline-flex w-fit items-center gap-1 rounded-full bg-[#ebebeb] p-1 dark:bg-neutral-800">
+                    <span
+                      aria-hidden="true"
+                      className={cx(
+                        "pointer-events-none absolute start-1 top-1 size-8 rounded-full bg-white shadow-xs transition-transform duration-200 ease-[ease] dark:bg-neutral-700",
+                        resolvedTheme === "dark" && "translate-x-9"
+                      )}
+                    />
+                    {(["light", "dark"] as const).map((mode) => {
+                      const ModeIcon = mode === "light" ? RiSunLine : RiMoonLine
+                      const selected = resolvedTheme === mode
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={(event) =>
+                            setThemeMode(mode, event.currentTarget)
+                          }
+                          aria-pressed={selected}
+                          aria-label={t(`theme.${mode}`)}
+                          className={cx(
+                            "relative z-10 grid size-8 cursor-pointer place-items-center rounded-full transition-colors duration-150 ease-[ease] outline-none focus-visible:ring-2 focus-visible:ring-[#3080ff]",
+                            selected
+                              ? "text-neutral-950 dark:text-neutral-50"
+                              : "text-neutral-500 hover:text-neutral-950 dark:hover:text-neutral-50"
+                          )}
+                        >
+                          <ModeIcon className="size-4" />
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(event) =>
+                      setThemeMode(
+                        resolvedTheme === "dark" ? "light" : "dark",
+                        event.currentTarget
+                      )
+                    }
+                    aria-label={
+                      resolvedTheme === "dark"
+                        ? t("theme.lightTheme")
+                        : t("theme.darkTheme")
+                    }
+                    className="grid size-9 cursor-pointer place-items-center rounded-[10px] text-neutral-500 outline-none hover:bg-[#ebebeb] focus-visible:ring-2 focus-visible:ring-[#3080ff] dark:hover:bg-neutral-800"
+                  >
+                    {resolvedTheme === "dark" ? (
+                      <RiSunLine className="size-5" />
                     ) : (
-                      <DropdownMenu
-                        open={profileOpen}
-                        onOpenChange={setProfileOpen}
+                      <RiMoonLine className="size-5" />
+                    )}
+                  </button>
+                )}
+
+                {/* User */}
+                {meLoading ? (
+                  <SidebarProfileSkeleton expanded={expanded} />
+                ) : (
+                  <DropdownMenu open={profileOpen} onOpenChange={setProfileOpen}>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        title={displayName}
+                        className={cx(
+                          "flex cursor-pointer items-center overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-[#3080ff] focus-visible:ring-offset-2",
+                          "transition-[width,background-color,border-color,padding] duration-300 ease-in-out",
+                          expanded
+                            ? "w-full justify-between rounded-[12px] border-2 border-transparent bg-[#ebebeb] py-2 pr-4 pl-[10px] hover:border-[#d4d4d4] dark:bg-neutral-800 dark:hover:border-neutral-500"
+                            : "size-9 justify-center rounded-full"
+                        )}
                       >
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            title={displayName}
-                            className={cx(
-                              "flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-xl bg-sidebar-accent px-2 py-1.5 text-sm transition-colors outline-none hover:bg-sidebar-accent/80",
-                              "group-data-[sidebar-state=collapsed]/shell:justify-center"
-                            )}
-                          >
-                            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[image:var(--gradient-primary)] text-[10px] font-semibold text-white shadow-[0_0_0_1px_#3080ff,inset_0_1px_0_0_#ffffff40]">
-                              {initials}
-                            </span>
-                            <span className="grid flex-1 text-left leading-tight group-data-[sidebar-state=collapsed]/shell:hidden">
-                              <span className="truncate text-xs font-medium text-foreground">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-[#90c5ff] text-sm font-semibold text-[#1c398e]">
+                            {initials}
+                          </span>
+                          {expanded ? (
+                            <span className="flex min-w-0 flex-col items-start justify-center">
+                              <span className="max-w-full truncate text-sm font-medium text-neutral-950 dark:text-neutral-50">
                                 {displayName}
                               </span>
-                              <span className="truncate text-[10px] font-normal text-muted-foreground">
+                              <span className="max-w-full truncate text-sm text-neutral-500">
                                 {email}
                               </span>
                             </span>
-                            <RiArrowUpDownLine className="size-3.5 text-muted-foreground group-data-[sidebar-state=collapsed]/shell:hidden" />
-                          </button>
-                        </DropdownMenuTrigger>
+                          ) : null}
+                        </span>
+                        {expanded ? (
+                          <span className="flex size-4 shrink-0 items-center justify-center rounded-[3px] bg-[#d4d4d4] dark:bg-neutral-700">
+                            <RiArrowDownSLine
+                              className={cx(
+                                "size-4 text-neutral-500 transition-transform duration-200 ease-[ease]",
+                                profileOpen && "rotate-180"
+                              )}
+                            />
+                          </span>
+                        ) : null}
+                      </button>
+                    </DropdownMenuTrigger>
                         <DropdownMenuContent
                           side="right"
                           align="end"
@@ -1038,7 +1168,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
                                   {showReleaseDot ? (
                                     <span
                                       aria-label={`New release v${version}`}
-                                      className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-primary uppercase"
+                                      className="ml-auto inline-flex items-center gap-1 rounded-sm bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary"
                                     >
                                       <span
                                         aria-hidden="true"
@@ -1066,7 +1196,9 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
                             </Link>
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onSelect={() => toggleTheme()}
+                            onSelect={(event) =>
+                              toggleTheme(event.currentTarget as Element)
+                            }
                             className="flex cursor-pointer items-center justify-between gap-2.5 rounded-xl p-2 text-sm text-foreground"
                           >
                             <span className="flex items-center gap-2.5">
@@ -1079,7 +1211,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
                                 ? t("theme.lightTheme")
                                 : t("theme.darkTheme")}
                             </span>
-                            <span className="font-mono text-[10px] text-muted-foreground">
+                            <span className="font-mono text-xs text-muted-foreground">
                               {themeMode}
                             </span>
                           </DropdownMenuItem>
@@ -1107,10 +1239,8 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
-                  </li>
-                </ul>
               </div>
-            </div>
+            </aside>
           </div>
         </div>
 
@@ -1118,7 +1248,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
         <main
           data-slot="sidebar-inset"
           className={cx(
-            "relative flex w-full min-w-0 flex-1 flex-col bg-white text-foreground dark:bg-neutral-950"
+            "relative flex w-full min-w-0 flex-1 flex-col bg-background text-foreground"
           )}
         >
           <div className="relative flex h-12 items-center gap-2 px-3 sm:gap-3 sm:px-4 md:px-8">
@@ -1152,7 +1282,15 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               resolveWrapperClass(pathname)
             )}
           >
-            {children}
+            {APP_DETAIL_RE.test(pathname) ? (
+              children
+            ) : (
+              // BoardUI caps page content at 1300px and centers it; the 48px
+              // covers ShellPage's horizontal padding.
+              <div className="mx-auto flex w-full max-w-[1348px] min-w-0 flex-1 flex-col gap-4">
+                {children}
+              </div>
+            )}
           </div>
         </main>
 
@@ -1182,7 +1320,7 @@ export function ShellPage({
           {eyebrow ? (
             <p className="text-xs font-medium text-neutral-500">{eyebrow}</p>
           ) : null}
-          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+          <h1 className="text-xl leading-[26px] font-medium text-foreground">
             {title}
           </h1>
           {description ? (
@@ -1214,9 +1352,11 @@ export function ShellPanel({
       {title || description || action ? (
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="space-y-1">
-            {title ? <h2 className="text-sm font-semibold">{title}</h2> : null}
+            {title ? (
+              <h2 className="text-sm font-medium text-foreground">{title}</h2>
+            ) : null}
             {description ? (
-              <p className="text-xs leading-5 text-muted-foreground">
+              <p className="text-[13px] leading-[18px] text-muted-foreground">
                 {description}
               </p>
             ) : null}

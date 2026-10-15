@@ -17,7 +17,7 @@ export function QuickActions({ isGitHubConnected, onCreateApp }: QuickActionsPro
   const { t } = useTranslation("workspace");
   return (
     <div className="rounded-2xl bg-panel p-5">
-      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-3">
+      <p className="text-xs text-muted-foreground font-medium mb-3">
         {t("dashboard.quickActions")}
       </p>
       <div className="flex flex-wrap gap-3">

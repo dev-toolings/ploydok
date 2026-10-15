@@ -3,7 +3,7 @@ import * as React from "react"
 import { RiSearchLine } from "@remixicon/react"
 import { useCommandPaletteContext } from "../../lib/hooks/command-palette-context"
 
-function detectMac(): boolean {
+export function detectMac(): boolean {
   if (typeof navigator === "undefined") return false
   return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)
 }

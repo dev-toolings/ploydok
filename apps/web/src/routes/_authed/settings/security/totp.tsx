@@ -249,7 +249,7 @@ function TotpScanView({
         </div>
 
         <div className="w-full space-y-1">
-          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-xs text-muted-foreground">
             {t("totp.manualEntry")}
           </p>
           <div className="flex items-center gap-2">
@@ -270,7 +270,7 @@ function TotpScanView({
         <div className="w-full space-y-2">
           <label
             htmlFor="totp-code"
-            className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase"
+            className="font-sans text-xs text-muted-foreground"
           >
             {t("totp.verificationCode")}
           </label>

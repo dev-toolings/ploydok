@@ -116,7 +116,7 @@ export function InviteDialog({
 
           {error && (
             <p
-              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="rounded-md bg-neg-100 dark:bg-[#4d0218]/60 px-3 py-2 text-sm text-neg-700 dark:text-[#ff637e]"
               role="alert"
             >
               {error}

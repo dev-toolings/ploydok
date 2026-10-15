@@ -55,7 +55,7 @@ function ProviderDashboard(): React.JSX.Element {
       <div className="space-y-6">
         <section
           aria-label={t("gitProviders.header")}
-          className="flex items-center gap-3 rounded-2xl rounded-xl bg-panel p-4"
+          className="flex items-center gap-3 rounded-2xl bg-panel p-4"
         >
           <div className="flex size-10 items-center justify-center rounded-md border border-border bg-background">
             <Icon className={`size-5 ${provider.accent}`} />
@@ -87,26 +87,26 @@ function ProviderStatusBadge({
 
   if (providers.isLoading) {
     return (
-      <span className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+      <span className="font-sans text-xs text-muted-foreground">
         …
       </span>
     )
   }
   if (slug === "gitlab" && providers.data?.gitlab.state === "unavailable") {
     return (
-      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
+      <span className="inline-flex items-center gap-1 font-sans text-xs text-amber-600 dark:text-amber-400">
         <RiCircleLine className="size-3" />
         {t("gitlab.unavailableShort")}
       </span>
     )
   }
   return status?.connected ? (
-    <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
+    <span className="inline-flex items-center gap-1 font-sans text-xs text-emerald-600 dark:text-emerald-400">
       <RiCheckboxCircleFill className="size-3" />
       {t("gitlab.connected")}
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+    <span className="inline-flex items-center gap-1 font-sans text-xs text-muted-foreground">
       <RiCircleLine className="size-3" />
       {status?.configured ? t("gitProviders.ready") : t("gitProviders.notSet")}
     </span>

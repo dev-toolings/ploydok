@@ -28,7 +28,7 @@ function AdminAdvisoriesPage(): React.JSX.Element {
     <div className="w-full space-y-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">
+          <h1 className="text-xl leading-[26px] font-medium text-foreground">
             {t("advisories.title")}
           </h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -54,7 +54,7 @@ function AdminAdvisoriesPage(): React.JSX.Element {
       ) : null}
 
       {error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 p-4 text-sm text-neg-700 dark:text-[#ff637e]">
           {t("advisories.loadFailed")}
         </div>
       ) : null}
@@ -96,7 +96,7 @@ export function AdvisoryTable({
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-border bg-muted/40 text-xs uppercase text-muted-foreground">
+        <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
           <tr>
             <th className="px-3 py-2">{t("advisories.severity")}</th>
             <th className="px-3 py-2">{t("advisories.package")}</th>

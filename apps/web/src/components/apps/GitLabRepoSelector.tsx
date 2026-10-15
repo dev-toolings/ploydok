@@ -174,7 +174,7 @@ export function RepoItem({
         }
       }}
     >
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-sans text-[10px] text-muted-foreground uppercase">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-sans text-xs text-muted-foreground">
         {repoName.slice(0, 2)}
       </div>
       <div className="min-w-0 flex-1">
@@ -184,7 +184,7 @@ export function RepoItem({
             {namespace}
           </span>
           {repo.private ? (
-            <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+            <span className="ml-auto shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
               {t("apps:repo.private")}
             </span>
           ) : null}

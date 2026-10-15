@@ -28,13 +28,13 @@ function ChangelogPage(): React.JSX.Element {
       eyebrow="Release notes"
     >
       <div className="space-y-6">
-        <section className="rounded-2xl bg-panel p-6 shadow-sm">
+        <section className="rounded-2xl bg-panel p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">
+              <p className="text-xs font-semibold text-primary">
                 Current release
               </p>
-              <h1 className="text-2xl font-semibold tracking-tight">
+              <h1 className="text-xl leading-[26px] font-medium text-foreground">
                 {latest.title}
               </h1>
               <p className="text-sm leading-6 text-muted-foreground">
@@ -72,7 +72,7 @@ function ChangelogCollapse(props: {
 }): React.JSX.Element {
   return (
     <details
-      className="group rounded-2xl bg-panel shadow-sm"
+      className="group rounded-2xl bg-panel"
       open={props.defaultOpen}
     >
       <summary className="flex cursor-pointer list-none flex-col gap-4 p-5 outline-none transition-colors hover:bg-muted/30 md:flex-row md:items-start md:justify-between [&::-webkit-details-marker]:hidden">
@@ -89,7 +89,7 @@ function ChangelogCollapse(props: {
                 {props.entry.date}
               </span>
             </div>
-            <h2 className="text-base font-semibold tracking-tight">
+            <h2 className="text-base font-medium">
               {props.entry.title}
             </h2>
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -99,7 +99,7 @@ function ChangelogCollapse(props: {
               {props.entry.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+                  className="rounded-md border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -121,10 +121,10 @@ function MarkdownBody(props: { source: string }): React.JSX.Element {
     <ReactMarkdown
       components={{
         h1: ({ children }) => (
-          <h3 className="text-lg font-semibold tracking-tight">{children}</h3>
+          <h3 className="text-base font-medium">{children}</h3>
         ),
         h2: ({ children }) => (
-          <h4 className="mt-6 text-sm font-semibold uppercase tracking-[0.18em] text-primary">
+          <h4 className="mt-6 text-sm font-semibold text-primary">
             {children}
           </h4>
         ),

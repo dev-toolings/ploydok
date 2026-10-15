@@ -13,11 +13,11 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "border-transparent bg-[image:var(--gradient-primary)] text-white hover:bg-[image:var(--gradient-primary-hover)] active:bg-[image:var(--gradient-primary-active)]",
+          "border-transparent bg-[image:var(--gradient-primary)] text-white shadow-[0_1px_2px_0_#0000000d] hover:bg-[image:var(--gradient-primary-hover)] active:bg-[image:var(--gradient-primary-active)]",
         outline:
-          "border-border bg-background text-foreground hover:border-input hover:bg-muted aria-expanded:bg-muted",
+          "border-border bg-background text-foreground shadow-[0_1px_2px_0_#0000000d] hover:border-input hover:bg-muted aria-expanded:bg-muted dark:border-neutral-700 dark:bg-neutral-800 dark:hover:bg-neutral-700",
         secondary:
-          "border-border bg-secondary text-secondary-foreground hover:border-input hover:bg-secondary/80",
+          "border-border bg-secondary text-secondary-foreground shadow-[0_1px_2px_0_#0000000d] hover:border-input hover:bg-secondary/80 dark:border-neutral-700",
         ghost:
           "border-transparent bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
         destructive:
@@ -25,13 +25,13 @@ const buttonVariants = cva(
         link: "h-auto border-transparent bg-transparent p-0 text-primary hover:underline",
       },
       size: {
-        default: "h-[38px] gap-1.5 px-3",
-        sm: "h-9 gap-1.5 px-3 text-sm",
-        xs: "h-8 gap-1 px-2.5 text-xs [&_svg:not([class*='size-'])]:size-3.5",
+        default: "h-9 gap-1.5 px-3",
+        sm: "h-8 gap-1.5 px-2.5 text-sm",
+        xs: "h-7 gap-1 px-2 text-xs [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-11 gap-2 px-4 text-sm",
-        icon: "size-[38px]",
-        "icon-sm": "size-9",
-        "icon-xs": "size-8 [&_svg:not([class*='size-'])]:size-3.5",
+        icon: "size-9",
+        "icon-sm": "size-8",
+        "icon-xs": "size-7 [&_svg:not([class*='size-'])]:size-3.5",
         "icon-lg": "size-11",
       },
     },

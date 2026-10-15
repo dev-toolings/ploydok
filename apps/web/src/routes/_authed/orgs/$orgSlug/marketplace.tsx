@@ -107,7 +107,7 @@ function MarketplacePage(): React.JSX.Element {
         }
       >
         {stale ? (
-          <p className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <p className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-warn-100 dark:bg-[#432004]/60 px-3 py-2 text-xs text-warn-700 dark:text-[#fdc700]">
             <RiAlertLine className="size-4 shrink-0" />
             {t("marketplace.unreachable")}
           </p>
@@ -118,7 +118,7 @@ function MarketplacePage(): React.JSX.Element {
         ) : error ? (
           <p
             role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-4 py-3 text-sm text-neg-700 dark:text-[#ff637e]"
           >
             {t("marketplace.loadFailed", { message: error.message })}
           </p>
@@ -191,7 +191,7 @@ function TemplateCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex h-full cursor-pointer flex-col gap-3 rounded-xl border border-panel-border bg-panel-inset p-4 text-left shadow-sm transition-colors outline-none hover:border-muted-foreground/30 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+      className="group flex h-full cursor-pointer flex-col gap-3 rounded-[10px] bg-panel-inset p-4 text-left transition-colors outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
     >
       <div className="flex items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
@@ -241,7 +241,7 @@ function CatalogSkeleton(): React.JSX.Element {
       {Array.from({ length: 8 }).map((_, idx) => (
         <div
           key={idx}
-          className="flex h-32 flex-col gap-3 rounded-xl border border-panel-border bg-panel-inset p-4 shadow-sm"
+          className="flex h-32 flex-col gap-3 rounded-[10px] bg-panel-inset p-4 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
         >
           <div className="flex items-center gap-3">
             <span className="size-10 shrink-0 skeleton-surface rounded-md" />
@@ -358,7 +358,7 @@ function TemplateDialog({
 
               <div className="flex min-h-[12rem] flex-col gap-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <span className="text-xs font-medium text-muted-foreground">
                     docker-compose.yml
                   </span>
                   <Button
@@ -377,7 +377,7 @@ function TemplateDialog({
                 ) : error ? (
                   <p
                     role="alert"
-                    className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                    className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 px-3 py-2 text-xs text-neg-700 dark:text-[#ff637e]"
                   >
                     {t("marketplace.filesFailed", { message: error.message })}
                   </p>

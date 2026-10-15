@@ -396,7 +396,7 @@ function AuthSwitches({
           <span className="w-full border-t" />
         </div>
         <div className="relative flex justify-center">
-          <span className="bg-panel-inset px-2 text-[10px] tracking-wide text-neutral-400 uppercase">
+          <span className="bg-panel-inset px-2 text-xs text-neutral-400">
             {t("or")}
           </span>
         </div>

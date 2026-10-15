@@ -31,7 +31,7 @@ function TlsBadge({ status }: { status: TlsStatus }): React.JSX.Element {
   const { t } = useTranslation("apps")
   if (status === "issued") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
         <span className="size-1.5 rounded-full bg-emerald-500" />
         {t("domains.issued")}
       </span>
@@ -39,14 +39,14 @@ function TlsBadge({ status }: { status: TlsStatus }): React.JSX.Element {
   }
   if (status === "failed") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+      <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
         <span className="size-1.5 rounded-full bg-red-500" />
         {t("domains.failed")}
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+    <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
       <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
       {t("domains.pending")}
     </span>
@@ -222,7 +222,7 @@ function TxtRecordField({
   return (
     <div className="min-w-0 rounded border border-amber-200/80 bg-background/70 p-2 dark:border-amber-800/50 dark:bg-background/40">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-medium uppercase text-amber-700 dark:text-amber-500">
+        <span className="text-xs font-medium text-amber-700 dark:text-amber-500">
           {label}
         </span>
         <Button

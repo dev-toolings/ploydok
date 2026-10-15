@@ -47,7 +47,7 @@ export function SystemHealthCard(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl rounded-2xl bg-panel p-4">
+      <div className="rounded-2xl bg-panel p-4">
         <div className="h-4 w-24 rounded skeleton-surface" />
         <div className="mt-3 grid grid-cols-3 gap-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -61,7 +61,7 @@ export function SystemHealthCard(): React.JSX.Element {
   if (error || !data) {
     return (
       <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-        <p className="font-sans text-[10px] tracking-wide uppercase opacity-80">
+        <p className="font-sans text-xs opacity-80">
           system_health_unreachable
         </p>
         <p className="mt-1 text-xs">
@@ -74,11 +74,11 @@ export function SystemHealthCard(): React.JSX.Element {
   return (
     <section
       aria-label={t("system.title")}
-      className="rounded-xl rounded-2xl bg-panel"
+      className="rounded-2xl bg-panel"
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="space-y-0.5">
-          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-xs text-muted-foreground">
             {t("system.label")}
           </p>
           <p className="text-sm font-medium">
@@ -90,10 +90,10 @@ export function SystemHealthCard(): React.JSX.Element {
         </div>
         <span
           className={cn(
-            "inline-flex h-6 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium",
+            "inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium",
             data.ok
-              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-              : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              ? "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]"
+              : "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]"
           )}
         >
           <span
@@ -145,7 +145,7 @@ function ComponentCell({
   const s = STATUS_STYLES[status]
   return (
     <div className="flex flex-col gap-1 px-4 py-3">
-      <dt className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="font-sans text-xs text-muted-foreground">
         {label}
       </dt>
       <dd className="flex items-center gap-1.5">

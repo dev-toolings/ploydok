@@ -61,7 +61,7 @@ export function SecurityPasskeysPanel(): React.JSX.Element {
 
       <div className="space-y-2">
         <div className="flex items-baseline justify-between px-1">
-          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-xs text-muted-foreground">
             {t("passkeys.registered")}
           </p>
           <p className="font-sans text-[10px] text-muted-foreground">
@@ -277,7 +277,7 @@ function PasskeyRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate text-sm font-medium">{displayName}</p>
-            <span className="inline-flex items-center rounded-full border border-border bg-background px-1.5 py-0.5 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
+            <span className="inline-flex items-center rounded-sm border border-border bg-background px-1.5 py-0.5 font-sans text-xs text-muted-foreground">
               {t(tagKey)}
             </span>
           </div>

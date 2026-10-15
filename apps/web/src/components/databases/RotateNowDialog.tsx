@@ -58,7 +58,7 @@ export function RotateNowDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
-          <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          <div className="rounded-md border border-amber-500/20 bg-warn-100 dark:bg-[#432004]/60 px-3 py-2 text-sm text-warn-700 dark:text-[#fdc700]">
             {t("rotate.warning")}
           </div>
 

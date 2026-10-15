@@ -499,7 +499,7 @@ function ProviderChoice({
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2 text-sm font-medium">
             {name}
-            <span className="rounded-full border border-border px-1.5 py-0.5 font-sans text-[9px] tracking-wide text-muted-foreground uppercase">
+            <span className="rounded-sm border border-border px-1.5 py-0.5 font-sans text-xs text-muted-foreground">
               {maturity}
             </span>
           </span>

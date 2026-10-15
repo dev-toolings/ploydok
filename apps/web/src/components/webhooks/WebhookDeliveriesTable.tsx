@@ -10,12 +10,12 @@ import type { DeliveryDecision, WebhookDelivery } from "../../lib/webhooks"
 // ---------------------------------------------------------------------------
 
 const SKIPPED_CLASS = "bg-muted text-muted-foreground"
-const FAILED_CLASS = "bg-destructive/10 text-destructive"
+const FAILED_CLASS = "bg-neg-100 dark:bg-[#4d0218]/60 text-neg-700 dark:text-[#ff637e]"
 
 const DECISION_CLASS: Record<DeliveryDecision, string> = {
-  enqueued: "bg-green-500/10 text-green-700 dark:text-green-400",
-  coalesced: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  retried: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+  enqueued: "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]",
+  coalesced: "bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]",
+  retried: "bg-brand-100 dark:bg-[#162456]/60 text-brand-700 dark:text-[#51a2ff]",
   skipped_disabled: SKIPPED_CLASS,
   skipped_branch: SKIPPED_CLASS,
   skipped_path: SKIPPED_CLASS,
@@ -41,7 +41,7 @@ function DecisionBadge({
     <span
       title={reason ?? label}
       className={[
-        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium",
+        "inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-xs font-medium",
         className,
       ].join(" ")}
     >

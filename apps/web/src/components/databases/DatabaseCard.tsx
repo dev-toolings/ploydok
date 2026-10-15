@@ -76,7 +76,7 @@ function ProtectionBadge({
     return (
       <Badge
         variant="outline"
-        className="border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+        className="border-emerald-500/25 bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]"
       >
         <RiShieldCheckLine />
         {t("card.lastBackupSucceeded")}
@@ -88,7 +88,7 @@ function ProtectionBadge({
     return (
       <Badge
         variant="outline"
-        className="border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        className="border-amber-500/25 bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]"
       >
         <RiShieldCheckLine />
         {t("card.backupScheduled")}
@@ -129,7 +129,7 @@ export function DatabaseCard({
   const backupFailed = database.latest_backup_status === "failed"
 
   return (
-    <article className="group overflow-hidden rounded-xl border border-panel-border bg-panel-inset shadow-sm transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-muted-foreground/30 hover:bg-accent/20 motion-reduce:hover:translate-y-0">
+    <article className="group overflow-hidden rounded-[10px] bg-panel-inset transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:bg-accent/20 motion-reduce:hover:translate-y-0 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
       <Link
         to={detailPath as never}
         className="block p-4 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"

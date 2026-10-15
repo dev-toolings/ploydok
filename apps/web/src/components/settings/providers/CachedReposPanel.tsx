@@ -98,7 +98,7 @@ export function CachedReposPanel(
     <section className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 className="text-base font-medium">{title}</h2>
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>
         {onSyncAll && entries.length > 1 && (
@@ -232,7 +232,7 @@ function StatusPill({
   const { t } = useTranslation("settings")
   if (status === "syncing") {
     return (
-      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-blue-600 uppercase dark:text-blue-400">
+      <span className="inline-flex items-center gap-1 font-sans text-xs text-blue-600 dark:text-blue-400">
         <RiRefreshLine className="size-3 animate-spin" />
         {t("cache.syncingShort")}
       </span>
@@ -240,14 +240,14 @@ function StatusPill({
   }
   if (status === "fresh") {
     return (
-      <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 font-sans text-xs text-emerald-600 dark:text-emerald-400">
         <RiCheckboxCircleFill className="size-3" />
         {t("cache.fresh")}
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 font-sans text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
+    <span className="inline-flex items-center gap-1 font-sans text-xs text-amber-600 dark:text-amber-400">
       <RiErrorWarningFill className="size-3" />
       {t("cache.stale")}
     </span>

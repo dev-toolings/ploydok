@@ -145,7 +145,7 @@ function AppIdentity({
       <AppIcon name={app.name} src={app.iconUrl} className="size-10" />
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <h1 className="truncate font-heading text-base leading-tight font-semibold">
+          <h1 className="truncate text-base leading-tight font-medium text-foreground">
             {app.name}
           </h1>
           <AppStatusBadge status={app.status} health={health} />

@@ -300,7 +300,7 @@ function OperationalRail({
   return (
     <section
       aria-label={t("list.summaryAria")}
-      className="grid overflow-hidden rounded-2xl border border-panel-border bg-panel sm:grid-cols-5"
+      className="grid overflow-hidden rounded-2xl bg-panel sm:grid-cols-5"
     >
       {cells.map((cell, index) => {
         const Icon = cell.icon
@@ -314,7 +314,7 @@ function OperationalRail({
                 : "",
             ].join(" ")}
           >
-            <div className="flex items-center gap-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <Icon className={`size-3.5 ${cell.tone}`} />
               {cell.label}
             </div>
@@ -532,7 +532,7 @@ function DatabasesGridSkeleton(): React.JSX.Element {
       {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
-          className="rounded-xl border border-panel-border bg-panel-inset p-4 shadow-sm"
+          className="rounded-[10px] bg-panel-inset p-4 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
         >
           <div className="h-4 w-32 skeleton-surface rounded" />
           <div className="mt-2 h-3 w-44 skeleton-surface rounded" />

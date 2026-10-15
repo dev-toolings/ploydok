@@ -50,7 +50,7 @@ function TlsBadge({ status }: { status: Domain["tlsStatus"] }): React.JSX.Elemen
   const { t } = useTranslation("apps")
   if (status === "issued") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
         <span className="size-1.5 rounded-full bg-emerald-500" />
         {t("domains.issued")}
       </span>
@@ -58,14 +58,14 @@ function TlsBadge({ status }: { status: Domain["tlsStatus"] }): React.JSX.Elemen
   }
   if (status === "failed") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+      <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
         <span className="size-1.5 rounded-full bg-red-500" />
         {t("domains.failed")}
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+    <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
       <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
       {t("domains.pending")}
     </span>
@@ -169,7 +169,7 @@ export function DomainsTable({
           <col className="w-[25%]" />
         </colgroup>
         <thead>
-          <tr className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          <tr className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground">
             <th className="px-4 py-2.5">{t("domains.hostname")}</th>
             <th className="px-4 py-2.5">{t("domains.tlsStatus")}</th>
             <th className="px-4 py-2.5 text-right">{t("common:actions")}</th>

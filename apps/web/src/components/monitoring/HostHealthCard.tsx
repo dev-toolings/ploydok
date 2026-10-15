@@ -34,7 +34,7 @@ const PCT_CRIT = 90
 function pctClass(pct: number): string {
   if (pct >= PCT_CRIT) return "text-destructive"
   if (pct >= PCT_WARN) return "text-amber-600 dark:text-amber-400"
-  return "text-emerald-600 dark:text-emerald-400"
+  return "text-foreground"
 }
 
 export function HostHealthCard(): React.JSX.Element {
@@ -43,7 +43,7 @@ export function HostHealthCard(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <div className="rounded-2xl rounded-xl bg-panel p-4">
+      <div className="rounded-2xl bg-panel p-4">
         <div className="h-4 w-32 rounded skeleton-surface" />
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -57,7 +57,7 @@ export function HostHealthCard(): React.JSX.Element {
   if (error || !data) {
     return (
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-        <p className="font-sans text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400">
+        <p className="font-sans text-xs text-amber-600 dark:text-amber-400">
           host_stats_unavailable
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -91,27 +91,27 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
   return (
     <section
       aria-label={t("host.section")}
-      className="rounded-2xl rounded-xl bg-panel"
+      className="rounded-2xl bg-panel"
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="space-y-0.5">
-          <p className="font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+          <p className="font-sans text-xs text-muted-foreground">
             {t("host.vps")}
           </p>
           <p className="text-sm font-medium">
             {t("host.serverHealth")}{" "}
-            <span className="ml-1 font-sans text-[10px] text-muted-foreground">
+            <span className="ml-1 font-sans text-xs text-muted-foreground">
               {t("host.uptime", { value: formatUptime(data.uptime_seconds) })}
             </span>
           </p>
         </div>
         {hasAlerts ? (
-          <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-destructive/10 px-2 text-[11px] font-medium text-destructive">
+          <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-neg-100 dark:bg-[#4d0218]/60 px-2 text-xs font-medium text-neg-700 dark:text-[#ff637e]">
             <span className="size-1.5 rounded-full bg-destructive" />
             {t("host.alerts", { count: data.alerts.length })}
           </span>
         ) : (
-          <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-pos-100 dark:bg-[#192e03]/60 px-2 text-xs font-medium text-pos-700 dark:text-[#9ae600]">
             <span className="size-1.5 rounded-full bg-emerald-500" />
             {t("healthy")}
           </span>
@@ -192,7 +192,7 @@ function Cell({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1 px-4 py-3">
-      <dt className="flex items-center gap-1.5 font-sans text-[10px] tracking-wide text-muted-foreground uppercase">
+      <dt className="flex items-center gap-1.5 font-sans text-xs text-muted-foreground">
         <Icon className="size-3" />
         {label}
       </dt>

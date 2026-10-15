@@ -126,7 +126,7 @@ function SecurityPosturePage(): React.JSX.Element {
   return (
     <section
       aria-label={t("posture.aria")}
-      className="relative overflow-hidden rounded-2xl rounded-xl bg-panel"
+      className="relative overflow-hidden rounded-2xl bg-panel"
     >
       <div
         aria-hidden
@@ -139,10 +139,10 @@ function SecurityPosturePage(): React.JSX.Element {
               <RiShieldKeyholeLine className="size-5" />
             </div>
             <div className="space-y-1">
-              <p className="font-sans text-[10px] font-light tracking-wide text-muted-foreground uppercase">
+              <p className="font-sans text-xs font-light text-muted-foreground">
                 {t("posture.label")}
               </p>
-              <h2 className="font-heading text-lg leading-tight font-medium">
+              <h2 className="font-heading text-base leading-tight font-medium">
                 {t("posture.title")}
               </h2>
             </div>
@@ -198,7 +198,7 @@ function PostureRow({
           <p className="text-sm font-medium">{signal.label}</p>
           <p
             className={cn(
-              "font-sans text-[10px] tracking-wide uppercase",
+              "font-sans text-xs",
               text
             )}
           >

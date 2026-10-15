@@ -72,7 +72,7 @@ function SessionsPage(): React.JSX.Element {
       <section className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold">{t("sessions.title")}</h2>
+            <h2 className="text-base font-medium">{t("sessions.title")}</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               {t("sessions.hint")}
             </p>
@@ -236,7 +236,7 @@ function SessionRow({
           className={cn(
             "flex size-10 shrink-0 items-center justify-center rounded-md",
             session.is_current
-              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              ? "bg-pos-100 dark:bg-[#192e03]/60 text-pos-700 dark:text-[#9ae600]"
               : "bg-muted text-muted-foreground"
           )}
         >
@@ -252,7 +252,7 @@ function SessionRow({
               </span>
             </p>
             {session.is_current ? (
-              <span className="relative inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+              <span className="relative inline-flex items-center gap-1 rounded-md bg-pos-100 dark:bg-[#192e03]/60 px-1.5 py-0.5 text-[10px] font-medium text-pos-700 dark:text-[#9ae600]">
                 <span className="relative flex size-1.5">
                   <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
                   <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />

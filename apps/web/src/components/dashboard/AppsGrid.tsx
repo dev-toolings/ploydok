@@ -60,7 +60,7 @@ export function AppsGrid({
 
   return (
     <div className="space-y-3">
-      <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+      <p className="text-xs font-medium text-muted-foreground">
         {t("dashboard.recentApps")}
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -133,7 +133,7 @@ function AppMiniCard({
   }
 
   return (
-    <article className="overflow-hidden rounded-2xl bg-panel transition-colors hover:border-muted-foreground/30">
+    <article className="overflow-hidden rounded-2xl bg-panel transition-colors">
       <Link
         to={settingsPath as never}
         className="block space-y-2 p-4 hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"

@@ -190,7 +190,7 @@ function BrandingPage(): React.JSX.Element {
                       color: primaryColor || "#0066ff",
                     }}
                   >
-                    <h3 className="text-lg font-semibold">{appName}</h3>
+                    <h3 className="text-base font-medium">{appName}</h3>
                     <p className="mt-2 text-sm text-muted-foreground">
                       {t("branding.previewHint")}
                     </p>

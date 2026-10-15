@@ -46,7 +46,7 @@ export function InstallDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+        <div className="rounded-md border border-amber-500/30 bg-warn-100 dark:bg-[#432004]/60 px-3 py-2 text-xs text-warn-700 dark:text-[#fdc700]">
           {t("install.hostHint")}
         </div>
 

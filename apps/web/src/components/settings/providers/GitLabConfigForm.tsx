@@ -24,7 +24,7 @@ export function GitLabConfigForm({
 
   return (
     <form
-      className="space-y-4 rounded-2xl rounded-xl bg-panel p-5"
+      className="space-y-4 rounded-2xl bg-panel p-5"
       onSubmit={(e) => {
         e.preventDefault()
         void onSave({
@@ -103,7 +103,7 @@ export function GitLabSetupHelp({
 }): React.JSX.Element {
   const { t } = useTranslation("settings")
   return (
-    <details className="rounded-2xl rounded-xl bg-panel p-5 text-xs">
+    <details className="rounded-2xl bg-panel p-5 text-xs">
       <summary className="cursor-pointer font-medium">
         {t("gitlab.howTo")}
       </summary>

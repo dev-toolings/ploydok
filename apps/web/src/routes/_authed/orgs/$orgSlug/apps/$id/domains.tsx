@@ -61,7 +61,7 @@ function AppDomainsTab(): React.JSX.Element {
     <div className="w-full space-y-4 px-4 py-6 md:px-8 md:py-8">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold">{t("domains.customTitle")}</h2>
+          <h2 className="text-sm font-medium">{t("domains.customTitle")}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t("domains.customHint")}
           </p>
@@ -165,7 +165,7 @@ function AppDomainsTab(): React.JSX.Element {
 
       <section className="flex flex-col gap-3">
         <header>
-          <h2 className="text-sm font-semibold">{t("domains.cdnSection")}</h2>
+          <h2 className="text-sm font-medium">{t("domains.cdnSection")}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t("domains.cdnSectionHint")}
           </p>
@@ -177,7 +177,7 @@ function AppDomainsTab(): React.JSX.Element {
 
       <section className="flex flex-col gap-3">
         <header>
-          <h2 className="text-sm font-semibold">{t("domains.protectionSection")}</h2>
+          <h2 className="text-sm font-medium">{t("domains.protectionSection")}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t("domains.protectionSectionHint")}
           </p>

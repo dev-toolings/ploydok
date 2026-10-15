@@ -208,7 +208,7 @@ function AdminDiskPage(): React.JSX.Element {
     <div className="w-full space-y-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">
+          <h1 className="text-xl leading-[26px] font-medium text-foreground">
             {t("adminDisk.title")}
           </h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -322,7 +322,7 @@ function AdminDiskPage(): React.JSX.Element {
       </section>
 
       {error || data?.refreshFailed ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 p-4 text-sm text-neg-700 dark:text-[#ff637e]">
           {t(error ? "adminDisk.loadFailed" : "adminDisk.refreshFailed")}
         </div>
       ) : null}
@@ -377,7 +377,7 @@ function AdminDiskPage(): React.JSX.Element {
               ? Object.entries(CATEGORY_KEYS).map(([kind, key]) => (
                   <div
                     key={kind}
-                    className="flex flex-col gap-3 rounded-xl bg-panel p-4"
+                    className="flex flex-col gap-3 rounded-2xl bg-panel p-4"
                     aria-busy="true"
                   >
                     <p className="text-sm font-medium">{t(key)}</p>
@@ -409,7 +409,7 @@ function HostUsageCard({
   return (
     <section
       aria-label={t("adminDisk.hostUsage")}
-      className="rounded-2xl rounded-xl bg-panel p-4"
+      className="rounded-2xl bg-panel p-4"
     >
       <div className="flex items-center gap-2 text-sm font-medium text-foreground">
         <RiHardDriveLine className="size-4 text-muted-foreground" />
@@ -455,7 +455,7 @@ function CategoryCard({
 }): React.JSX.Element {
   const { t } = useTranslation("monitoring")
   return (
-    <div className="flex flex-col gap-2 rounded-2xl rounded-xl bg-panel p-4">
+    <div className="flex flex-col gap-2 rounded-2xl bg-panel p-4">
       <p className="text-sm font-medium text-foreground">
         {t(CATEGORY_KEYS[category.kind])}
       </p>

@@ -73,7 +73,7 @@ function PreviewsPage() {
   return (
     <div className="w-full space-y-6 px-4 py-6 md:px-8 md:py-8">
       <div>
-        <h1 className="text-2xl font-bold">{t("previews.title")}</h1>
+        <h1 className="text-xl leading-[26px] font-medium text-foreground">{t("previews.title")}</h1>
         <p className="text-sm text-gray-600">
           {t("previews.description")}
         </p>
@@ -119,7 +119,7 @@ function PreviewsPage() {
               </p>
             </div>
 
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs">
+            <div className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1 text-xs">
               <span
                 aria-hidden="true"
                 className="h-1.5 w-1.5 rounded-full bg-amber-500"
@@ -134,7 +134,7 @@ function PreviewsPage() {
 
       {activePreview.length > 0 && (
         <div>
-          <h2 className="mb-3 text-lg font-semibold">{t("previews.active")}</h2>
+          <h2 className="mb-3 text-base font-medium">{t("previews.active")}</h2>
           <div className="space-y-3">
             {activePreview.map((p) => (
               <PreviewCard key={p.id} preview={p} appId={appId} />
@@ -145,7 +145,7 @@ function PreviewsPage() {
 
       {inactivePreview.length > 0 && (
         <div>
-          <h2 className="mb-3 text-lg font-semibold">{t("previews.inactive")}</h2>
+          <h2 className="mb-3 text-base font-medium">{t("previews.inactive")}</h2>
           <div className="space-y-3">
             {inactivePreview.map((p) => (
               <PreviewCard key={p.id} preview={p} appId={appId} />

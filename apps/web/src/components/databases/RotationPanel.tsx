@@ -61,11 +61,11 @@ export function RotationPanel({
   return (
     <div className="flex flex-col gap-4 rounded-lg border p-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">{t("rotation.title")}</h2>
+        <h2 className="text-sm font-medium">{t("rotation.title")}</h2>
         {!rotationSupported ? (
           <Badge variant="outline">{t("rotation.notSupported")}</Badge>
         ) : db.rotation_in_progress ? (
-          <Badge variant="secondary" className="bg-amber-500/10 text-amber-600">
+          <Badge variant="secondary" className="bg-warn-100 dark:bg-[#432004]/60 text-warn-700 dark:text-[#fdc700]">
             {t("rotation.inProgress")}
           </Badge>
         ) : null}

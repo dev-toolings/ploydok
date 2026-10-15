@@ -45,7 +45,7 @@ export function GettingStartedPanel({
 }
 
 const miniItemClass =
-  "group flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-panel-border bg-panel-inset px-4 py-3 text-left shadow-sm transition-colors outline-none hover:border-muted-foreground/30 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+  "group flex min-h-12 w-full items-center justify-between gap-3 rounded-[10px] bg-panel-inset px-4 py-3 text-left transition-colors outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
 
 function MiniItemContent({
   label,

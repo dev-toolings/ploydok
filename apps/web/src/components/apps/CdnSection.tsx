@@ -700,7 +700,7 @@ function GuideStep({
           {number}
         </div>
         <div className="space-y-1">
-          <h3 className="text-sm font-semibold">{title}</h3>
+          <h3 className="text-sm font-medium">{title}</h3>
           <p className="text-xs leading-5 text-muted-foreground">{copy}</p>
         </div>
       </div>

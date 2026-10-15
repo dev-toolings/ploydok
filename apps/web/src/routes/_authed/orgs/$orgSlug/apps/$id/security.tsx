@@ -26,7 +26,7 @@ function AppSecurityPage(): React.JSX.Element {
   return (
     <div className="w-full space-y-5 px-4 py-6 md:px-8">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">
+        <h1 className="text-xl leading-[26px] font-medium text-foreground">
           {t("securityTab.title")}
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -43,7 +43,7 @@ function AppSecurityPage(): React.JSX.Element {
       ) : null}
 
       {error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 p-4 text-sm text-neg-700 dark:text-[#ff637e]">
           {t("securityTab.loadFailed")}
         </div>
       ) : null}
@@ -98,7 +98,7 @@ function ImageScanPanel({ appId }: { appId: string }): React.JSX.Element {
 
       {error ? (
         <div
-          className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+          className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 p-3 text-sm text-neg-700 dark:text-[#ff637e]"
           role="alert"
         >
           {t("securityTab.scanLoadFailed")}
@@ -123,7 +123,7 @@ function ImageScanPanel({ appId }: { appId: string }): React.JSX.Element {
           {t("securityTab.scannerMissing")}
         </div>
       ) : data.status === "failed" ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-neg-100 dark:bg-[#4d0218]/60 p-3 text-sm text-neg-700 dark:text-[#ff637e]">
           {t("securityTab.scanFailed")}
         </div>
       ) : (
