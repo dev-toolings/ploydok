@@ -325,6 +325,41 @@ describe.skipIf(skip)("workspace storage destination routes", () => {
     ).toHaveLength(1)
   })
 
+  it("deletes the credentials secret together with an unused destination", async () => {
+    const fixture = await seedOrg(db, crypto.randomUUID().slice(0, 8))
+    orgIds.push(fixture.orgId)
+    const ownerApp = testApp(db, {
+      ...fixture.owner,
+      token_scopes: ["storage:write"],
+    })
+    const create = await ownerApp.request(
+      request("POST", `/orgs/${fixture.orgId}/storage-destinations`, {
+        name: "Disposable R2",
+        kind: "s3",
+        endpoint: "https://s3.example.test",
+        bucket: "backups",
+        region: "auto",
+        credentials: { accessKeyId: "access-key", secretAccessKey: "secret-key" },
+      })
+    )
+    expect(create.status).toBe(201)
+    const created = (await create.json()) as { destination: { id: string } }
+    expect(
+      await db.select().from(secrets).where(eq(secrets.project_id, fixture.orgId))
+    ).toHaveLength(1)
+
+    const deletion = await ownerApp.request(
+      request(
+        "DELETE",
+        `/orgs/${fixture.orgId}/storage-destinations/${created.destination.id}`
+      )
+    )
+    expect(deletion.status).toBe(200)
+    expect(
+      await db.select().from(secrets).where(eq(secrets.project_id, fixture.orgId))
+    ).toHaveLength(0)
+  })
+
   it("performs the local witness put/read/delete cycle and records failures", async () => {
     const fixture = await seedOrg(db, crypto.randomUUID().slice(0, 8))
     orgIds.push(fixture.orgId)

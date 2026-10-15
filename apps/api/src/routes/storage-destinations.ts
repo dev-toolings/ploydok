@@ -433,6 +433,20 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
               eq(storage_destinations.org_id, orgId)
             )
           )
+        const ownSecretId = `storage-destination-secret-${destinationId}`
+        await tx.execute(sql`
+          DELETE FROM secrets
+          WHERE id = ${ownSecretId}
+            AND NOT EXISTS (
+              SELECT 1 FROM storage_destinations WHERE credentials_secret_id = ${ownSecretId}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM backup_configs WHERE s3_credentials_secret_id = ${ownSecretId}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM volume_backup_configs WHERE s3_credentials_secret_id = ${ownSecretId}
+            )
+        `)
         return { found: true, inUse: false }
       })
       if (!deleted.found) {
