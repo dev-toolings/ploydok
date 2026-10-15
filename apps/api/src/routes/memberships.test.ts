@@ -2,6 +2,7 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test"
 import { Hono } from "hono"
 import type { Db } from "@ploydok/db"
+import type { MemberListItem } from "@ploydok/shared"
 import type { AuthUser } from "../auth/middleware"
 
 type InvitationRow = {
@@ -17,6 +18,7 @@ type InvitationRow = {
 
 type InvitationColumn = "id" | "org_id"
 
+const memberRows: MemberListItem[] = []
 const invitationRows: InvitationRow[] = []
 const createdInvitations: InvitationRow[] = []
 const outboxEvents: Array<{
@@ -116,7 +118,7 @@ mock.module("@ploydok/db/queries", () => ({
   },
   getMembership: async () => ({ role: "owner", accepted_at: new Date() }),
   isOrgOwner: async () => true,
-  listMembershipsForOrg: async () => [],
+  listMembershipsForOrg: async () => memberRows,
   listPendingInvitationsForOrg: async () => [],
   removeMembership: async () => undefined,
   updateMembershipRole: async () => undefined,
@@ -273,10 +275,10 @@ function buildDb(): Db {
   return db as unknown as Db
 }
 
-function buildApp(db: Db) {
+function buildApp(db: Db, user: AuthUser = fakeUser) {
   const app = new Hono<{ Variables: { user: AuthUser } }>()
   app.use("*", async (c, next) => {
-    c.set("user", fakeUser)
+    c.set("user", user)
     await next()
   })
   app.route("/", createMembershipsRouter(db))
@@ -284,10 +286,51 @@ function buildApp(db: Db) {
 }
 
 beforeEach(() => {
+  memberRows.length = 0
   invitationRows.length = 0
   createdInvitations.length = 0
   outboxEvents.length = 0
   outboxFailure = false
+})
+
+describe("GET /:orgId/members", () => {
+  it("sets is_me true only for the caller on each request", async () => {
+    memberRows.push(
+      ...[fakeUser.id, "other-owner", "member-user"].map((userId) => ({
+        user_id: userId,
+        role: userId === "member-user" ? "member" : "owner",
+        invited_at: new Date(),
+        accepted_at: new Date(),
+        user: { email: `${userId}@example.com`, display_name: userId },
+      }))
+    )
+
+    for (const callerId of [fakeUser.id, "member-user"]) {
+      const response = await buildApp(buildDb(), {
+        ...fakeUser,
+        id: callerId,
+      }).request("/org-a/members")
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        members: Array<{ user_id: string; is_me: boolean }>
+        pending_invitations: unknown[]
+      }
+      expect(
+        body.members.map((member) => ({
+          user_id: member.user_id,
+          is_me: member.is_me,
+        }))
+      ).toEqual(
+        memberRows.map((member) => ({
+          user_id: member.user_id,
+          is_me: member.user_id === callerId,
+        }))
+      )
+      expect(body.pending_invitations).toEqual([])
+    }
+    expect(memberRows.every((member) => !("is_me" in member))).toBe(true)
+  })
 })
 
 describe("POST /:orgId/members/invite", () => {
