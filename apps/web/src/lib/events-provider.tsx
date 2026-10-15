@@ -208,11 +208,21 @@ function attachListener(
   )
 }
 
+function isReplayed(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { replay?: unknown }).replay === true
+  )
+}
+
 export function useEventsSubscription<T>(
   eventType: string,
   callback: (data: T) => void,
-  enabled = true
+  enabled = true,
+  options: { replay?: boolean } = {}
 ): void {
+  const acceptReplay = options.replay === true
   const subscribe = React.useContext(SubscribeContext)
   const cbRef = React.useRef(callback)
   React.useEffect(() => {
@@ -223,10 +233,14 @@ export function useEventsSubscription<T>(
     if (!enabled) return
     if (!subscribe) return
     const unsub = subscribe(eventType, (data) => {
+      // The server replays buffered history on every (re)connect, flagged with
+      // `replay: true`. Only the notification bell wants it; data refreshes
+      // and cache patches must react to live events only.
+      if (!acceptReplay && isReplayed(data)) return
       cbRef.current(data as T)
     })
     return unsub
-  }, [subscribe, eventType, enabled])
+  }, [subscribe, eventType, enabled, acceptReplay])
 }
 
 export function useEventsStatus(): EventsStatus {

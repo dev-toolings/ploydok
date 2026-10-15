@@ -179,24 +179,54 @@ export function useNotifications(): {
 
   // Un abonnement par type — appels stables dans le même ordre à chaque render.
   const push = (payload: NotificationEvent) => dispatch({ type: "push", payload })
-  useEventsSubscription<NotificationEvent>("build.started", push)
-  useEventsSubscription<NotificationEvent>("build.succeeded", push)
-  useEventsSubscription<NotificationEvent>("build.failed", push)
-  useEventsSubscription<NotificationEvent>("build.cancelled", push)
-  useEventsSubscription<NotificationEvent>("deploy.status_change", push)
-  useEventsSubscription<NotificationEvent>("container.health", push)
+  useEventsSubscription<NotificationEvent>("build.started", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("build.succeeded", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("build.failed", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("build.cancelled", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("deploy.status_change", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("container.health", push, true, {
+    replay: true,
+  })
   // provider.sync.progress is intentionally NOT subscribed: it fires once per
   // page (potentially dozens per sync) and would flood the bell. The dialog
   // consumes it directly.
-  useEventsSubscription<NotificationEvent>("provider.sync.started", push)
-  useEventsSubscription<NotificationEvent>("provider.sync.completed", push)
-  useEventsSubscription<NotificationEvent>("provider.sync.failed", push)
-  useEventsSubscription<NotificationEvent>("app.delete.queued", push)
-  useEventsSubscription<NotificationEvent>("app.deleted", push)
-  useEventsSubscription<NotificationEvent>("app.delete.failed", push)
-  useEventsSubscription<NotificationEvent>("app.stop.queued", push)
-  useEventsSubscription<NotificationEvent>("app.stopped", push)
-  useEventsSubscription<NotificationEvent>("app.stop.failed", push)
+  useEventsSubscription<NotificationEvent>("provider.sync.started", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("provider.sync.completed", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("provider.sync.failed", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("app.delete.queued", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("app.deleted", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("app.delete.failed", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("app.stop.queued", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("app.stopped", push, true, {
+    replay: true,
+  })
+  useEventsSubscription<NotificationEvent>("app.stop.failed", push, true, {
+    replay: true,
+  })
 
   const markAllRead = () => {
     const previousLastReadAt = state.lastReadAt
