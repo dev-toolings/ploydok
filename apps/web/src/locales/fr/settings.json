@@ -165,7 +165,8 @@
       "manage": "Gérer sur GitHub",
       "more": "Autres actions pour @{{login}}",
       "revokeInstallation": "Révoquer l'installation",
-      "deleteApp": "Retirer l'App de Ploydok"
+      "deleteApp": "Retirer l'App de Ploydok",
+      "removing": "Suppression..."
     }
   },
   "gitlab": {

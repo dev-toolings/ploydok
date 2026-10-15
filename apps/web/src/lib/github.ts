@@ -391,12 +391,15 @@ export function useResetGitHubApp() {
         }`,
         { method: "DELETE" }
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["github", "app"] })
-      qc.invalidateQueries({ queryKey: ["github", "installations"] })
-      qc.invalidateQueries({ queryKey: ["github", "cache-status"] })
-      qc.invalidateQueries({ queryKey: ["github", "repos"] })
-    },
+    // Awaited: the caller's pending state lasts until the refreshed list no
+    // longer shows the removed App.
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["github", "app"] }),
+        qc.invalidateQueries({ queryKey: ["github", "installations"] }),
+        qc.invalidateQueries({ queryKey: ["github", "cache-status"] }),
+        qc.invalidateQueries({ queryKey: ["github", "repos"] }),
+      ]),
   })
 }
 
@@ -509,11 +512,15 @@ export function useRemoveGitHubInstallation() {
           method: "DELETE",
         }
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["github", "installations"] })
-      qc.invalidateQueries({ queryKey: ["github", "repos"] })
-      qc.invalidateQueries({ queryKey: ["git-providers", "status"] })
-    },
+    // Awaited: the caller's pending state lasts until the refreshed list no
+    // longer shows the revoked installation.
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["github", "installations"] }),
+        qc.invalidateQueries({ queryKey: ["github", "cache-status"] }),
+        qc.invalidateQueries({ queryKey: ["github", "repos"] }),
+        qc.invalidateQueries({ queryKey: ["git-providers", "status"] }),
+      ]),
   })
 }
 
@@ -574,11 +581,14 @@ export interface CacheStatusResponse {
   staleThresholdMs: number
 }
 
-export function useGitHubCacheStatus(opts: { autoRefresh?: boolean } = {}) {
+export function useGitHubCacheStatus(
+  opts: { autoRefresh?: boolean; enabled?: boolean } = {}
+) {
   return useQuery<CacheStatusResponse, ApiError>({
     queryKey: ["github", "cache-status"],
     queryFn: () =>
       apiFetch<CacheStatusResponse>("/github/installations/cache-status"),
+    enabled: opts.enabled ?? true,
     staleTime: 5_000,
     refetchInterval: opts.autoRefresh ? 3_000 : false,
   })
