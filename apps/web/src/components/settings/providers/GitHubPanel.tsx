@@ -288,9 +288,18 @@ export function GitHubPanel(): React.JSX.Element {
   const { data: appConfig, isLoading: appLoading } = useGitHubAppConfig({
     enabled: isAdmin,
   })
+  // Started together with the App config instead of after it: each query
+  // in the chain used to paint its own skeleton.
   const credentialsStatus = useGitHubAppCredentialsStatus({
-    enabled: isAdmin && appConfig?.configured === true,
+    enabled: isAdmin,
   })
+  const installationsEnabled = isAdmin
+    ? canLoadGitHubInstallations(
+        appConfig?.configured === true,
+        credentialsStatus.data?.status
+      )
+    : providerStatus.data?.github.configured === true
+  const installations = useInstallations({ enabled: installationsEnabled })
   const createApp = useCreateGitHubAppFlow("/settings/git-providers/github")
   const resetApp = useResetGitHubApp()
   const [resettingAppId, setResettingAppId] = React.useState<string | null>(
@@ -302,8 +311,13 @@ export function GitHubPanel(): React.JSX.Element {
   )
   const credentialsUnreadable = credentialsStatus.data?.status === "unreadable"
 
-  if (meLoading || providerStatus.isLoading) {
-    return <GitHubStatusSkeleton />
+  if (
+    meLoading ||
+    providerStatus.isLoading ||
+    (isAdmin && (appLoading || credentialsStatus.isLoading)) ||
+    installations.isLoading
+  ) {
+    return <GitHubPanelSkeleton />
   }
 
   if (!isAdmin) {
@@ -333,32 +347,18 @@ export function GitHubPanel(): React.JSX.Element {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-base font-medium">{t("github.appTitle")}</h2>
-        <p className="text-sm text-muted-foreground">
-          {t("github.appDescription")}
-        </p>
-      </div>
-
       {appSuccess && (
         <p className="text-sm text-green-600 dark:text-green-400" role="status">
           {t("github.configuredSuccess")}
         </p>
       )}
 
-      {appLoading ? (
-        <div className="rounded-2xl bg-panel p-6">
-          <GitHubStatusSkeleton />
-        </div>
-      ) : appConfig?.configured ? (
+      {appConfig?.configured ? (
         <InstallationsCard
           role="admin"
           accounts={{
             apps: appConfig.apps ?? [],
-            installationsEnabled: canLoadGitHubInstallations(
-              true,
-              credentialsStatus.data?.status
-            ),
+            installationsEnabled,
             resettingAppId,
             resetError,
             onResetApp: (appId) => void handleResetApp(appId),
@@ -370,14 +370,22 @@ export function GitHubPanel(): React.JSX.Element {
           }}
         />
       ) : (
-        <div className="rounded-2xl bg-panel p-6">
-          <GitHubAppSetupCard
-            isPending={createApp.isPending}
-            onCreate={() => void createApp.start()}
-            onImported={() => setAppSuccess(true)}
-            error={createApp.error}
-          />
-        </div>
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-base font-medium">{t("github.appTitle")}</h2>
+            <p className="text-sm text-muted-foreground">
+              {t("github.appDescription")}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-panel p-6">
+            <GitHubAppSetupCard
+              isPending={createApp.isPending}
+              onCreate={() => void createApp.start()}
+              onImported={() => setAppSuccess(true)}
+              error={createApp.error}
+            />
+          </div>
+        </section>
       )}
 
       <GitHubCredentialsRecovery unreadable={credentialsUnreadable} />
@@ -498,7 +506,7 @@ export function InstallationsCard({
   accounts?: AdminAccountsProps
 }): React.JSX.Element {
   const { t } = useTranslation("settings")
-  const { data, isLoading, isFetching, error, refetch } = useInstallations({
+  const { data, isLoading, error, refetch } = useInstallations({
     enabled: accounts?.installationsEnabled ?? true,
   })
   const [resetTarget, setResetTarget] = React.useState<
@@ -507,6 +515,8 @@ export function InstallationsCard({
   const [installingAppId, setInstallingAppId] = React.useState<string | null>(
     null
   )
+  // Mount and focus refetches are automatic: only an explicit click spins.
+  const [refreshing, setRefreshing] = React.useState(false)
   const install = usePendingAction(
     async (url: string): Promise<void> => {
       window.location.href = url
@@ -618,10 +628,13 @@ export function InstallationsCard({
             className="w-full sm:w-auto"
             variant="outline"
             size="sm"
-            onClick={() => void refetch()}
-            loading={isFetching}
+            onClick={() => {
+              setRefreshing(true)
+              void refetch().finally(() => setRefreshing(false))
+            }}
+            loading={refreshing}
           >
-            {isFetching ? t("github.refreshing") : t("common:refresh")}
+            {refreshing ? t("github.refreshing") : t("common:refresh")}
           </Button>
         </div>
       </div>
@@ -1100,6 +1113,34 @@ function InstallationsEmptyState(): React.JSX.Element {
       <p className="text-sm text-muted-foreground">
         {t("github.emptyInstallations")}
       </p>
+    </div>
+  )
+}
+
+/** Mirrors the loaded accounts section so the page paints one skeleton. */
+function GitHubPanelSkeleton(): React.JSX.Element {
+  const { t } = useTranslation("common")
+  return (
+    <div className="space-y-4" aria-busy="true" aria-label={t("loading")}>
+      <div className="space-y-2">
+        <div className="h-4 w-36 skeleton-surface rounded" />
+        <div className="h-3 w-80 max-w-full skeleton-surface rounded" />
+      </div>
+      <div className="divide-y divide-border rounded-2xl bg-panel p-6">
+        {[0, 1].map((row) => (
+          <div
+            key={row}
+            className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"
+          >
+            <div className="size-10 shrink-0 skeleton-surface rounded-full" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-32 skeleton-surface rounded" />
+              <div className="h-3 w-48 max-w-full skeleton-surface rounded" />
+            </div>
+            <div className="hidden h-8 w-36 skeleton-surface rounded-md sm:block" />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
