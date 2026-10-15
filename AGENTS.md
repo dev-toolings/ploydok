@@ -94,6 +94,10 @@ git clone --depth 1 https://github.com/coollabsio/coolify.git /tmp/coolify
 
 ## Code Placement And Change Style
 
+- Product fixes must work across repositories and architectures. Never encode an
+  example application's name, directory layout or start command as a global
+  default. Derive defaults from repository evidence, preserve explicit user
+  configuration, and require a choice when several interpretations remain.
 - Keep changes local to the subsystem you are modifying.
 - Prefer extending existing modules over creating parallel abstractions.
 - Do not introduce state management libraries or app-wide context unless there is a clear, demonstrated need.

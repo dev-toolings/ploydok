@@ -195,7 +195,13 @@
     "nixpacksCompose": "Compose détecté — le support natif est indisponible. Sélectionnez Nixpacks uniquement si le dépôt fonctionne aussi sans Compose.",
     "noProjectMatch": "Aucun projet ne correspond à « {{query}} ».",
     "noProjects": "Aucun projet trouvé.",
-    "loadProjectsFailed": "Impossible de charger les projets : {{message}}"
+    "loadProjectsFailed": "Impossible de charger les projets : {{message}}",
+    "repositoryTarget": "Répertoire de l’application",
+    "selectRepositoryTarget": "Choisir une application",
+    "repositoryTargetHint": "Détecté à partir des fichiers du dépôt. Déployez chaque service séparément, ou choisissez un répertoire contenant votre configuration Compose.",
+    "repositoryTargetRequired": "Plusieurs applications ont été trouvées. Choisissez un répertoire avant de continuer.",
+    "repositoryDetectionFailed": "La détection du dépôt est indisponible. Saisissez le répertoire de l’application manuellement (. pour la racine du dépôt) et choisissez une méthode de build.",
+    "productionStartRequired": "Saisissez la commande de démarrage de production pour cet adaptateur serveur."
   },
   "status": {
     "running": "En cours",

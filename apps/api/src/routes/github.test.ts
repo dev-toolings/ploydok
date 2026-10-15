@@ -1813,3 +1813,37 @@ describe("GET /github/app/callback", () => {
     expect(data.error).toBe("state_mismatch")
   })
 })
+
+describe("GitHub application directory discovery", () => {
+  it("requires authentication and only uses installations visible to the current user", async () => {
+    expect(
+      (
+        await buildApp().request(
+          "/github/repos/acme/repo/deployment-targets?ref=main"
+        )
+      ).status
+    ).toBe(401)
+    mockGitHubAppConfig = { app_id: "123" }
+    fakeInstanceAdmin = false
+    userGitHubInstallationIds = ["42"]
+    liveInstallations = [
+      { id: 42, accountLogin: "acme" },
+      { id: 99, accountLogin: "foreign" },
+    ]
+    using _files = spyOn(
+      githubModule.ghProvider,
+      "listFiles"
+    ).mockImplementation(async (id, repo, ref) => {
+      expect([id, repo, ref]).toEqual(["42", "acme/repo", "main"])
+      return ["products/service/go.mod"]
+    })
+    const res = await buildApp(FAKE_USER).request(
+      "/github/repos/acme/repo/deployment-targets?ref=main"
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { targets: { rootDir: string }[] }
+    expect(body.targets.map((target) => target.rootDir)).toEqual([
+      "products/service",
+    ])
+  })
+})

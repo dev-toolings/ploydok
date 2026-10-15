@@ -76,3 +76,11 @@ export const CreateServiceFromTemplateBody = z.object({
 export type CreateServiceFromTemplateBody = z.infer<
   typeof CreateServiceFromTemplateBody
 >
+
+// Upstream versions are free-form: "1.9" and "v1.9" both occur, as do tags such
+// as "latest". Prefix "v" only to numeric versions, and never twice.
+export function formatTemplateVersion(version: string): string {
+  const trimmed = version.trim()
+  const numeric = /^[vV]?(\d.*)$/.exec(trimmed)
+  return numeric ? `v${numeric[1]}` : trimmed
+}

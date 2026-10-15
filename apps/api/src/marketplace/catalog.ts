@@ -17,6 +17,7 @@ import type {
 } from "@ploydok/shared"
 import { env } from "../env"
 import { childLogger } from "../logger"
+import { repairMojibake } from "./text-repair"
 
 const log = childLogger("marketplace.catalog")
 
@@ -84,8 +85,8 @@ function toTemplate(
 ): MarketplaceTemplate {
   return {
     id: raw.id,
-    name: raw.name,
-    description: raw.description,
+    name: repairMojibake(raw.name),
+    description: repairMojibake(raw.description),
     version: raw.version,
     logoUrl: raw.logo ? `${baseUrl()}/blueprints/${raw.id}/${raw.logo}` : null,
     tags: raw.tags,

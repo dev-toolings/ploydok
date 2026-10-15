@@ -64,12 +64,13 @@ eventsRouter.get("/", async (c) => {
     // 1. Replay buffered history, skipping events already covered by the
     // persisted last_read_at cursor. Prevents the badge from re-inflating on
     // every SSE reconnect while still letting the client dedup by id if the
-    // same event arrives again via the live subscription.
+    // same event arrives again via the live subscription. Replayed events carry
+    // `replay: true` so data-refresh consumers can ignore stale history.
     const history = eventBus.replay(channel, REPLAY_LIMIT)
     for (const event of history) {
       if (event.t <= cursorMs) continue
       await stream.writeSSE({
-        data: JSON.stringify(event),
+        data: JSON.stringify({ ...event, replay: true }),
         event: event.type,
         id: event.id,
       })

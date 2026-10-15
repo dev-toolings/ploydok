@@ -210,6 +210,31 @@ export class GitHubProvider implements GitProvider {
     return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8")
   }
 
+  async listFiles(
+    installationId: string,
+    fullName: string,
+    ref: string
+  ): Promise<string[]> {
+    const { status, data } = await fetchGitHub(
+      installationId,
+      `/repos/${fullName}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+      this.cache
+    )
+    if (status !== 200)
+      throw new Error(`GitHub repository tree returned ${status}`)
+    const body = data as {
+      truncated?: boolean
+      tree: { path: string; type: string; mode?: string }[]
+    }
+    if (body.truncated)
+      throw new Error(
+        "Repository tree is incomplete; select a root directory manually"
+      )
+    return body.tree
+      .filter((entry) => entry.type === "blob" && entry.mode !== "120000")
+      .map((entry) => entry.path)
+  }
+
   cloneUrlWithToken(fullName: string, token: string): string {
     return `https://x-access-token:${token}@github.com/${fullName}.git`;
   }

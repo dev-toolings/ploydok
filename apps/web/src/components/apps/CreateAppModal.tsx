@@ -32,7 +32,7 @@ import {
 } from "@workspace/ui/components/select"
 import { useTranslation } from "react-i18next"
 import { cn } from "@workspace/ui/lib/utils"
-import { PLANS } from "@ploydok/shared"
+import { PLANS, defaultRepositoryTarget } from "@ploydok/shared"
 import i18n from "../../lib/i18n"
 import {
   Dialog,
@@ -64,6 +64,7 @@ import {
 import {
   detectedEnvFiles,
   importEnvFileVars,
+  useRepositoryTargets,
   useStackClassification,
 } from "../../lib/stack-classifier-hook"
 import { useRegistryCredentials } from "../../lib/registry-credentials"
@@ -80,6 +81,7 @@ import type {
   GitRepo,
   ImagePullPolicy,
   ProbeResults,
+  RepositoryTarget,
   StackClassification,
 } from "@ploydok/shared"
 
@@ -392,17 +394,30 @@ export function CreateAppModal({
     form.source === "github" || form.source === "gitlab"
       ? form.source
       : undefined
+  const repositoryTargets = useRepositoryTargets(
+    classifierSource,
+    classifierSource ? form.selectedRepo?.fullName : undefined,
+    form.branch || undefined
+  )
+  const targets = repositoryTargets.data?.targets
+  const targetChoiceRequired = Boolean(
+    targets &&
+    targets.length > 1 &&
+    !defaultRepositoryTarget(targets) &&
+    !form.rootDir.trim()
+  )
   const classifier = useStackClassification(
     classifierSource,
     classifierSource ? form.selectedRepo?.fullName : undefined,
     form.branch || undefined,
     form.rootDir || undefined
   )
+  const detectionError = repositoryTargets.error ?? classifier.error
   const classification = classifier.data ?? null
   const recommendedBuild = classification?.recommendedBuild
   const hasDockerfile =
     recommendedBuild === undefined ? null : recommendedBuild === "dockerfile"
-  const detectionLoading = classifier.isFetching
+  const detectionLoading = classifier.isFetching || repositoryTargets.isFetching
   const { data: databases, isLoading: databasesLoading } = useDatabases(
     organizationId,
     { enabled: open && (currentStep === "database" || currentStep === "env") }
@@ -488,6 +503,28 @@ export function CreateAppModal({
   }, [branchDialogOpen, branches, form.selectedRepo?.defaultBranch])
 
   React.useEffect(() => {
+    if (!targets) return
+    const target = defaultRepositoryTarget(targets)
+    if (!target) return
+    setForm((prev) =>
+      prev.rootDir.trim() ? prev : { ...prev, rootDir: target.rootDir }
+    )
+  }, [targets])
+
+  React.useEffect(() => {
+    if (classification?.requiresStartCommand) setShowAdvanced(true)
+  }, [classification?.requiresStartCommand])
+
+  React.useEffect(() => {
+    if (!classification?.suggestedStartCommand) return
+    setForm((prev) =>
+      prev.startCommand
+        ? prev
+        : { ...prev, startCommand: classification.suggestedStartCommand! }
+    )
+  }, [classification])
+
+  React.useEffect(() => {
     if (recommendedBuild === undefined) return
     setForm((prev) => {
       if (prev.buildMethodTouched) return prev
@@ -496,7 +533,9 @@ export function CreateAppModal({
           ? "docker"
           : recommendedBuild === "static"
             ? "static"
-            : "nixpacks"
+            : recommendedBuild === "compose"
+              ? "compose"
+              : "nixpacks"
       if (prev.buildMethod === next) return prev
       return { ...prev, buildMethod: next }
     })
@@ -599,7 +638,18 @@ export function CreateAppModal({
     if (currentStep === "env")
       return validateInitialEnvVars(form.initialEnvVars)
     if (currentStep === "build") {
-      if (detectionLoading) return false
+      if (
+        classification?.requiresStartCommand &&
+        form.buildMethod === "nixpacks" &&
+        !form.startCommand.trim()
+      )
+        return false
+      if (
+        detectionLoading ||
+        targetChoiceRequired ||
+        (detectionError && (!form.rootDir.trim() || !form.buildMethodTouched))
+      )
+        return false
       if (
         classification?.requiresExplicitBuildChoice &&
         !form.buildMethodTouched
@@ -817,6 +867,9 @@ export function CreateAppModal({
                   hasDockerfile={hasDockerfile}
                   detectionLoading={detectionLoading}
                   classification={classification}
+                  targets={targets ?? []}
+                  detectionError={Boolean(detectionError)}
+                  targetChoiceRequired={targetChoiceRequired}
                   onRootDirChange={handleRootDirChange}
                 />
               )}
@@ -1759,6 +1812,9 @@ interface BuildStepProps {
   detectionLoading: boolean
   classification: StackClassification | null
   onRootDirChange: (rootDir: string) => void
+  targets: Array<RepositoryTarget>
+  detectionError: boolean
+  targetChoiceRequired: boolean
 }
 
 function BuildStep({
@@ -1770,6 +1826,9 @@ function BuildStep({
   detectionLoading,
   classification,
   onRootDirChange,
+  targets,
+  detectionError,
+  targetChoiceRequired,
 }: BuildStepProps): React.JSX.Element {
   const { t } = useTranslation("apps")
   const selectMethod = (method: BuildMethod): void => {
@@ -1850,7 +1909,7 @@ function BuildStep({
             label={t("create.nixpacks")}
             hint={nixpacksHint}
             active={form.buildMethod === "nixpacks"}
-            detected={hasDockerfile === false}
+            detected={classification?.recommendedBuild === "nixpacks"}
             onSelect={() => selectMethod("nixpacks")}
           />
           <BuildMethodCard
@@ -1869,6 +1928,55 @@ function BuildStep({
           />
         </div>
       </section>
+
+      {targets.length > 0 && (
+        <section className="space-y-2">
+          <label htmlFor="repository-target" className="text-sm font-medium">
+            {t("create.repositoryTarget")}
+          </label>
+          <Select
+            value={form.rootDir || undefined}
+            onValueChange={onRootDirChange}
+          >
+            <SelectTrigger
+              id="repository-target"
+              className="min-h-11 w-full min-w-0"
+            >
+              <SelectValue placeholder={t("create.selectRepositoryTarget")} />
+            </SelectTrigger>
+            <SelectContent>
+              {targets.map((target) => (
+                <SelectItem key={target.rootDir} value={target.rootDir}>
+                  {target.rootDir} (
+                  {target.classification.framework ??
+                    target.classification.stack}
+                  )
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-muted-foreground">
+            {t("create.repositoryTargetHint")}
+          </p>
+        </section>
+      )}
+      {targetChoiceRequired && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("create.repositoryTargetRequired")}
+        </p>
+      )}
+      {classification?.requiresStartCommand &&
+        form.buildMethod === "nixpacks" &&
+        !form.startCommand.trim() && (
+          <p role="alert" className="text-sm text-destructive">
+            {t("create.productionStartRequired")}
+          </p>
+        )}
+      {detectionError && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("create.repositoryDetectionFailed")}
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <ConfigField

@@ -11,6 +11,7 @@ import {
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { useTranslation } from "react-i18next"
+import { formatTemplateVersion } from "@ploydok/shared"
 import { createPageHead } from "../../../../lib/page-metadata"
 import {
   Dialog,
@@ -212,7 +213,7 @@ function TemplateCard({
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{template.name}</p>
           <p className="truncate text-xs text-muted-foreground">
-            v{template.version}
+            {formatTemplateVersion(template.version)}
           </p>
         </div>
       </div>
@@ -339,7 +340,7 @@ function TemplateDialog({
                 <DialogTitle className="flex items-center gap-2">
                   {template.name}
                   <span className="text-xs font-normal text-muted-foreground">
-                    v{template.version}
+                    {formatTemplateVersion(template.version)}
                   </span>
                 </DialogTitle>
                 <DialogDescription>{template.description}</DialogDescription>

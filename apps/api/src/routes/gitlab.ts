@@ -3,7 +3,11 @@ import { Hono } from "hono"
 import { nanoid } from "nanoid"
 import { createHash, createHmac, randomBytes } from "node:crypto"
 import { eq } from "drizzle-orm"
-import { ENV_FILE_PROBE_KEYS, MANIFEST_FILE_PROBE_KEYS } from "@ploydok/shared"
+import {
+  discoverRepositoryTargets,
+  ENV_FILE_PROBE_KEYS,
+  MANIFEST_FILE_PROBE_KEYS,
+} from "@ploydok/shared"
 import { createDb, createRedis } from "@ploydok/db"
 import type { Redis } from "@ploydok/db"
 import {
@@ -856,6 +860,26 @@ gitlabRouter.get("/repos/:fullName{.+}/files-exist", async (c) => {
   } catch (err) {
     log.error({ err, fullName }, "filesExist failed")
     return c.json({ error: "gitlab_api_error" }, 502)
+  }
+})
+
+gitlabRouter.get("/repos/:fullName{.+}/deployment-targets", async (c) => {
+  const user = c.get("user") ?? null
+  if (!user) return c.json({ error: "unauthenticated" }, 401)
+  const ctx = await getProviderAndTokenForUser(user.id)
+  if (!ctx) return c.json({ error: "gitlab_not_connected" }, 412)
+  const ref = c.req.query("ref")?.trim()
+  if (!ref) return c.json({ error: "missing_ref" }, 400)
+  const fullName = c.req.param("fullName")
+  try {
+    const paths = await ctx.provider.listFiles(ctx.accessToken, fullName, ref)
+    const targets = await discoverRepositoryTargets(paths, (path) =>
+      ctx.provider.readFile(ctx.accessToken, fullName, path, ref)
+    )
+    return c.json({ targets })
+  } catch (err) {
+    log.warn({ err, fullName }, "repository target detection failed")
+    return c.json({ error: "repository_detection_unavailable" }, 502)
   }
 })
 

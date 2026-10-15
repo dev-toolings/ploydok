@@ -148,3 +148,38 @@ describe("GitLabProvider", () => {
     )
   })
 })
+
+describe("GitLab repository discovery", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+  it("reads every tree page and excludes symlinks", async () => {
+    let page = 0
+    globalThis.fetch = mock(async (input: string | URL) => {
+      page++
+      const url = new URL(String(input))
+      expect(url.pathname).toContain("acme%2Frepo/repository/tree")
+      expect(url.searchParams.get("ref")).toBe("feature/new")
+      expect(url.searchParams.get("page")).toBe(String(page))
+      return new Response(
+        JSON.stringify(
+          page === 1
+            ? [{ path: "services/a/go.mod", type: "blob", mode: "100644" }]
+            : [
+                { path: "services/b/Cargo.toml", type: "blob", mode: "100644" },
+                { path: "link/package.json", type: "blob", mode: "120000" },
+              ]
+        ),
+        { headers: { "x-next-page": page === 1 ? "2" : "" } }
+      )
+    }) as unknown as FetchFn
+    expect(
+      await new GitLabProvider("https://gitlab.com").listFiles(
+        "tok",
+        "acme/repo",
+        "feature/new"
+      )
+    ).toEqual(["services/a/go.mod", "services/b/Cargo.toml"])
+    expect(page).toBe(2)
+  })
+})

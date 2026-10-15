@@ -4,7 +4,11 @@ import { nanoid } from "nanoid"
 import { createHash, createHmac, randomBytes } from "node:crypto"
 import { z } from "zod"
 import { and, eq, or } from "drizzle-orm"
-import { ENV_FILE_PROBE_KEYS, MANIFEST_FILE_PROBE_KEYS } from "@ploydok/shared"
+import {
+  discoverRepositoryTargets,
+  ENV_FILE_PROBE_KEYS,
+  MANIFEST_FILE_PROBE_KEYS,
+} from "@ploydok/shared"
 import { createDb } from "@ploydok/db"
 import {
   deleteGitHubAppLocalState,
@@ -848,6 +852,35 @@ githubRouter.get("/repos/:owner/:repo/files-exist", async (c) => {
   }
 
   return c.json({ error: "repo_not_accessible", detail: fullName }, 404)
+})
+
+// Uses the same installation visibility as file probes; returns classifications only.
+githubRouter.get("/repos/:owner/:repo/deployment-targets", async (c) => {
+  const userId = getUserId(c)
+  if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  const ref = c.req.query("ref")?.trim()
+  if (!ref) return c.json({ error: "missing_ref" }, 400)
+  const owner = c.req.param("owner")
+  const fullName = `${owner}/${c.req.param("repo")}`
+  if (!(await getGitHubAppConfig(db)))
+    return c.json({ error: "github_app_not_configured" }, 503)
+  const installations = preferredInstallations(
+    await listUserGitHubInstallations(userId),
+    owner
+  )
+  for (const inst of installations) {
+    try {
+      const id = String(inst.id)
+      const paths = await ghProvider.listFiles(id, fullName, ref)
+      const targets = await discoverRepositoryTargets(paths, (path) =>
+        ghProvider.readFile(id, fullName, path, ref)
+      )
+      return c.json({ targets })
+    } catch (err) {
+      log.warn({ err, fullName }, "repository target detection failed")
+    }
+  }
+  return c.json({ error: "repository_detection_unavailable" }, 502)
 })
 
 githubRouter.get("/repos/:owner/:repo/env-file", async (c) => {

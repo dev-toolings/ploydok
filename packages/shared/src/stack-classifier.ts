@@ -69,6 +69,9 @@ export type ProbeKey =
   | "bin/console"
   // JS / TS
   | "package.json"
+  | "vite.config.ts"
+  | "vite.config.js"
+  | "vite.config.mts"
   | "next.config.js"
   | "next.config.mjs"
   | "next.config.ts"
@@ -108,10 +111,14 @@ export type ProbeResults = Partial<Record<ProbeKey, boolean>>
 
 export type ManifestProbeKey =
   | "package.json"
+  | "vite.config.ts"
+  | "vite.config.js"
+  | "vite.config.mts"
   | "astro.config.mjs"
   | "astro.config.ts"
   | "composer.json"
   | "composer.lock"
+  | "Cargo.toml"
   | "Gemfile"
   | "mix.exs"
   | "pom.xml"
@@ -160,6 +167,8 @@ export interface StackClassification {
   suggestedStartCommand?: string
   /** The detected repository cannot be deployed safely without a manual build choice. */
   requiresExplicitBuildChoice?: boolean
+  /** The detected server adapter has no safe conventional entry point. */
+  requiresStartCommand?: boolean
 }
 
 /** Ordered list of all probe keys the classifier understands. */
@@ -184,6 +193,9 @@ export const ALL_PROBE_KEYS: ReadonlyArray<ProbeKey> = [
   "symfony.lock",
   "bin/console",
   "package.json",
+  "vite.config.ts",
+  "vite.config.js",
+  "vite.config.mts",
   "next.config.js",
   "next.config.mjs",
   "next.config.ts",
@@ -227,10 +239,14 @@ export const ENV_FILE_PROBE_KEYS: ReadonlyArray<ProbeKey> = [
 
 export const MANIFEST_FILE_PROBE_KEYS: ReadonlyArray<ManifestProbeKey> = [
   "package.json",
+  "vite.config.ts",
+  "vite.config.js",
+  "vite.config.mts",
   "astro.config.mjs",
   "astro.config.ts",
   "composer.json",
   "composer.lock",
+  "Cargo.toml",
   "Gemfile",
   "mix.exs",
   "pom.xml",
@@ -744,6 +760,38 @@ export function classifyStackWithManifests(
         NIXPACKS_INSTALL_CMD:
           "mkdir -p /var/log/nginx /var/cache/nginx && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-interaction --no-progress --prefer-dist --ignore-platform-reqs --optimize-autoloader",
       },
+    }
+  }
+
+  const scripts = asObject(packageJson?.scripts)
+  const hasStart =
+    typeof scripts?.start === "string" && scripts.start.trim().length > 0
+  const viteConfig =
+    manifests["vite.config.ts"] ??
+    manifests["vite.config.js"] ??
+    manifests["vite.config.mts"] ??
+    ""
+  if (
+    (base.stack === "node" || base.stack === "bun") &&
+    (hasPackage(packageJson, "@tanstack/react-start") ||
+      hasPackage(packageJson, "@tanstack/vue-start"))
+  ) {
+    // Infer only the conventional Nitro server output. Custom adapters/presets
+    // need an explicit start command; never execute repository config to detect it.
+    const conventionalNitro =
+      /from\s*["']nitro\/vite["']/.test(viteConfig) &&
+      /\bnitro\s*\(\s*\)/.test(viteConfig)
+    return {
+      ...mergeSuggestedEnvVars(base, { NIXPACKS_NODE_VERSION: "22" }),
+      framework: "TanStack Start",
+      confidence: "high",
+      ...(conventionalNitro && !hasStart
+        ? {
+            suggestedStartCommand: `${hasAny(probes, ["bun.lock", "bun.lockb"]) ? "bun" : "node"} .output/server/index.mjs`,
+          }
+        : {}),
+      requiresStartCommand: !hasStart && !conventionalNitro,
+      warnings: [],
     }
   }
 

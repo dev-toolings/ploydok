@@ -13,6 +13,7 @@ import {
   applyAppStatus,
   getEventAppStatus,
   normalizeAppDetail,
+  normalizeAppListItem,
 } from "./transforms"
 import type { ApiError } from "../api"
 import type {
@@ -126,7 +127,7 @@ export function useApps(organizationId?: string) {
         ? `?organizationId=${encodeURIComponent(organizationId)}`
         : ""
       const data = await apiFetch<AppsResponse>(`/apps${query}`)
-      return data.apps
+      return data.apps.map(normalizeAppListItem)
     },
     staleTime: 30_000,
     ...criticalQueryDefaults,
