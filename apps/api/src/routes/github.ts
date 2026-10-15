@@ -58,6 +58,7 @@ import { GitHubCache } from "../github/cache"
 import { GitHubProvider } from "../github/client"
 import {
   evictAllInstallationTokens,
+  fillMissingGitHubAppOwners,
   listAppInstallations,
   revokeAppInstallation,
 } from "../github/installation-tokens"
@@ -1619,7 +1620,7 @@ githubRouter.get("/installations", async (c) => {
         : {}),
       installUrl: getInstallationStartUrl(scope.organization?.id),
       installTargets: getInstallTargets(
-        await listGitHubAppConfigs(db),
+        await fillMissingGitHubAppOwners(await listGitHubAppConfigs(db)),
         scope.organization?.id
       ),
     })
@@ -2576,7 +2577,7 @@ githubRouter.get("/app/callback", async (c) => {
 // ---------------------------------------------------------------------------
 
 githubRouter.get("/app/config", async (c) => {
-  const apps = await listGitHubAppConfigs(db)
+  const apps = await fillMissingGitHubAppOwners(await listGitHubAppConfigs(db))
   const first = apps[0]
   if (!first) {
     return c.json({ configured: false, apps: [] })

@@ -5,10 +5,14 @@ import { getGitHubAppConfigFingerprint } from "./config-fingerprint";
 import {
   getGitHubAppConfigForInstallation,
   listGitHubAppConfigs,
+  setGitHubAppOwner,
   type GitHubAppRow,
 } from "@ploydok/db/queries";
 import { createDb } from "@ploydok/db";
 import { env } from "../env";
+import { childLogger } from "../logger";
+
+const log = childLogger("github.installation-tokens");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -140,6 +144,43 @@ export interface AppInstallation {
 async function appJwt(config: GitHubAppRow): Promise<string> {
   const pem = await decryptAppPrivateKey(config);
   return signAppJwt(pem, config.app_id);
+}
+
+/**
+ * Fills the owner of Apps registered before it was recorded, from GitHub's
+ * `GET /app`. Best effort: an App GitHub cannot describe keeps a null owner.
+ */
+export async function fillMissingGitHubAppOwners(
+  configs: GitHubAppRow[],
+): Promise<GitHubAppRow[]> {
+  return Promise.all(
+    configs.map(async (config) => {
+      if (config.owner_login) return config;
+      try {
+        const res = await fetch("https://api.github.com/app", {
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${await appJwt(config)}`,
+            "User-Agent": "ploydok",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) throw new Error(`GitHub /app returned ${res.status}`);
+        const body = (await res.json()) as {
+          owner?: { login?: unknown; type?: unknown } | null;
+        };
+        const login = body.owner?.login;
+        const type = body.owner?.type;
+        if (typeof login !== "string" || typeof type !== "string") return config;
+        await setGitHubAppOwner(db, config.id, { login, type });
+        return { ...config, owner_login: login, owner_type: type };
+      } catch (err) {
+        log.warn({ err, githubAppId: config.id }, "github app owner lookup failed");
+        return config;
+      }
+    }),
+  );
 }
 
 /**

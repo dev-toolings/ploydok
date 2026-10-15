@@ -173,6 +173,7 @@ mock.module("@ploydok/db", () => ({
   webhook_deliveries: fakeTable,
 }))
 mock.module("../github/installation-tokens", () => ({
+  fillMissingGitHubAppOwners: async (apps: unknown[]) => apps,
   getInstallationToken: async () => "test-installation-token",
   evictInstallationToken: () => undefined,
   evictAllInstallationTokens: () => {
