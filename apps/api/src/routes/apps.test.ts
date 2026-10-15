@@ -78,7 +78,10 @@ async function grantTestInstallation(
     account_login: "owner",
     account_type: "Organization",
     last_synced_at: new Date(),
-  }).onConflictDoNothing()
+  }).onConflictDoUpdate({
+    target: provider_installations.id,
+    set: { account_type: "Organization" },
+  })
   await db.insert(org_github_installations).values({
     org_id: orgId,
     installation_id: `github:${installationId}`,
@@ -722,7 +725,7 @@ describe.skipIf(skip)("POST /apps", () => {
     expect(body.app.id).toBeString()
   })
 
-  it("refuses a personal link without an organization grant", async () => {
+  it("refuses a linked Organization installation without an organization grant", async () => {
     await db
       .delete(org_github_installations)
       .where(eq(org_github_installations.org_id, projectId))
@@ -757,6 +760,59 @@ describe.skipIf(skip)("POST /apps", () => {
       }),
     })
     expect(imageRes.status).toBe(201)
+  })
+
+  it("creates and rebinds from the caller's personal User installation without an org grant", async () => {
+    await db.delete(org_github_installations)
+      .where(eq(org_github_installations.org_id, projectId))
+    await db.update(provider_installations).set({ account_type: "User" })
+      .where(eq(provider_installations.id, `github:${githubInstallationId}`))
+    const client = buildTestApp(db, fakeUser(userId, "personal@test.invalid"))
+    const response = await client.request("/apps", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Personal repository", projectId, gitProvider: "github",
+        installationId: githubInstallationId, repoFullName: "owner/personal", branch: "main",
+      }),
+    })
+    expect(response.status).toBe(201)
+    const body = await response.json() as { app: { id: string } }
+    const patch = await client.request(`/apps/${body.app.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ installationId: githubInstallationId }),
+    })
+    expect(patch.status).toBe(200)
+
+    // Another owner has the app role but no right to this personal installation.
+    const other = await createTestUser(db)
+    await db.insert(memberships).values({
+      id: nanoid(), org_id: projectId, user_id: other.id,
+      role: "owner", accepted_at: new Date(),
+    })
+    const otherClient = buildTestApp(db, fakeUser(other.id, "other@test.invalid"))
+    const deniedCreate = await otherClient.request("/apps", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Foreign personal repository", projectId, gitProvider: "github",
+        installationId: githubInstallationId, repoFullName: "owner/personal", branch: "main",
+      }),
+    })
+    expect(deniedCreate.status).toBe(412)
+    const deniedPatch = await otherClient.request(`/apps/${body.app.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ installationId: githubInstallationId }),
+    })
+    expect(deniedPatch.status).toBe(412)
+    const deniedRepoChange = await otherClient.request(`/apps/${body.app.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repoFullName: "owner/another-private-repo" }),
+    })
+    expect(deniedRepoChange.status).toBe(412)
   })
 
   it("refuses an installation granted only to another organization", async () => {
@@ -1426,6 +1482,11 @@ describe.skipIf(skip)("PATCH /apps/:id", () => {
       projectId,
       branch: "main",
     })
+
+    const installationId = String(++nextGitHubInstallationId)
+    await grantTestInstallation(db, projectId, userId, installationId)
+    await db.update(apps).set({ github_installation_id: installationId })
+      .where(eq(apps.id, appId))
 
     const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await honoApp.request(`/apps/${appId}`, {

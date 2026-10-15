@@ -7,6 +7,7 @@ import { eq, inArray } from "drizzle-orm"
 import { nanoid } from "nanoid"
 import {
   apps,
+  github_installation_legacy_backfill,
   github_installation_users,
   memberships,
   projects,
@@ -15,10 +16,12 @@ import {
 } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import {
+  backfillLegacyGitHubInstallationGrants,
   grantGitHubInstallationToOrganization,
   listGitHubInstallationIdsForOrganizationAndUser,
   organizationHasGitHubInstallationGrant,
   revokeGitHubInstallationFromOrganization,
+  userOwnsPersonalGitHubInstallation,
 } from "@ploydok/db/queries"
 import { makeTestDb, TEST_PG_URL } from "../test/db-helpers"
 
@@ -34,14 +37,28 @@ const migrationPath = join(
   "../../../..",
   "packages/db/migrations/0089_org_github_installations.sql"
 )
+const legacyBackfillMigrationPath = join(
+  import.meta.dir,
+  "../../../..",
+  "packages/db/migrations/0090_github_installation_legacy_backfill.sql"
+)
 
 async function runOrgGrantMigrationInTempSchema(): Promise<{
   first: Array<{ org_id: string; installation_id: string }>
   second: Array<{ org_id: string; installation_id: string }>
+  legacyMarkers: Array<{ installation_id: string; user_id: string }>
+  legacyMarkersAfterRerun: Array<{ installation_id: string; user_id: string }>
 }> {
   const sql = postgres(TEST_PG_URL!, { max: 1 })
-  const migration = await readFile(migrationPath, "utf8")
+  const [migration, legacyBackfillMigration] = await Promise.all([
+    readFile(migrationPath, "utf8"),
+    readFile(legacyBackfillMigrationPath, "utf8"),
+  ])
   const statements = migration
+    .split("--> statement-breakpoint")
+    .map((statement) => statement.trim())
+    .filter(Boolean)
+  const legacyBackfillStatements = legacyBackfillMigration
     .split("--> statement-breakpoint")
     .map((statement) => statement.trim())
     .filter(Boolean)
@@ -50,7 +67,7 @@ async function runOrgGrantMigrationInTempSchema(): Promise<{
     return await sql.begin(async (tx) => {
       // The temporary tables shadow the production tables for this migration
       // proof, keeping the fixture independent from the rest of the database.
-      await tx.unsafe("SET LOCAL search_path TO pg_temp, public")
+      await tx.unsafe("SET LOCAL search_path TO pg_temp")
       await tx.unsafe(
         `CREATE TEMP TABLE "users" ("id" text PRIMARY KEY) ON COMMIT PRESERVE ROWS`
       )
@@ -97,10 +114,13 @@ async function runOrgGrantMigrationInTempSchema(): Promise<{
       const memberInstallation = `${suffix}-member-installation`
       const pendingInstallation = `${suffix}-pending-installation`
       const legacyInstallation = `${suffix}-legacy-installation`
+      const orphanUser = `${suffix}-orphan-user`
+      const orphanOrg = `${suffix}-orphan-org`
+      const orphanInstallation = `${suffix}-orphan-installation`
 
       await tx`
         INSERT INTO "users" ("id") VALUES
-          (${installer}), (${member}), (${pending}), (${legacyOwner})
+          (${installer}), (${member}), (${pending}), (${legacyOwner}), (${orphanUser})
       `
       await tx`
         INSERT INTO "projects" ("id", "owner_id") VALUES
@@ -108,14 +128,16 @@ async function runOrgGrantMigrationInTempSchema(): Promise<{
           (${acceptedOrgB}, ${installer}),
           (${memberOrg}, ${installer}),
           (${pendingOrg}, ${installer}),
-          (${legacyOrg}, ${legacyOwner})
+          (${legacyOrg}, ${legacyOwner}),
+          (${orphanOrg}, ${orphanUser})
       `
       await tx`
         INSERT INTO "memberships" ("org_id", "user_id", "role", "accepted_at") VALUES
           (${acceptedOrgA}, ${installer}, 'owner', now()),
           (${acceptedOrgB}, ${installer}, 'owner', now()),
           (${memberOrg}, ${member}, 'member', now()),
-          (${pendingOrg}, ${pending}, 'owner', NULL)
+          (${pendingOrg}, ${pending}, 'owner', NULL),
+          (${orphanOrg}, ${orphanUser}, 'owner', now())
       `
       await tx`
         INSERT INTO "provider_installations" ("id", "provider", "external_id") VALUES
@@ -131,10 +153,13 @@ async function runOrgGrantMigrationInTempSchema(): Promise<{
           (${`github:${prefixedInstallation}`}, ${installer}),
           (${memberInstallation}, ${member}),
           (${pendingInstallation}, ${pending}),
-          (${legacyInstallation}, ${legacyOwner})
+          (${legacyInstallation}, ${legacyOwner}),
+          (${orphanInstallation}, ${orphanUser})
       `
 
       for (const statement of statements) await tx.unsafe(statement)
+      for (const statement of legacyBackfillStatements)
+        await tx.unsafe(statement)
       const [tableSchema] = await tx.unsafe<{ schema: string }[]>(
         `SELECT n.nspname AS schema
            FROM pg_class c
@@ -153,7 +178,26 @@ async function runOrgGrantMigrationInTempSchema(): Promise<{
           ORDER BY "org_id", "installation_id"`
       )
 
+      const legacyMarkers = await tx.unsafe<{
+        installation_id: string
+        user_id: string
+      }[]>(
+        `SELECT "installation_id", "user_id"
+           FROM "github_installation_legacy_backfill"
+          ORDER BY "installation_id", "user_id"`
+      )
+
+      // A link created after the first application must not be captured when
+      // the repair migration is replayed.
+      const postMigrationInstallation = `${suffix}-post-migration-installation`
+      await tx`
+        INSERT INTO "github_installation_users" ("installation_id", "user_id")
+        VALUES (${postMigrationInstallation}, ${orphanUser})
+      `
+
       for (const statement of statements) await tx.unsafe(statement)
+      for (const statement of legacyBackfillStatements)
+        await tx.unsafe(statement)
       const second = await tx.unsafe<{
         org_id: string
         installation_id: string
@@ -163,7 +207,16 @@ async function runOrgGrantMigrationInTempSchema(): Promise<{
           ORDER BY "org_id", "installation_id"`
       )
 
-      return { first, second }
+      const legacyMarkersAfterRerun = await tx.unsafe<{
+        installation_id: string
+        user_id: string
+      }[]>(
+        `SELECT "installation_id", "user_id"
+           FROM "github_installation_legacy_backfill"
+          ORDER BY "installation_id", "user_id"`
+      )
+
+      return { first, second, legacyMarkers, legacyMarkersAfterRerun }
     })
   } finally {
     await sql.end()
@@ -309,6 +362,220 @@ describe.skipIf(skip)("GitHub organization installation grants", () => {
     expect(
       result.first.some((row) => row.installation_id.includes("prefixed"))
     ).toBe(true)
+    expect(result.legacyMarkers).toEqual([
+      {
+        installation_id: expect.stringContaining("orphan-installation"),
+        user_id: expect.stringContaining("orphan-user"),
+      },
+    ])
+    expect(result.legacyMarkersAfterRerun).toEqual(result.legacyMarkers)
+  })
+
+  it("backfills a delayed orphan once and never re-shares it on later syncs", async () => {
+    const delayedSuffix = `${suffix}-delayed`
+    const delayedUser = `${delayedSuffix}-user`
+    const delayedOrg = `${delayedSuffix}-org`
+    const delayedInstallation = `${delayedSuffix}-installation`
+    const removedInstallation = `${delayedSuffix}-removed-installation`
+    const newUser = `${delayedSuffix}-new-user`
+    const newOrg = `${delayedSuffix}-new-org`
+    const newInstallation = `${delayedSuffix}-new-installation`
+    const now = new Date()
+
+    await db.insert(users).values([
+      {
+        id: delayedUser,
+        email: `${delayedUser}@example.test`,
+        display_name: "Delayed legacy user",
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: newUser,
+        email: `${newUser}@example.test`,
+        display_name: "New personal user",
+        created_at: now,
+        updated_at: now,
+      },
+    ])
+    await db.insert(projects).values([
+      {
+        id: delayedOrg,
+        owner_id: delayedUser,
+        name: "Delayed legacy org",
+        slug: delayedOrg,
+        created_at: now,
+      },
+      {
+        id: newOrg,
+        owner_id: newUser,
+        name: "New personal org",
+        slug: newOrg,
+        created_at: now,
+      },
+    ])
+    await db.insert(memberships).values([
+      {
+        id: `${delayedSuffix}-membership`,
+        org_id: delayedOrg,
+        user_id: delayedUser,
+        role: "owner",
+        accepted_at: now,
+      },
+      {
+        id: `${delayedSuffix}-new-membership`,
+        org_id: newOrg,
+        user_id: newUser,
+        role: "owner",
+        accepted_at: now,
+      },
+    ])
+
+    try {
+      // This marker represents the orphan link captured by migration 0090.
+      await db.insert(github_installation_legacy_backfill).values([
+        {
+          installation_id: delayedInstallation,
+          user_id: delayedUser,
+          created_at: now,
+        },
+        {
+          installation_id: removedInstallation,
+          user_id: delayedUser,
+          created_at: now,
+        },
+      ])
+      await db.insert(github_installation_users).values({
+        installation_id: delayedInstallation,
+        user_id: delayedUser,
+        created_at: now,
+        updated_at: now,
+      })
+      await db.insert(provider_installations).values({
+        id: `github:${delayedInstallation}`,
+        provider: "github",
+        external_id: delayedInstallation,
+        account_login: "legacy-owner",
+        account_type: "Organization",
+        repository_selection: "all",
+        suspended_at: null,
+        html_url: null,
+        avatar_url: null,
+        repository_count: 0,
+        last_synced_at: now,
+        created_at: now,
+      })
+      await db.insert(provider_installations).values({
+        id: `github:${removedInstallation}`,
+        provider: "github",
+        external_id: removedInstallation,
+        account_login: "removed-owner",
+        account_type: "Organization",
+        repository_selection: "all",
+        suspended_at: null,
+        html_url: null,
+        avatar_url: null,
+        repository_count: 0,
+        last_synced_at: now,
+        created_at: now,
+      })
+
+      await expect(
+        backfillLegacyGitHubInstallationGrants(db, delayedInstallation)
+      ).resolves.toBe(1)
+      await expect(
+        organizationHasGitHubInstallationGrant(
+          db,
+          delayedOrg,
+          delayedInstallation
+        )
+      ).resolves.toBe(true)
+
+      // A later sync must not recreate an explicitly revoked grant because the
+      // consumed marker is retained.
+      await expect(
+        revokeGitHubInstallationFromOrganization(
+          db,
+          delayedOrg,
+          delayedInstallation
+        )
+      ).resolves.toBe(true)
+      await expect(
+        backfillLegacyGitHubInstallationGrants(db, delayedInstallation)
+      ).resolves.toBe(0)
+      await expect(
+        organizationHasGitHubInstallationGrant(
+          db,
+          delayedOrg,
+          delayedInstallation
+        )
+      ).resolves.toBe(false)
+
+      // A marker whose callback link was removed before the first sync is
+      // consumed without granting access, and a later re-add cannot revive it.
+      await expect(
+        backfillLegacyGitHubInstallationGrants(db, removedInstallation)
+      ).resolves.toBe(0)
+      const [removedMarker] = await db
+        .select({ consumed_at: github_installation_legacy_backfill.consumed_at })
+        .from(github_installation_legacy_backfill)
+        .where(
+          eq(
+            github_installation_legacy_backfill.installation_id,
+            removedInstallation
+          )
+        )
+      expect(removedMarker?.consumed_at).toBeInstanceOf(Date)
+      await db.insert(github_installation_users).values({
+        installation_id: removedInstallation,
+        user_id: delayedUser,
+        created_at: now,
+        updated_at: now,
+      })
+      await expect(
+        backfillLegacyGitHubInstallationGrants(db, removedInstallation)
+      ).resolves.toBe(0)
+
+      // A new post-migration personal link has no legacy marker and remains
+      // private until an owner explicitly grants it.
+      await db.insert(github_installation_users).values({
+        installation_id: newInstallation,
+        user_id: newUser,
+        created_at: now,
+        updated_at: now,
+      })
+      await db.insert(provider_installations).values({
+        id: `github:${newInstallation}`,
+        provider: "github",
+        external_id: newInstallation,
+        account_login: "new-personal",
+        account_type: "User",
+        repository_selection: "selected",
+        suspended_at: null,
+        html_url: null,
+        avatar_url: null,
+        repository_count: 0,
+        last_synced_at: now,
+        created_at: now,
+      })
+      await expect(
+        backfillLegacyGitHubInstallationGrants(db, newInstallation)
+      ).resolves.toBe(0)
+      await expect(
+        organizationHasGitHubInstallationGrant(db, newOrg, newInstallation)
+      ).resolves.toBe(false)
+    } finally {
+      await db
+        .delete(provider_installations)
+        .where(
+          inArray(provider_installations.id, [
+            `github:${delayedInstallation}`,
+            `github:${removedInstallation}`,
+            `github:${newInstallation}`,
+          ])
+        )
+      await db.delete(users).where(inArray(users.id, [delayedUser, newUser]))
+    }
   })
 
   it("isolates grants by organization while retaining the caller's personal install", async () => {
@@ -333,6 +600,15 @@ describe.skipIf(skip)("GitHub organization installation grants", () => {
     ).resolves.toBe(true)
     await expect(
       organizationHasGitHubInstallationGrant(db, otherOrgId, installationId)
+    ).resolves.toBe(false)
+    await expect(
+      userOwnsPersonalGitHubInstallation(db, ownerId, personalInstallationId)
+    ).resolves.toBe(true)
+    await expect(
+      userOwnsPersonalGitHubInstallation(db, memberId, personalInstallationId)
+    ).resolves.toBe(false)
+    await expect(
+      userOwnsPersonalGitHubInstallation(db, ownerId, installationId)
     ).resolves.toBe(false)
   })
 

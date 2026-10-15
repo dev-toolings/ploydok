@@ -248,6 +248,7 @@
     "loadFailed": "Failed to load GitHub installations: {{message}}",
     "installError": "GitHub installation could not be completed. Please try again.",
     "membersPermissionError": "GitHub did not allow Ploydok to verify organization ownership. Enable Members: read on the GitHub App, then retry and approve the requested access.",
+    "ownerVerificationError": "GitHub could not verify that this account administers the organization. Retry with an organization owner account and approve the requested access.",
     "installed": "GitHub installation granted to this workspace.",
     "revoked": "GitHub installation revoked for this workspace.",
     "revokeFailed": "Failed to revoke the GitHub installation."

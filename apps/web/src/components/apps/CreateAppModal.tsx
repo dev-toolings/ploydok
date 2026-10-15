@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import {
   RiAddLine,
   RiArrowRightSLine,
@@ -64,6 +65,8 @@ import {
 } from "../../lib/database-env"
 import { useGitHubBranches } from "../../lib/github"
 import { useGitLabBranches } from "../../lib/gitlab"
+import { useMembers } from "../../lib/memberships"
+import { useCurrentOrganizationSlug } from "../../lib/organizations"
 import {
   getGitLabSourceAvailability,
   useGitProviderStatus,
@@ -475,6 +478,14 @@ export function CreateAppModal({
   onCreated,
 }: CreateAppModalProps): React.JSX.Element | null {
   const { t } = useTranslation("apps")
+  const organizationSlug = useCurrentOrganizationSlug()
+  const membersQuery = useMembers(organizationSlug ?? "")
+  const currentMember = membersQuery.data?.members.find(
+    (member) => member.is_me
+  )
+  const isOrganizationOwner = currentMember
+    ? currentMember.role === "owner"
+    : undefined
   const [stepIdx, setStepIdx] = React.useState(0)
   const [form, setForm] = React.useState<FormState>(() =>
     initialForm(initialSource)
@@ -1206,6 +1217,8 @@ export function CreateAppModal({
                   generatedPublicUrl={generatedPublicUrl}
                   onOpenBranchDialog={openBranchDialog}
                   organizationId={organizationId}
+                  organizationSlug={organizationSlug ?? undefined}
+                  isOrganizationOwner={isOrganizationOwner}
                   gitLabAvailability={gitLabAvailability}
                 />
               )}
@@ -1345,6 +1358,8 @@ export function CreateAppModal({
         isLoading={branchesLoading}
         error={branchesError}
         needsInstall={branchesNeedInstall}
+        organizationSlug={organizationSlug ?? undefined}
+        isOrganizationOwner={isOrganizationOwner}
         onValueChange={setPendingBranch}
         onConfirm={confirmBranch}
         onOpenChange={setBranchDialogOpen}
@@ -1362,6 +1377,8 @@ interface BranchSelectionDialogProps {
   isLoading: boolean
   error: ApiError | null
   needsInstall: boolean
+  organizationSlug?: string
+  isOrganizationOwner?: boolean
   onValueChange: (branch: string) => void
   onConfirm: () => void
   onOpenChange: (open: boolean) => void
@@ -1376,6 +1393,8 @@ export function BranchSelectionDialog({
   isLoading,
   error,
   needsInstall,
+  organizationSlug,
+  isOrganizationOwner,
   onValueChange,
   onConfirm,
   onOpenChange,
@@ -1455,19 +1474,11 @@ export function BranchSelectionDialog({
                 : `${t("create.loadBranchesFailed")} : ${branchErrorMessage}`}
             </p>
           ) : needsInstall ? (
-            <p
-              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
-              role="alert"
-            >
-              {t("create.githubAppRequired")}{" "}
-              <a
-                href="/settings/git-providers/github"
-                className="font-medium underline underline-offset-2"
-              >
-                {t("create.installGitHubApp")}
-              </a>
-              .
-            </p>
+            <GitHubInstallNotice
+              messageKey="required"
+              organizationSlug={organizationSlug}
+              isOrganizationOwner={isOrganizationOwner}
+            />
           ) : branches.length === 0 ? (
             <p
               className="rounded-md border border-border bg-muted/40 px-3 py-6 text-center text-sm text-muted-foreground"
@@ -1681,6 +1692,8 @@ interface SourceStepProps {
   generatedPublicUrl: string
   onOpenBranchDialog: () => void
   organizationId?: string
+  organizationSlug?: string
+  isOrganizationOwner?: boolean
   gitLabAvailability: { enabled: boolean; reason: string | null }
 }
 
@@ -1696,6 +1709,8 @@ function SourceStep({
   generatedPublicUrl,
   onOpenBranchDialog,
   organizationId,
+  organizationSlug,
+  isOrganizationOwner,
   gitLabAvailability,
 }: SourceStepProps): React.JSX.Element {
   const { t } = useTranslation("apps")
@@ -1766,11 +1781,15 @@ function SourceStep({
           branchesError={branchesError}
           branchesNeedInstall={branchesNeedInstall}
           onOpenBranchDialog={onOpenBranchDialog}
+          organizationSlug={organizationSlug}
+          isOrganizationOwner={isOrganizationOwner}
         >
           <RepoSelector
             selected={form.selectedRepo}
             onSelect={onRepoSelect}
             organizationId={organizationId}
+            organizationSlug={organizationSlug}
+            isOrganizationOwner={isOrganizationOwner}
           />
         </GitSection>
       )}
@@ -1938,6 +1957,48 @@ function ProviderTabs({
   )
 }
 
+function GitHubInstallNotice({
+  messageKey,
+  organizationSlug,
+  isOrganizationOwner,
+}: {
+  messageKey: "required" | "notInstalled"
+  organizationSlug?: string
+  isOrganizationOwner?: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation("apps")
+  const message =
+    isOrganizationOwner === false
+      ? t("create.githubAppOwnerRequired")
+      : messageKey === "required"
+        ? t("create.githubAppRequired")
+        : t("create.githubAppNotInstalled")
+
+  return (
+    <p
+      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
+      role="alert"
+    >
+      {message}
+      {isOrganizationOwner === true && organizationSlug ? (
+        <>
+          {" "}
+          <Link
+            to="/orgs/$orgSlug/settings/github"
+            params={{ orgSlug: organizationSlug }}
+            className="font-medium underline underline-offset-2"
+          >
+            {t("create.installGitHubApp")}
+          </Link>
+          .
+        </>
+      ) : (
+        "."
+      )}
+    </p>
+  )
+}
+
 function GitSection({
   providerLabel,
   selectedRepo,
@@ -1948,6 +2009,8 @@ function GitSection({
   branchesError,
   branchesNeedInstall,
   onOpenBranchDialog,
+  organizationSlug,
+  isOrganizationOwner,
   children,
 }: {
   providerLabel: string
@@ -1959,6 +2022,8 @@ function GitSection({
   branchesError: ApiError | null
   branchesNeedInstall: boolean
   onOpenBranchDialog?: () => void
+  organizationSlug?: string
+  isOrganizationOwner?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   const { t } = useTranslation("apps")
@@ -2011,19 +2076,11 @@ function GitSection({
               })}
             </p>
           ) : branchesNeedInstall ? (
-            <p
-              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
-              role="alert"
-            >
-              {t("create.githubAppNotInstalled")}{" "}
-              <a
-                href="/settings/git-providers/github"
-                className="font-medium underline underline-offset-2"
-              >
-                {t("create.installGitHubApp")}
-              </a>
-              .
-            </p>
+            <GitHubInstallNotice
+              messageKey="notInstalled"
+              organizationSlug={organizationSlug}
+              isOrganizationOwner={isOrganizationOwner}
+            />
           ) : branches.length === 0 ? (
             <p
               className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
@@ -3930,6 +3987,7 @@ function EnvStep({
                 loading={isImportingEnv}
                 disabled={
                   source === "image" ||
+                  (source === "github" && !organizationId) ||
                   !repoFullName ||
                   !branch ||
                   !selectedEnvFile

@@ -67,8 +67,16 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
   const revoke = useRevokeOrganizationGitHubInstallation()
   const [selectedInstallation, setSelectedInstallation] =
     React.useState<AppInstallation | null>(null)
+  const [revokingInstallationId, setRevokingInstallationId] =
+    React.useState<number | null>(null)
   const [flowMessage, setFlowMessage] = React.useState<
-    "installed" | "revoked" | "membersPermission" | "error" | null
+    | "installed"
+    | "revoked"
+    | "membersPermission"
+    | "ownerVerification"
+    | "revokeError"
+    | "error"
+    | null
   >(null)
   const externalFlow = usePendingAction(
     async (url: string): Promise<void> => {
@@ -82,11 +90,10 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
     const params = new URLSearchParams(window.location.search)
     if (params.get("installed") === "1") setFlowMessage("installed")
     const installError = params.get("install_error")
-    if (
-      installError === "github_members_permission_required" ||
-      installError === "github_org_membership_unverified"
-    ) {
+    if (installError === "github_members_permission_required") {
       setFlowMessage("membersPermission")
+    } else if (installError === "github_org_membership_unverified") {
+      setFlowMessage("ownerVerification")
     } else if (params.has("install_error")) {
       setFlowMessage("error")
     }
@@ -121,17 +128,35 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
   }
 
   const handleRevoke = async (): Promise<void> => {
-    if (!selectedInstallation || !organizationId) return
+    if (
+      !selectedInstallation ||
+      !organizationId ||
+      revoke.isPending ||
+      revokingInstallationId !== null
+    ) {
+      return
+    }
+    const installation = selectedInstallation
+    setSelectedInstallation(null)
+    setFlowMessage(null)
+    setRevokingInstallationId(installation.id)
     try {
       await revoke.mutateAsync({
         organizationId,
-        installationId: selectedInstallation.id,
+        installationId: installation.id,
       })
-      setSelectedInstallation(null)
       setFlowMessage("revoked")
     } catch {
-      // The mutation error is rendered beside the confirmation action.
+      setFlowMessage("revokeError")
+    } finally {
+      setRevokingInstallationId(null)
     }
+  }
+
+  const openRevokeConfirmation = (installation: AppInstallation): void => {
+    if (revoke.isPending || revokingInstallationId !== null) return
+    setFlowMessage(null)
+    setSelectedInstallation(installation)
   }
 
   const installations = installationsQuery.data?.installations ?? []
@@ -191,6 +216,16 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
               {t("github.membersPermissionError")}
             </p>
           )}
+          {flowMessage === "ownerVerification" && (
+            <p className="text-sm text-destructive" role="alert">
+              {t("github.ownerVerificationError")}
+            </p>
+          )}
+          {flowMessage === "revokeError" && (
+            <p className="text-sm text-destructive" role="alert">
+              {t("github.revokeFailed")}
+            </p>
+          )}
           {installationsQuery.isLoading || membersQuery.isLoading ? (
             <div
               className="space-y-3"
@@ -211,8 +246,9 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
               installations={installations}
               isOwner={isOwner}
               pendingExternal={externalFlow.pending}
+              pendingRevokeInstallationId={revokingInstallationId}
               onClaim={startInstall}
-              onRevoke={setSelectedInstallation}
+              onRevoke={openRevokeConfirmation}
               t={t}
             />
           )}
@@ -230,8 +266,9 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
               installations={claimableInstallations}
               isOwner
               pendingExternal={externalFlow.pending}
+              pendingRevokeInstallationId={revokingInstallationId}
               onClaim={startInstall}
-              onRevoke={setSelectedInstallation}
+              onRevoke={openRevokeConfirmation}
               claimOnly
               t={t}
             />
@@ -254,18 +291,12 @@ function GitHubOrganizationSettingsPage(): React.JSX.Element {
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {revoke.error && (
-            <p className="text-sm text-destructive" role="alert">
-              {t("github.revokeFailed")}
-            </p>
-          )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={revoke.isPending}>
+            <AlertDialogCancel>
               {t("github.cancel")}
             </AlertDialogCancel>
             <Button
               variant="destructive"
-              loading={revoke.isPending}
               onClick={() => void handleRevoke()}
             >
               {t("github.revoke")}
@@ -281,6 +312,7 @@ function InstallationList({
   installations,
   isOwner,
   pendingExternal,
+  pendingRevokeInstallationId,
   onClaim,
   onRevoke,
   claimOnly = false,
@@ -289,6 +321,7 @@ function InstallationList({
   installations: Array<AppInstallation>
   isOwner: boolean
   pendingExternal: boolean
+  pendingRevokeInstallationId: number | null
   onClaim: (installationId?: number) => void
   onRevoke: (installation: AppInstallation) => void
   claimOnly?: boolean
@@ -301,8 +334,8 @@ function InstallationList({
   return (
     <ul className="divide-y divide-border">
       {installations.map((installation) => {
-        const granted =
-          !claimOnly && installation.granted === true
+        const granted = !claimOnly && installation.granted === true
+        const isRevoking = pendingRevokeInstallationId === installation.id
         const accountKind =
           installation.accountType === "User"
             ? t("github.personal")
@@ -337,9 +370,14 @@ function InstallationList({
               <Button
                 size="sm"
                 variant="outline"
-                loading={pendingExternal}
+                loading={pendingExternal || isRevoking}
+                disabled={
+                  pendingRevokeInstallationId !== null && !isRevoking
+                }
                 onClick={() =>
-                  granted
+                  pendingRevokeInstallationId !== null
+                    ? undefined
+                    : granted
                     ? onRevoke(installation)
                     : onClaim(installation.id)
                 }

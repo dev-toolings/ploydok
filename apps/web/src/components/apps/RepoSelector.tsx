@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { Link } from "@tanstack/react-router"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
 import { useGitHubAppConfig, useGitHubRepos } from "../../lib/github"
@@ -9,6 +10,8 @@ interface RepoSelectorProps {
   selected?: GitRepo | null
   onSelect: (repo: GitRepo) => void
   organizationId?: string
+  organizationSlug?: string
+  isOrganizationOwner?: boolean
 }
 
 function useDebounce<T>(value: T, delayMs: number): T {
@@ -26,6 +29,8 @@ export function RepoSelector({
   selected,
   onSelect,
   organizationId,
+  organizationSlug,
+  isOrganizationOwner,
 }: RepoSelectorProps): React.JSX.Element {
   const { t } = useTranslation("apps")
   const [search, setSearch] = React.useState("")
@@ -63,18 +68,29 @@ export function RepoSelector({
     return (
       <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-muted/30 p-6 text-center">
         <p className="text-sm text-muted-foreground">
-          {t("repo.setupGithub")}
+          {isOrganizationOwner === false
+            ? t("repo.setupGithubOwnerRequired")
+            : t("repo.setupGithub")}
         </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            window.location.href = "/settings/git-providers/github"
-          }}
-        >
-          {t("repo.setupGithubCta")}
-        </Button>
+        {isOrganizationOwner === true && organizationSlug ? (
+          <Button size="sm" variant="outline" asChild>
+            <Link
+              to="/orgs/$orgSlug/settings/github"
+              params={{ orgSlug: organizationSlug }}
+            >
+              {t("repo.setupGithubCta")}
+            </Link>
+          </Button>
+        ) : null}
       </div>
+    )
+  }
+
+  if (!organizationId) {
+    return (
+      <p className="rounded-md border border-border bg-muted/30 px-3 py-4 text-center text-sm text-muted-foreground">
+        {t("repo.organizationRequired")}
+      </p>
     )
   }
 

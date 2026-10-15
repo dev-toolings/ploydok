@@ -52,6 +52,47 @@ does not hide a Laravel target identified by `composer.json` and `artisan`.
 Provider authorization and network failures remain errors, not empty detection
 results.
 
+## GitHub App permissions and organization claims
+
+New GitHub App manifests request these read and write permissions in
+`apps/api/src/github/manifest.ts`, including `members: read`. This
+permission is required for the organization claim proof. An existing App may
+have been installed before that permission was added, so update the App in
+GitHub first:
+
+1. Open the configured GitHub App's settings and set the Organization
+   permission `Members` to `Read-only`. Save the permission change.
+2. Have the owner of each affected organization installation approve the new
+   permission request on GitHub. Approval is per installation and must be
+   repeated for every organization that the App serves.
+3. Return to the Ploydok workspace and retry `Claim` or `Grant to workspace`.
+   A missing permission or GitHub 403 returns
+   `github_members_permission_required`. A non-admin GitHub role or another
+   failed authority check returns `github_org_membership_unverified`.
+
+Personal `User` installations do not call the organization membership endpoint
+and do not need the `Members: read` approval. The claim callback still checks
+that the GitHub user matches the personal installation account.
+
+The claim flow starts with a signed state bound to the Ploydok workspace owner
+and organization (`apps/api/src/routes/github.ts`). The setup callback
+revalidates that owner, exchanges a short-lived OAuth code, lists the user's
+GitHub installations, and verifies the user's active `admin` membership in the
+target organization (`apps/api/src/routes/github.ts`). The OAuth access token is
+transient proof for this callback. It is
+not stored or used to list or clone repositories.
+
+Repository listing uses the GitHub App JWT and a one-hour installation token,
+cached in-process for 50 minutes (`apps/api/src/github/installation-tokens.ts`).
+Production clone resolution uses the app's explicit installation binding and
+the same installation token (`apps/api/src/worker/handlers/deploy.ts`).
+
+Keep the existing callback URLs when updating permissions. Newly generated
+manifests use `<API origin>/github/app/callback` for the OAuth callback and
+`<API origin>/github/app/setup` for GitHub's post-install setup redirect
+(`apps/api/src/github/manifest.ts`; `apps/api/src/routes/github.ts`).
+Changing `Members: read` does not require changing either URL.
+
 ## Monitoring architecture
 
 ```text

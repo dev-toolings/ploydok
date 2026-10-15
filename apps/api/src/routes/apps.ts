@@ -70,6 +70,7 @@ import {
 } from "@ploydok/db/queries"
 import {
   organizationHasGitHubInstallationGrant,
+  userOwnsPersonalGitHubInstallation,
 } from "@ploydok/db/queries"
 import {
   assertGitLabProjectSelection,
@@ -1464,18 +1465,23 @@ export function createAppsRouter(db: Db): Hono {
     if (
       body.gitProvider === "github" &&
       (!body.installationId ||
-        !(await organizationHasGitHubInstallationGrant(
+        (!(await organizationHasGitHubInstallationGrant(
           db,
           projectId,
           body.installationId
-        )))
+        )) &&
+          !(await userOwnsPersonalGitHubInstallation(
+            db,
+            user.id,
+            body.installationId
+          ))))
     ) {
       return c.json(
         {
           error: {
             code: "GITHUB_INSTALLATION_NOT_ACCESSIBLE",
             message:
-              "The selected GitHub installation is not granted to this organization",
+              "The selected GitHub installation is neither granted to this organization nor owned personally by this user",
           },
         },
         412
@@ -2032,25 +2038,28 @@ export function createAppsRouter(db: Db): Hono {
       body.branch !== undefined ||
       body.installationId !== undefined ||
       body.gitlabProjectId !== undefined
-    const githubBindingChanged =
-      body.gitProvider !== undefined || body.installationId !== undefined
-    if (githubBindingChanged && effectiveProvider === "github") {
+    if (sourceSelectionChanged && effectiveProvider === "github") {
       const installationId =
         body.installationId ?? existing.github_installation_id
       if (
         !installationId ||
-        !(await organizationHasGitHubInstallationGrant(
+        (!(await organizationHasGitHubInstallationGrant(
           db,
           existing.project_id,
           installationId
-        ))
+        )) &&
+          !(await userOwnsPersonalGitHubInstallation(
+            db,
+            user.id,
+            installationId
+          )))
       ) {
         return c.json(
           {
             error: {
               code: "GITHUB_INSTALLATION_NOT_ACCESSIBLE",
               message:
-                "The selected GitHub installation is not granted to this organization",
+                "The selected GitHub installation is neither granted to this organization nor owned personally by this user",
             },
           },
           412

@@ -136,6 +136,7 @@
     "loadBranchesFailedFor": "Impossible de charger les branches de {{repo}} : {{message}}",
     "githubAppRequired": "L'application GitHub Ploydok doit être installée avant de pouvoir lire les branches.",
     "githubAppNotInstalled": "L'application GitHub Ploydok n'est installée sur aucun compte. La liste des dépôts vient du cache local, mais aucune branche ne peut être lue tant que l'installation n'est pas faite.",
+    "githubAppOwnerRequired": "Demandez à un owner de l'organisation d'installer ou d'accorder la GitHub App avant de continuer.",
     "installGitHubApp": "Installer l'application GitHub",
     "noBranches": "Aucune branche trouvée pour ce dépôt.",
     "noBranchesFor": "Aucune branche trouvée pour {{repo}}.",
@@ -957,6 +958,7 @@
   "repo": {
     "setupGithub": "Configurez d'abord l'application GitHub pour parcourir les dépôts.",
     "setupGithubCta": "Configurer l'application GitHub",
+    "organizationRequired": "Une organisation est requise pour parcourir les dépôts GitHub.",
     "searchAria": "Rechercher des dépôts",
     "loadFailed": "Impossible de charger les dépôts : {{message}}",
     "noMatch": "Aucun dépôt ne correspond à « {{query}} ».",

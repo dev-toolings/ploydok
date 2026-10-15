@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Hono } from "hono"
+import { Hono, type MiddlewareHandler } from "hono"
 import { nanoid } from "nanoid"
 import { createHash, createHmac, randomBytes } from "node:crypto"
 import { z } from "zod"
@@ -36,11 +36,13 @@ import {
 } from "@ploydok/db/queries"
 import type { ProviderRepoRow } from "@ploydok/db/queries"
 import {
+  audit_log,
   memberships,
   projects,
   provider_credentials,
   provider_installations,
 } from "@ploydok/db"
+import type { Db } from "@ploydok/db"
 import {
   decryptAppPrivateKey,
   decryptField,
@@ -71,6 +73,7 @@ import {
 import type { ProviderReturnPath } from "./provider-return"
 import { isAllowedNestedProviderFilePath } from "./provider-file-path"
 import { isInstanceAdmin, requireInstanceAdmin } from "../auth/instance-admin"
+import { requireScope } from "../auth/require-scope"
 
 // ---------------------------------------------------------------------------
 // Singleton cache + provider (per-process)
@@ -137,6 +140,42 @@ export const githubRouter = new Hono<GithubRouterEnv>()
 // Database singleton for this router
 const db = createDb(env.DATABASE_URL)
 const githubAppAdmin = requireInstanceAdmin(db)
+const githubWriteScope = requireScope("apps:write")
+
+const githubOwnerSession: MiddlewareHandler<GithubRouterEnv> = async (c, next) => {
+  const user = c.get("user")
+  if (user?.pat_id || user?.token_scopes !== undefined) {
+    return c.json({ error: "session_required" }, 403)
+  }
+  return next()
+}
+
+async function writeGitHubInstallationAudit(
+  transactionDb: Pick<Db, "insert">,
+  input: {
+    action:
+      | "github.installation.claimed"
+      | "github.installation.granted"
+      | "github.installation.revoked"
+    organizationId: string
+    installationId: string
+    actorUserId: string
+  }
+): Promise<void> {
+  await transactionDb.insert(audit_log).values({
+    user_id: input.actorUserId,
+    action: input.action,
+    target_type: "github_installation",
+    target_id: input.installationId,
+    org_id: input.organizationId,
+    metadata: JSON.stringify({
+      organization_id: input.organizationId,
+      installation_id: input.installationId,
+      actor_user_id: input.actorUserId,
+    }),
+    created_at: new Date(),
+  })
+}
 
 githubRouter.use("/app/manifest", githubAppAdmin)
 githubRouter.use("/app/import", githubAppAdmin)
@@ -433,6 +472,7 @@ type InstallOAuthState = {
   userId: string
   organizationId: string
   installationId: string
+  claimInstallationId: string | null
   setupAction: string | null
   returnTo: ProviderReturnPath
   issuedAt: number
@@ -471,6 +511,10 @@ function verifyInstallOAuthState(
       userId: parsed.userId,
       organizationId: parsed.organizationId,
       installationId: parsed.installationId,
+      claimInstallationId:
+        typeof parsed.claimInstallationId === "string"
+          ? parsed.claimInstallationId
+          : null,
       setupAction:
         typeof parsed.setupAction === "string" ? parsed.setupAction : null,
       returnTo: sanitizeReturnTo(parsed.returnTo, GITHUB_RETURN_FALLBACK),
@@ -491,7 +535,7 @@ async function verifyGitHubOrganizationAdmin(
   accessToken: string,
   organizationLogin: string,
   userLogin: string
-): Promise<boolean> {
+): Promise<"verified" | "not_admin" | "permission_missing"> {
   const response = await fetch(
     `https://api.github.com/orgs/${encodeURIComponent(
       organizationLogin
@@ -506,12 +550,15 @@ async function verifyGitHubOrganizationAdmin(
       signal: AbortSignal.timeout(10_000),
     }
   )
-  if (!response.ok) return false
+  if (response.status === 403) return "permission_missing"
+  if (!response.ok) return "not_admin"
   const body = (await response.json()) as {
     state?: unknown
     role?: unknown
   }
   return body.state === "active" && body.role === "admin"
+    ? "verified"
+    : "not_admin"
 }
 
 async function exchangeGitHubUserInstallations(
@@ -524,21 +571,24 @@ async function exchangeGitHubUserInstallations(
   )
   if (!clientSecret) throw new Error("GitHub App OAuth is not configured")
 
-  const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "User-Agent": "ploydok",
-    },
-    body: JSON.stringify({
-      client_id: config.client_id,
-      client_secret: clientSecret,
-      code,
-      redirect_uri: getInstallOAuthCallbackUrl(),
-    }),
-    signal: AbortSignal.timeout(10_000),
-  })
+  const tokenResponse = await fetch(
+    "https://github.com/login/oauth/access_token",
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "ploydok",
+      },
+      body: JSON.stringify({
+        client_id: config.client_id,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: getInstallOAuthCallbackUrl(),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    }
+  )
   if (!tokenResponse.ok) throw new Error("GitHub OAuth token exchange failed")
   const tokenBody = (await tokenResponse.json()) as { access_token?: unknown }
   if (typeof tokenBody.access_token !== "string" || !tokenBody.access_token) {
@@ -606,6 +656,12 @@ async function exchangeGitHubUserInstallations(
 
 function getApiOrigin(): string {
   return new URL(env.GITHUB_APP_CALLBACK_URL).origin
+}
+
+function getInstallationStartUrl(organizationId?: string): string {
+  const url = new URL("/github/installations/start", getApiOrigin())
+  if (organizationId) url.searchParams.set("organizationId", organizationId)
+  return url.toString()
 }
 
 function getUserId(c: {
@@ -776,6 +832,9 @@ function dbRowToWire(row: ProviderRepoRow, accountLogin?: string) {
 githubRouter.get("/repos", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const page = Math.max(1, Number(c.req.query("page") ?? 1))
   const perPage = Math.min(
     100,
@@ -788,12 +847,14 @@ githubRouter.get("/repos", async (c) => {
     return c.json({ error: "github_app_not_configured" }, 503)
   }
 
-  const installUrl = `${getApiOrigin()}/github/installations/start`
-  const { organization, installationIds } =
-    await getScopedGitHubInstallationIds(c, userId)
-  if (c.req.query("organizationId") || c.req.query("projectId")) {
-    if (!organization) return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installUrl = getInstallationStartUrl(organization.id)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installationDbIds = installationIds.map(getGitHubInstallationDbId)
   if (installationIds.length === 0) {
     return c.json({
@@ -958,7 +1019,7 @@ githubRouter.get("/repos", async (c) => {
 // Force a full refresh of the repo cache for one or all installations.
 // ---------------------------------------------------------------------------
 
-githubRouter.post("/installations/sync", async (c) => {
+githubRouter.post("/installations/sync", githubWriteScope, async (c) => {
   const user = c.get("user") ?? null
   if (!user) return c.json({ error: "unauthenticated" }, 401)
   let body: { installationId?: string } = {}
@@ -985,10 +1046,7 @@ githubRouter.post("/installations/sync", async (c) => {
     if (organizationId && !scope) {
       return c.json({ error: "organization_not_found" }, 404)
     }
-    allowedIds = await getAccessibleGitHubInstallationIds(
-      user.id,
-      scope?.id
-    )
+    allowedIds = await getAccessibleGitHubInstallationIds(user.id, scope?.id)
   } catch (err) {
     log.error({ err, userId: user.id }, "failed to resolve GitHub sync scope")
     return c.json({ error: "github_api_error", detail: String(err) }, 502)
@@ -1080,6 +1138,9 @@ githubRouter.get("/installations/cache-status", async (c) => {
 githubRouter.get("/repos/:owner/:repo/branches", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const owner = c.req.param("owner")
   const repo = c.req.param("repo")
   const fullName = `${owner}/${repo}`
@@ -1089,13 +1150,16 @@ githubRouter.get("/repos/:owner/:repo/branches", async (c) => {
     return c.json({ error: "github_app_not_configured" }, 503)
   }
 
-  const scoped = await getScopedGitHubInstallationIds(c, userId)
-  if (hasOrganizationQuery(c) && !scoped.organization) {
-    return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installations = await listUserGitHubInstallations(
     userId,
-    scoped.installationIds
+    installationIds
   )
   if (installations.length === 0) {
     // The repo picker is served from the cached repo table, so it stays
@@ -1105,7 +1169,7 @@ githubRouter.get("/repos/:owner/:repo/branches", async (c) => {
     return c.json({
       branches: [],
       needsInstall: true,
-      installUrl: `${getApiOrigin()}/github/installations/start`,
+      installUrl: getInstallationStartUrl(organization.id),
     })
   }
 
@@ -1136,6 +1200,9 @@ githubRouter.get("/repos/:owner/:repo/branches", async (c) => {
 githubRouter.get("/repos/:owner/:repo/file-exists", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const owner = c.req.param("owner")
   const repo = c.req.param("repo")
   const fullName = `${owner}/${repo}`
@@ -1151,13 +1218,16 @@ githubRouter.get("/repos/:owner/:repo/file-exists", async (c) => {
     return c.json({ error: "github_app_not_configured" }, 503)
   }
 
-  const scoped = await getScopedGitHubInstallationIds(c, userId)
-  if (hasOrganizationQuery(c) && !scoped.organization) {
-    return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installations = await listUserGitHubInstallations(
     userId,
-    scoped.installationIds
+    installationIds
   )
   if (installations.length === 0) {
     return c.json({ exists: false })
@@ -1193,6 +1263,9 @@ githubRouter.get("/repos/:owner/:repo/file-exists", async (c) => {
 githubRouter.get("/repos/:owner/:repo/files-exist", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const owner = c.req.param("owner")
   const repo = c.req.param("repo")
   const fullName = `${owner}/${repo}`
@@ -1207,13 +1280,16 @@ githubRouter.get("/repos/:owner/:repo/files-exist", async (c) => {
     return c.json({ error: "github_app_not_configured" }, 503)
   }
 
-  const scoped = await getScopedGitHubInstallationIds(c, userId)
-  if (hasOrganizationQuery(c) && !scoped.organization) {
-    return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installations = await listUserGitHubInstallations(
     userId,
-    scoped.installationIds
+    installationIds
   )
   if (installations.length === 0) {
     return c.json({ files: emptyFileProbeResult(query.paths) })
@@ -1253,18 +1329,24 @@ githubRouter.get("/repos/:owner/:repo/files-exist", async (c) => {
 githubRouter.get("/repos/:owner/:repo/deployment-targets", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const ref = c.req.query("ref")?.trim()
   if (!ref) return c.json({ error: "missing_ref" }, 400)
   const owner = c.req.param("owner")
   const fullName = `${owner}/${c.req.param("repo")}`
   if (!(await getGitHubAppConfig(db)))
     return c.json({ error: "github_app_not_configured" }, 503)
-  const scoped = await getScopedGitHubInstallationIds(c, userId)
-  if (hasOrganizationQuery(c) && !scoped.organization) {
-    return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installations = preferredInstallations(
-    await listUserGitHubInstallations(userId, scoped.installationIds),
+    await listUserGitHubInstallations(userId, installationIds),
     owner
   )
   for (const inst of installations) {
@@ -1292,6 +1374,9 @@ githubRouter.get("/repos/:owner/:repo/deployment-targets", async (c) => {
 githubRouter.get("/repos/:owner/:repo/env-file", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const owner = c.req.param("owner")
   const repo = c.req.param("repo")
   const fullName = `${owner}/${repo}`
@@ -1307,13 +1392,16 @@ githubRouter.get("/repos/:owner/:repo/env-file", async (c) => {
     return c.json({ error: "github_app_not_configured" }, 503)
   }
 
-  const scoped = await getScopedGitHubInstallationIds(c, userId)
-  if (hasOrganizationQuery(c) && !scoped.organization) {
-    return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installations = await listUserGitHubInstallations(
     userId,
-    scoped.installationIds
+    installationIds
   )
   const candidates = preferredInstallations(installations, owner)
 
@@ -1340,6 +1428,9 @@ githubRouter.get("/repos/:owner/:repo/env-file", async (c) => {
 githubRouter.get("/repos/:owner/:repo/manifest-file", async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: "unauthenticated" }, 401)
+  if (!hasOrganizationQuery(c)) {
+    return c.json({ error: "organization_required" }, 400)
+  }
   const owner = c.req.param("owner")
   const repo = c.req.param("repo")
   const fullName = `${owner}/${repo}`
@@ -1355,13 +1446,16 @@ githubRouter.get("/repos/:owner/:repo/manifest-file", async (c) => {
     return c.json({ error: "github_app_not_configured" }, 503)
   }
 
-  const scoped = await getScopedGitHubInstallationIds(c, userId)
-  if (hasOrganizationQuery(c) && !scoped.organization) {
-    return c.json({ error: "organization_not_found" }, 404)
-  }
+  const organization = await getOrganizationScope(c, userId)
+  if (!organization) return c.json({ error: "organization_not_found" }, 404)
+  const installationIds = await listGitHubInstallationIdsForOrganizationAndUser(
+    db,
+    organization.id,
+    userId
+  )
   const installations = await listUserGitHubInstallations(
     userId,
-    scoped.installationIds
+    installationIds
   )
   const candidates = preferredInstallations(installations, owner)
 
@@ -1410,12 +1504,17 @@ githubRouter.get("/installations", async (c) => {
       return c.json({ error: "organization_not_found" }, 404)
     }
     let installations: Awaited<ReturnType<typeof listAppInstallations>>
-    let claimableInstallations: Awaited<ReturnType<typeof listAppInstallations>> = []
+    let claimableInstallations: Awaited<
+      ReturnType<typeof listAppInstallations>
+    > = []
     let organizationGrantIds: Set<string> | null = null
     if (hasOrganizationQuery(c)) {
       const allowedIds = new Set(scope.installationIds)
       organizationGrantIds = new Set(
-        await listGitHubInstallationIdsForOrganization(db, scope.organization!.id)
+        await listGitHubInstallationIdsForOrganization(
+          db,
+          scope.organization!.id
+        )
       )
       installations = await listUserGitHubInstallations(
         userId,
@@ -1467,7 +1566,7 @@ githubRouter.get("/installations", async (c) => {
       ...(scope.organization?.role === "owner"
         ? { claimableInstallations: enrichedClaimable }
         : {}),
-      installUrl: `${getApiOrigin()}/github/installations/start`,
+      installUrl: getInstallationStartUrl(scope.organization?.id),
     })
   } catch (err) {
     log.error({ err }, "listAppInstallations failed")
@@ -1482,7 +1581,7 @@ githubRouter.get("/installations", async (c) => {
 // check before creating the organization grant.
 // ---------------------------------------------------------------------------
 
-githubRouter.get("/installations/start", async (c) => {
+githubRouter.get("/installations/start", githubWriteScope, githubOwnerSession, async (c) => {
   const user = c.get("user")
   if (!user) {
     return c.json({ error: "unauthenticated" }, 401)
@@ -1535,59 +1634,71 @@ githubRouter.get("/installations/start", async (c) => {
 })
 
 for (const method of ["get", "post"] as const) {
-  githubRouter[method]("/installations/:id/claim", async (c) => {
-    const user = c.get("user")
-    if (!user) return c.json({ error: "unauthenticated" }, 401)
-    const installationId = normalizeGitHubInstallationId(c.req.param("id"))
-    if (!installationId) return c.json({ error: "invalid_installation_id" }, 400)
-    const body =
-      method === "post"
-        ? ((await c.req.json().catch(() => null)) as {
-            organizationId?: unknown
-            projectId?: unknown
-            returnTo?: unknown
-          } | null)
-        : null
-    const organizationId =
-      c.req.query("organizationId") ??
-      c.req.query("projectId") ??
-      (typeof body?.organizationId === "string"
-        ? body.organizationId
-        : typeof body?.projectId === "string"
-          ? body.projectId
-          : undefined)
-    if (!organizationId) {
-      return c.json({ error: "organization_required" }, 400)
-    }
-    const scope = await requireOrganizationOwner(c, user.id)
-    if (!scope || scope.id !== organizationId) {
-      return c.json({ error: "organization_owner_required" }, 403)
-    }
-    const config = await getGitHubAppConfig(db)
-    if (!config) return c.json({ error: "github_app_not_configured" }, 503)
-    const returnTo = sanitizeReturnTo(
-      c.req.query("return_to") ?? body?.returnTo,
-      GITHUB_RETURN_FALLBACK
-    )
-    const state = crypto.randomUUID()
-    c.header(
-      "Set-Cookie",
-      buildCookieStr(
-        INSTALL_STATE_COOKIE,
-        signInstallState(state, user.id, returnTo, organizationId, installationId),
-        APP_STATE_TTL_SECONDS,
-        true
+  githubRouter[method](
+    "/installations/:id/claim",
+    githubWriteScope,
+    githubOwnerSession,
+    async (c) => {
+      const user = c.get("user")
+      if (!user) return c.json({ error: "unauthenticated" }, 401)
+      const installationId = normalizeGitHubInstallationId(c.req.param("id"))
+      if (!installationId)
+        return c.json({ error: "invalid_installation_id" }, 400)
+      const body =
+        method === "post"
+          ? ((await c.req.json().catch(() => null)) as {
+              organizationId?: unknown
+              projectId?: unknown
+              returnTo?: unknown
+            } | null)
+          : null
+      const organizationId =
+        c.req.query("organizationId") ??
+        c.req.query("projectId") ??
+        (typeof body?.organizationId === "string"
+          ? body.organizationId
+          : typeof body?.projectId === "string"
+            ? body.projectId
+            : undefined)
+      if (!organizationId) {
+        return c.json({ error: "organization_required" }, 400)
+      }
+      const scope = await requireOrganizationOwner(c, user.id)
+      if (!scope || scope.id !== organizationId) {
+        return c.json({ error: "organization_owner_required" }, 403)
+      }
+      const config = await getGitHubAppConfig(db)
+      if (!config) return c.json({ error: "github_app_not_configured" }, 503)
+      const returnTo = sanitizeReturnTo(
+        c.req.query("return_to") ?? body?.returnTo,
+        GITHUB_RETURN_FALLBACK
       )
-    )
-    return c.redirect(buildInstallStartUrl(config.slug, state), 302)
-  })
+      const state = crypto.randomUUID()
+      c.header(
+        "Set-Cookie",
+        buildCookieStr(
+          INSTALL_STATE_COOKIE,
+          signInstallState(
+            state,
+            user.id,
+            returnTo,
+            organizationId,
+            installationId
+          ),
+          APP_STATE_TTL_SECONDS,
+          true
+        )
+      )
+      return c.redirect(buildInstallStartUrl(config.slug, state), 302)
+    }
+  )
 }
 
 // Rebuilds the local user links after a database or encryption-key reset.
 // GitHub's App API is the source of truth here: only installations currently
 // returned for this exact App are linked, and only an instance admin may run
 // the reconciliation.
-githubRouter.post("/installations/reconnect", async (c) => {
+githubRouter.post("/installations/reconnect", githubWriteScope, async (c) => {
   const user = c.get("user")
   if (!user) return c.json({ error: "unauthenticated" }, 401)
   if (!(await isInstanceAdmin(db, user.id))) {
@@ -1652,7 +1763,7 @@ githubRouter.post("/installations/reconnect", async (c) => {
 // GitHub installation globally and remove its local state.
 // ---------------------------------------------------------------------------
 
-githubRouter.delete("/installations/:id/grant", async (c) => {
+githubRouter.delete("/installations/:id/grant", githubWriteScope, githubOwnerSession, async (c) => {
   const user = c.get("user")
   if (!user) return c.json({ error: "unauthenticated" }, 401)
   const installationId = normalizeGitHubInstallationId(c.req.param("id"))
@@ -1664,15 +1775,26 @@ githubRouter.delete("/installations/:id/grant", async (c) => {
   if (!scope || scope.id !== organizationId) {
     return c.json({ error: "organization_owner_required" }, 403)
   }
-  const removed = await revokeGitHubInstallationFromOrganization(
-    db,
-    organizationId,
-    installationId
-  )
+  const removed = await db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db
+    const removed = await revokeGitHubInstallationFromOrganization(
+      transactionDb,
+      organizationId,
+      installationId
+    )
+    if (!removed) return false
+    await writeGitHubInstallationAudit(transactionDb, {
+      action: "github.installation.revoked",
+      organizationId,
+      installationId,
+      actorUserId: user.id,
+    })
+    return true
+  })
   return c.json({ ok: true, revoked: removed, installationId })
 })
 
-githubRouter.delete("/installations/:id", async (c) => {
+githubRouter.delete("/installations/:id", githubWriteScope, async (c) => {
   const idParam = c.req.param("id")
   const installationId = Number(idParam)
   if (!Number.isFinite(installationId) || installationId <= 0) {
@@ -1746,7 +1868,8 @@ githubRouter.get("/app/setup", async (c) => {
 
   c.header("Set-Cookie", clearCookieStr(INSTALL_STATE_COOKIE))
   if (stateValid) {
-    const normalizedInstallationId = normalizeGitHubInstallationId(installationId)
+    const normalizedInstallationId =
+      normalizeGitHubInstallationId(installationId)
     if (!normalizedInstallationId) {
       params.set("install_error", "missing_installation_id")
     } else if (installState?.organizationId) {
@@ -1777,13 +1900,15 @@ githubRouter.get("/app/setup", async (c) => {
                 userId: actorUserId,
                 organizationId: installState.organizationId,
                 installationId: normalizedInstallationId,
+                claimInstallationId: installState.claimInstallationId,
                 setupAction: setupAction ?? null,
                 returnTo,
                 issuedAt: Date.now(),
               }),
               APP_STATE_TTL_SECONDS,
               true
-            )
+            ),
+            { append: true }
           )
           return c.redirect(
             buildInstallOAuthUrl(config.client_id, oauthState),
@@ -1843,7 +1968,7 @@ githubRouter.get("/app/setup", async (c) => {
 // POST /github/app/manifest  (auth required — wired in app.ts)
 // ---------------------------------------------------------------------------
 
-githubRouter.post("/app/manifest", async (c) => {
+githubRouter.post("/app/manifest", githubWriteScope, async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     return_to?: unknown
   } | null
@@ -1885,7 +2010,7 @@ githubRouter.post("/app/manifest", async (c) => {
 // credentials needed to sign JWTs, then kicks a global sync.
 // ---------------------------------------------------------------------------
 
-githubRouter.post("/app/import", async (c) => {
+githubRouter.post("/app/import", githubWriteScope, async (c) => {
   const body = await c.req.json().catch(() => null)
   const parsed = ImportGitHubAppConfigBody.safeParse(body)
   if (!parsed.success) {
@@ -2072,7 +2197,10 @@ githubRouter.get("/app/callback", async (c) => {
     const config = await getGitHubAppConfig(db)
     if (!config) {
       return c.redirect(
-        buildReturnUrl(oauthState.returnTo, new URLSearchParams({ install_error: "github_app_not_configured" })),
+        buildReturnUrl(
+          oauthState.returnTo,
+          new URLSearchParams({ install_error: "github_app_not_configured" })
+        ),
         302
       )
     }
@@ -2083,7 +2211,10 @@ githubRouter.get("/app/callback", async (c) => {
     } catch (err) {
       log.warn({ err }, "github installation owner proof failed")
       return c.redirect(
-        buildReturnUrl(oauthState.returnTo, new URLSearchParams({ install_error: "claim_authority_missing" })),
+        buildReturnUrl(
+          oauthState.returnTo,
+          new URLSearchParams({ install_error: "claim_authority_missing" })
+        ),
         302
       )
     }
@@ -2091,10 +2222,12 @@ githubRouter.get("/app/callback", async (c) => {
     const installation = proof.installations.find(
       (candidate) => String(candidate.id) === oauthState.installationId
     )
-    let organizationAdmin = true
+    let organizationMembership: Awaited<
+      ReturnType<typeof verifyGitHubOrganizationAdmin>
+    > = "verified"
     if (installation?.accountType === "Organization") {
       try {
-        organizationAdmin = await verifyGitHubOrganizationAdmin(
+        organizationMembership = await verifyGitHubOrganizationAdmin(
           proof.accessToken,
           installation.accountLogin,
           proof.login
@@ -2119,22 +2252,39 @@ githubRouter.get("/app/callback", async (c) => {
       !installation ||
       !["Organization", "User"].includes(installation.accountType) ||
       (installation.accountType === "User" &&
-        installation.accountLogin.toLowerCase() !== proof.login.toLowerCase()) ||
+        installation.accountLogin.toLowerCase() !==
+          proof.login.toLowerCase()) ||
       !(await organizationOwnerStillExists(
         oauthState.organizationId,
         oauthState.userId
       ))
     ) {
       return c.redirect(
-        buildReturnUrl(oauthState.returnTo, new URLSearchParams({ install_error: "claim_authority_missing" })),
+        buildReturnUrl(
+          oauthState.returnTo,
+          new URLSearchParams({ install_error: "claim_authority_missing" })
+        ),
         302
       )
     }
-    if (!organizationAdmin) {
+    if (organizationMembership === "permission_missing") {
       return c.redirect(
         buildReturnUrl(
           oauthState.returnTo,
-          new URLSearchParams({ install_error: "github_org_membership_unverified" })
+          new URLSearchParams({
+            install_error: "github_members_permission_required",
+          })
+        ),
+        302
+      )
+    }
+    if (organizationMembership !== "verified") {
+      return c.redirect(
+        buildReturnUrl(
+          oauthState.returnTo,
+          new URLSearchParams({
+            install_error: "github_org_membership_unverified",
+          })
         ),
         302
       )
@@ -2176,6 +2326,20 @@ githubRouter.get("/app/callback", async (c) => {
           oauthState.installationId,
           oauthState.userId
         )
+        if (oauthState.claimInstallationId) {
+          await writeGitHubInstallationAudit(transactionDb, {
+            action: "github.installation.claimed",
+            organizationId: oauthState.organizationId,
+            installationId: oauthState.installationId,
+            actorUserId: oauthState.userId,
+          })
+        }
+        await writeGitHubInstallationAudit(transactionDb, {
+          action: "github.installation.granted",
+          organizationId: oauthState.organizationId,
+          installationId: oauthState.installationId,
+          actorUserId: oauthState.userId,
+        })
         return true
       })
       if (!committed) {
@@ -2204,7 +2368,10 @@ githubRouter.get("/app/callback", async (c) => {
         "github installation grant callback failed"
       )
       return c.redirect(
-        buildReturnUrl(oauthState.returnTo, new URLSearchParams({ install_error: "sync_failed" })),
+        buildReturnUrl(
+          oauthState.returnTo,
+          new URLSearchParams({ install_error: "sync_failed" })
+        ),
         302
       )
     }
@@ -2357,7 +2524,7 @@ githubRouter.get("/app/credentials/status", async (c) => {
 // DELETE /github/app/config/local  (instance admin only — local recovery)
 // ---------------------------------------------------------------------------
 
-githubRouter.delete("/app/config/local", async (c) => {
+githubRouter.delete("/app/config/local", githubWriteScope, async (c) => {
   if (c.req.query("confirm") !== FORGET_LOCAL_APP_CONFIRMATION) {
     return c.json(
       {
@@ -2417,7 +2584,7 @@ githubRouter.delete("/app/config/local", async (c) => {
 // DELETE /github/app/config  (auth required — destructive admin reset)
 // ---------------------------------------------------------------------------
 
-githubRouter.delete("/app/config", async (c) => {
+githubRouter.delete("/app/config", githubWriteScope, async (c) => {
   if (c.req.query("confirm") !== RESET_APP_CONFIRMATION) {
     return c.json(
       {

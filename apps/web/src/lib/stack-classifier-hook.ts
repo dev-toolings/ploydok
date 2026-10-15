@@ -247,7 +247,7 @@ export function useStackClassification(
         organizationId,
       );
     },
-    enabled,
+    enabled: enabled && (source !== "github" || Boolean(organizationId)),
     staleTime: 5 * 60_000,
   });
 
@@ -272,7 +272,12 @@ export function useRepositoryTargets(
     ApiError
   >({
     queryKey: ["repository-targets", source, fullName, ref, organizationId],
-    enabled: Boolean(source && fullName && ref),
+    enabled: Boolean(
+      source &&
+        fullName &&
+        ref &&
+        (source !== "github" || organizationId)
+    ),
     staleTime: 5 * 60_000,
     queryFn: () => {
       const params = new URLSearchParams({ ref: ref! })

@@ -248,6 +248,7 @@
     "loadFailed": "Impossible de charger les installations GitHub : {{message}}",
     "installError": "L'installation GitHub n'a pas pu être terminée. Réessayez.",
     "membersPermissionError": "GitHub n'a pas permis à Ploydok de vérifier la propriété de l'organisation. Activez Members: read sur la GitHub App, puis réessayez en approuvant l'accès demandé.",
+    "ownerVerificationError": "GitHub n'a pas pu vérifier que ce compte administre l'organisation. Réessayez avec le compte d'un owner de l'organisation et approuvez l'accès demandé.",
     "installed": "Installation GitHub accordée à cet espace.",
     "revoked": "Installation GitHub révoquée pour cet espace.",
     "revokeFailed": "Impossible de révoquer l'installation GitHub."

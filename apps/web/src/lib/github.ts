@@ -106,6 +106,7 @@ export function useGitHubRepos(params: ReposParams = {}) {
     },
     getNextPageParam: (last, pages) =>
       last.hasMore ? pages.length + 1 : undefined,
+    enabled: Boolean(organizationId),
     initialPageParam: 1,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
@@ -145,7 +146,7 @@ export function useGitHubBranches(
       }>(`/github/repos/${owner}/${repo}/branches${query}`)
       return { branches: res.branches, needsInstall: res.needsInstall ?? false }
     },
-    enabled: Boolean(fullName),
+    enabled: Boolean(fullName && organizationId),
     staleTime: 60_000,
   })
 }
@@ -182,7 +183,7 @@ export function useGitHubFileExists(
       )
       return res.exists
     },
-    enabled: Boolean(fullName && ref),
+    enabled: Boolean(fullName && ref && organizationId),
     staleTime: 5 * 60_000,
   })
 }
