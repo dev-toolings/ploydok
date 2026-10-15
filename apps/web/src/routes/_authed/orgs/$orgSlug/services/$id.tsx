@@ -160,6 +160,7 @@ function ServiceHeaderPanel({
     name: string
     status: string | null
     domain: string | null
+    publicUrl: string | null
     template_id: string
     template_version: string | null
   }
@@ -180,7 +181,7 @@ function ServiceHeaderPanel({
         {service.domain ? (
           <Row label={t("domain")}>
             <a
-              href={`https://${service.domain}`}
+              href={service.publicUrl ?? undefined}
               target="_blank"
               rel="noreferrer noopener"
               className="font-mono text-xs text-primary underline underline-offset-2"

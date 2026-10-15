@@ -54,6 +54,7 @@ export const ServiceSummary = z.object({
   template_version: z.string().nullable(),
   status: ServiceStatus.nullable(),
   domain: z.string().nullable(),
+  publicUrl: z.string().url().nullable().optional(),
   created_at: z.date().or(z.string()),
 })
 export type ServiceSummary = z.infer<typeof ServiceSummary>

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHmac, randomBytes } from "node:crypto"
-import { generateDomain, resolveTemplate } from "@ploydok/shared"
+import {
+  generateDomain,
+  resolveTemplate,
+  rewriteGeneratedDomainUrls,
+} from "@ploydok/shared"
 import { isScalar, parseDocument, visit } from "yaml"
 import { childLogger } from "../logger"
 import {
@@ -67,8 +71,12 @@ type TemplateDocument = {
 
 type HelperContext = {
   projectSlug: string
+  domainBase?: string | undefined
+  publicOrigin?: string | undefined
+  publicScheme?: "http" | "https" | undefined
   variables: Record<string, string>
   generatedVars: Record<string, string>
+  generatedDomains: Set<string>
   helperDomain: string | null
   scope: string
 }
@@ -179,12 +187,21 @@ function helperValue(token: string, context: HelperContext, legacyInline = false
   let value: string
   const name = helperName(token)
   if (legacyInline && ["domain", "password", "base64", "hash", "uuid", "timestamp", "timestampms", "timestamps"].includes(name) && (!["timestampms", "timestamps"].includes(name) || token === name)) {
-    const legacy = resolveTemplate(`\${${token}}`, { projectSlug: context.projectSlug })
+    const legacy = resolveTemplate(`\${${token}}`, {
+      projectSlug: context.projectSlug,
+      domainBase: context.domainBase,
+      publicOrigin: context.publicOrigin,
+      publicScheme: context.publicScheme,
+    })
     value = legacy.composeResolved
-    if (legacy.domain) context.helperDomain = legacy.domain
+    if (legacy.domain) {
+      context.helperDomain = legacy.domain
+      context.generatedDomains.add(legacy.domain)
+    }
   } else if (name === "domain") {
-    value = generateDomain(context.projectSlug)
+    value = generateDomain(context.projectSlug, context.domainBase)
     context.helperDomain = value
+    context.generatedDomains.add(value)
   } else if (name === "password") {
     value = randomPassword(positiveLength(token, 16))
   } else if (name === "base64") {
@@ -229,7 +246,15 @@ function helperValue(token: string, context: HelperContext, legacyInline = false
 }
 
 function resolveHelpers(value: string, context: HelperContext): string {
-  return replaceTemplateExpressions(value.replaceAll("$$", DOLLAR_MARKER), (match, token) => helperValue(token, context) ?? match).replaceAll(DOLLAR_MARKER, () => "$$")
+  const resolved = replaceTemplateExpressions(
+    value.replaceAll("$$", DOLLAR_MARKER),
+    (match, token) => helperValue(token, context) ?? match
+  ).replaceAll(DOLLAR_MARKER, () => "$$")
+  return rewriteGeneratedDomainUrls(
+    resolved,
+    [...context.generatedDomains],
+    context
+  )
 }
 
 function resolveVariableReferences(
@@ -250,7 +275,15 @@ function resolveVariableReferences(
 }
 
 function processTemplateValue(value: string, context: HelperContext): string {
-  return resolveVariableReferences(resolveHelpers(value, context), context.variables)
+  const resolved = resolveVariableReferences(
+    resolveHelpers(value, context),
+    context.variables
+  )
+  return rewriteGeneratedDomainUrls(
+    resolved,
+    [...context.generatedDomains],
+    context
+  )
 }
 
 function parseTemplate(templateToml: string): TemplateDocument {
@@ -362,21 +395,28 @@ function interpolateCompose(compose: string, variables: Record<string, string>, 
     if (isScalar(node) && typeof node.value === "string") node.value = interpolate(node.value)
   })
   if (missing.size) log.warn({ names: [...missing].sort() }, "Compose variables missing without defaults; replaced with empty strings")
-  return document.toString({ lineWidth: 0 })
+  return rewriteGeneratedDomainUrls(
+    document.toString({ lineWidth: 0 }),
+    [...context.generatedDomains],
+    context
+  )
 }
 
 function processTemplateToml(
   compose: string,
   templateToml: string,
-  projectSlug: string
+  projectSlug: string,
+  domainContext: Pick<HelperContext, "domainBase" | "publicOrigin" | "publicScheme">
 ): Omit<PreparedTemplateInstall, "runtimeMode"> {
   const template = parseTemplate(templateToml)
   const generatedVars: Record<string, string> = Object.create(null)
   const variables: Record<string, string> = Object.assign(Object.create(null), { APP_NAME: projectSlug })
   const context: HelperContext = {
     projectSlug,
+    ...domainContext,
     variables,
     generatedVars,
+    generatedDomains: new Set(),
     helperDomain: null,
     scope: "",
   }
@@ -388,8 +428,14 @@ function processTemplateToml(
   // First pass generates independent helpers. JWT dependencies wait for pass two.
   for (const key of Object.keys(rawVariables)) {
     context.scope = key
-    variables[key] = replaceTemplateExpressions(variables[key]!, (match, token) =>
-      token.startsWith("jwt:") ? match : helperValue(token, context) ?? match)
+    const resolved = replaceTemplateExpressions(variables[key]!, (match, token) =>
+      token.startsWith("jwt:") ? match : helperValue(token, context) ?? match
+    )
+    variables[key] = rewriteGeneratedDomainUrls(
+      resolved,
+      [...context.generatedDomains],
+      context
+    )
   }
   // Resolve forward references recursively, including JWT secret/payload names.
   const resolving = new Set<string>(), complete = new Set<string>()
@@ -397,7 +443,7 @@ function processTemplateToml(
     if (complete.has(key)) return variables[key]!
     if (resolving.has(key)) throw validationError(`Circular template variable reference: ${key}`)
     resolving.add(key)
-    variables[key] = replaceTemplateExpressions(variables[key]!, (match, token) => {
+    const resolved = replaceTemplateExpressions(variables[key]!, (match, token) => {
       if (VARIABLE_PATTERN.test(token) && Object.hasOwn(variables, token)) return resolve(token)
       if (token.startsWith("jwt:")) {
         for (const dependency of token.slice(4).split(":").slice(0, 2))
@@ -406,6 +452,11 @@ function processTemplateToml(
       context.scope = key
       return helperValue(token, context) ?? match
     })
+    variables[key] = rewriteGeneratedDomainUrls(
+      resolved,
+      [...context.generatedDomains],
+      context
+    )
     resolving.delete(key); complete.add(key)
     return variables[key]!
   }
@@ -435,8 +486,11 @@ function processTemplateToml(
     }
     const host =
       domainConfig.host === undefined
-        ? generateDomain(projectSlug)
+        ? generateDomain(projectSlug, context.domainBase)
         : processTemplateValue(stringValue(domainConfig.host), context)
+    if (domainConfig.host === undefined) {
+      context.generatedDomains.add(host)
+    }
     if (!host || host.includes("$")) throw validationError("template.toml config.domains[0] host is empty or unresolved")
     declaredEntrypoint = { serviceName, port }
     domain = host
@@ -450,11 +504,27 @@ export function prepareTemplateInstall(input: {
   templateToml?: string
   projectSlug: string
   serviceId?: string
+  domainBase?: string
+  publicOrigin?: string
+  publicScheme?: "http" | "https"
 }): PreparedTemplateInstall {
+  const domainContext = {
+    domainBase: input.domainBase,
+    publicOrigin: input.publicOrigin,
+    publicScheme: input.publicScheme,
+  }
   const prepared = input.templateToml !== undefined
-    ? processTemplateToml(input.compose, input.templateToml, input.projectSlug)
+    ? processTemplateToml(
+        input.compose,
+        input.templateToml,
+        input.projectSlug,
+        domainContext
+      )
     : {
-        ...resolveTemplate(input.compose, { projectSlug: input.projectSlug }),
+        ...resolveTemplate(input.compose, {
+          projectSlug: input.projectSlug,
+          ...domainContext,
+        }),
         declaredEntrypoint: null,
       }
 

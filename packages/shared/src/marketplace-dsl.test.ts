@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "bun:test"
 
-import { UnknownDslHelperError, resolveTemplate } from "./marketplace-dsl"
+import {
+  UnknownDslHelperError,
+  resolveTemplate,
+  rewriteGeneratedDomainUrls,
+} from "./marketplace-dsl"
 
-const CTX = { projectSlug: "my-proj", serverIp: "1.2.3.4" }
-const CTX_NO_IP = { projectSlug: "my-proj" }
+const CTX = { projectSlug: "my-proj", domainBase: "apps.example.test" }
+const CTX_NO_BASE = { projectSlug: "my-proj" }
 
 // ---------------------------------------------------------------------------
 // compose vide / sans DSL
@@ -32,9 +36,9 @@ describe("resolveTemplate — no DSL", () => {
 // ---------------------------------------------------------------------------
 
 describe("${domain}", () => {
-  it("generates a traefik.me domain matching the expected pattern", () => {
+  it("generates a domain on the configured base", () => {
     const r = resolveTemplate("HOST=${domain}", CTX)
-    expect(r.domain).toMatch(/^my-proj-[0-9a-f]{6}-1-2-3-4\.traefik\.me$/)
+    expect(r.domain).toMatch(/^my-proj-[0-9a-f]{6}\.apps\.example\.test$/)
     expect(r.composeResolved).toBe(`HOST=${r.domain}`)
   })
 
@@ -43,9 +47,50 @@ describe("${domain}", () => {
     expect(r.domain).toBeNull()
   })
 
-  it("works without serverIp", () => {
-    const r = resolveTemplate("HOST=${domain}", CTX_NO_IP)
-    expect(r.domain).toMatch(/^my-proj-[0-9a-f]{6}\.traefik\.me$/)
+  it("uses the safe development base when no domain base is supplied", () => {
+    const r = resolveTemplate("HOST=${domain}", CTX_NO_BASE)
+    expect(r.domain).toMatch(/^my-proj-[0-9a-f]{6}\.demo\.localhost$/)
+  })
+
+  it.each([
+    ["explicit", "apps.example.test"],
+    ["IPv4 sslip", "212-47-249-36.sslip.io"],
+    ["development fallback", "demo.localhost"],
+  ])("uses the API-provided %s domain base", (_label, domainBase) => {
+    const r = resolveTemplate("HOST=${domain}", {
+      projectSlug: "my-proj",
+      domainBase,
+    })
+    expect(r.domain).toMatch(
+      new RegExp(`^my-proj-[0-9a-f]{6}\\.${domainBase.replaceAll(".", "\\.")}$`)
+    )
+    expect(r.domain).not.toContain("traefik.me")
+  })
+})
+
+describe("generated domain URL rewriting", () => {
+  const generated = "service-abc123.apps.example.test"
+  const context = {
+    publicOrigin: "http://localhost:8181",
+    publicScheme: "http" as const,
+  }
+
+  it("uses the configured staging scheme and port for generated hosts", () => {
+    expect(
+      rewriteGeneratedDomainUrls(
+        `WEBHOOK_URL=https://${generated}/`,
+        generated,
+        context
+      )
+    ).toBe(`WEBHOOK_URL=http://${generated}:8181/`)
+  })
+
+  it.each([
+    `https://${generated}.external.test/`,
+    `https://${generated}@external.test/`,
+    `https://prefix-${generated}/`,
+  ])("does not rewrite an unrelated URL: %s", (value) => {
+    expect(rewriteGeneratedDomainUrls(value, generated, context)).toBe(value)
   })
 })
 

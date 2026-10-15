@@ -109,6 +109,8 @@ import {
   deleteService,
 } from "./marketplace-orchestrator"
 import type { OrchestratorDeps } from "./marketplace-orchestrator"
+import { env } from "../env"
+import { deriveDefaultAppDomainBase } from "../domains/app-domain"
 
 // ---------------------------------------------------------------------------
 // Agent factory
@@ -905,5 +907,14 @@ it("persists the template declared entrypoint instead of the first exposed servi
   });
   expect(row.entrypoint_service_name).toBe("n8n");
   expect(row.entrypoint_port).toBe(5678);
-  expect(row.domain).toMatch(/^my-pb-/);
+  const domainBase = deriveDefaultAppDomainBase({
+    explicitBase: env.PLOYDOK_DOMAIN_BASE,
+    publicHost: env.PLOYDOK_PUBLIC_HOST,
+  })
+  expect(row.domain).toMatch(
+    new RegExp(`^my-pb-[0-9a-f]{6}\\.${domainBase.replaceAll(".", "\\.")}$`)
+  )
+  expect(mockInsertService.mock.calls.at(-1)?.[1]).toMatchObject({
+    domain: row.domain,
+  })
 });

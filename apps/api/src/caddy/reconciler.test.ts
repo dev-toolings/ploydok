@@ -481,4 +481,41 @@ services:
       },
     ])
   })
+
+  test("uses persisted service routing data without re-rendering an installed template", async () => {
+    const { caddy, upserts } = createFakeServiceCaddy()
+    const result = await reconcileServiceRoutes({
+      caddy,
+      logger: silentLogger,
+      services: [
+        {
+          id: "svc-installed",
+          slug: "n8n",
+          domain: "http://n8n.apps.example.test:8181",
+          // The worker already persisted the declared route target. The
+          // encrypted or legacy Compose payload is not needed for routing.
+          compose_raw: "this is no longer a renderable template",
+          container_ids: ["ctr-n8n"],
+          swarm_service_names: [],
+          runtime_mode: "docker",
+          entrypoint_service_name: "n8n",
+          entrypoint_port: 5678,
+        },
+      ],
+    })
+
+    expect(result).toEqual({
+      bootstrapped: true,
+      synced: 1,
+      skipped: 0,
+      failed: 0,
+    })
+    expect(upserts).toEqual([
+      {
+        host: "n8n.apps.example.test",
+        upstream: "ploydok-svc-svc-installed-n8n:5678",
+        appId: "svc-installed",
+      },
+    ])
+  })
 })

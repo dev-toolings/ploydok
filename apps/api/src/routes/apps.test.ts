@@ -36,6 +36,7 @@ import * as githubModule from "./github"
 import * as gitlabConnectionModule from "../gitlab/connection"
 import { decryptSecret } from "../secrets/crypto"
 import { deployQueue } from "../worker/queues"
+import { buildPublicOrigin } from "../domains/app-domain"
 
 // ---------------------------------------------------------------------------
 // Test DB helper — in-memory SQLite with all required tables
@@ -115,6 +116,56 @@ describe("default app domains", () => {
         publicHost: "212.47.249.36",
       })
     ).toBe("fixture-hello-fvwqccec.212-47-249-36.sslip.io")
+  })
+
+  it.each([
+    {
+      label: "explicit base",
+      options: {
+        explicitBase: "https://Apps.Example.test:443/",
+        publicHost: "212.47.249.36",
+      },
+      expectedBase: "apps.example.test",
+    },
+    {
+      label: "IPv4 sslip fallback",
+      options: { publicHost: "212.47.249.36" },
+      expectedBase: "212-47-249-36.sslip.io",
+    },
+    {
+      label: "development fallback",
+      options: { publicHost: "localhost" },
+      expectedBase: "demo.localhost",
+    },
+  ])(
+    "builds an app host from the shared API context: $label",
+    ({ options, expectedBase }) => {
+      const domain = buildDefaultAppDomain({
+        slug: "fixture-hello",
+        appId: "FvwQcCeCtPThAUKHOXq1Z",
+        ...options,
+      })
+      expect(domain).toMatch(
+        new RegExp(`^fixture-hello-fvwqccec\\.${expectedBase}$`)
+      )
+      expect(domain).not.toContain("traefik.me")
+    }
+  )
+
+  it("builds the generated host origin with the configured staging scheme and port", () => {
+    expect(
+      buildPublicOrigin({
+        scheme: "http",
+        host: "localhost",
+        port: 8181,
+      })
+    ).toBe("http://localhost:8181")
+    expect(
+      buildPublicOrigin({
+        scheme: "https",
+        host: "panel.example.test",
+      })
+    ).toBe("https://panel.example.test")
   })
 })
 

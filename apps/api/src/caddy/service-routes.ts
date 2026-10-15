@@ -18,6 +18,49 @@ export class ServiceHasNoEntrypointError extends Error {
   }
 }
 
+/**
+ * Caddy's host matcher takes an authority hostname, while the public URL
+ * shown to users may also contain a scheme and a development port. Keep that
+ * distinction at the route boundary so a service domain such as
+ * `https://demo-abc123.apps.example.com:8181` still produces the matcher
+ * `demo-abc123.apps.example.com`.
+ */
+export function normalizeCaddyHost(domain: string): string {
+  const value = domain.trim()
+  if (!value) {
+    throw new Error("Service domain must not be empty")
+  }
+
+  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(value)
+    ? value
+    : `http://${value}`
+
+  let parsed: URL
+  try {
+    parsed = new URL(candidate)
+  } catch {
+    throw new Error(`Service domain is not a valid host: ${domain}`)
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Service domain is not an HTTP(S) host: ${domain}`)
+  }
+  if (
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash ||
+    !parsed.hostname
+  ) {
+    throw new Error(
+      `Service domain must be a hostname or HTTP(S) origin: ${domain}`
+    )
+  }
+
+  return parsed.hostname.replace(/\.$/, "").toLowerCase()
+}
+
 function pickEntrypoint(containers: ComposeContainer[]): {
   name: string
   port: number
@@ -53,14 +96,14 @@ export async function upsertServiceRoute(
   client: CaddyRouteClient,
   input: UpsertServiceRouteInput
 ): Promise<void> {
-  const { serviceId, domain, containers } = input
-
+  const { serviceId, containers } = input
   const { name, port } = input.entrypoint ?? pickEntrypoint(containers)
 
   if (!name || port === 0) {
     throw new ServiceHasNoEntrypointError(serviceId)
   }
 
+  const domain = normalizeCaddyHost(input.domain)
   const upstream = `${name}:${port}`
 
   await client.upsertRoute({

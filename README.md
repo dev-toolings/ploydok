@@ -135,8 +135,20 @@ bun run apps/api/scripts/marketplace-catalog-report.ts --json /tmp/marketplace-r
 ```
 
 Add `--refresh` to fetch a new snapshot. Known limits are tracked in
-**DEV-355 through DEV-359**: mount support, multiple domains, configurable
-domain base, and unsupported fields.
+**DEV-355 through DEV-359**: mount support, multiple domains, and unsupported
+fields.
+
+New marketplace `${domain}` values use `<slug>-<hash>.<base>`, sharing the app
+domain source: `PLOYDOK_DOMAIN_BASE` first, otherwise an IPv4 public host becomes
+`<ip-with-hyphens>.sslip.io`, a normal public hostname uses `apps.<hostname>`,
+and local development falls back to `demo.localhost`. Generated public URLs use
+`PLOYDOK_PUBLIC_SCHEME` and `PLOYDOK_PUBLIC_PORT`, including HTTP on port 8181 in
+development or HTTP staging when configured. Caddy matches the hostname alone.
+Explicit URLs to unrelated hosts keep their original scheme and port.
+
+Existing installed services keep their stored domains and resolved Compose
+values. This change performs no automatic migration and supplies no migration
+script; an operator must explicitly reinstall or reconfigure an old service.
 
 Compose dependencies preserve `service_started`, `service_healthy` (an explicit
 usable healthcheck is required), and `service_completed_successfully`. Each
