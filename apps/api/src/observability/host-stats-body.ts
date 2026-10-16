@@ -4,6 +4,8 @@ import type { HostStatsResponse } from "@ploydok/agent-proto"
 export interface HostStatsBody {
   cpu_percent: number
   cpu_count: number
+  mem_configured_bytes: number
+  mem_reclaimed_bytes: number
   mem_total_bytes: number
   mem_used_bytes: number
   mem_available_bytes: number
@@ -43,6 +45,9 @@ export function buildHostStatsBody(
   r: HostStatsResponse,
   fetchedAt: number
 ): HostStatsBody {
+  const configured = Number(r.memConfiguredBytes ?? 0)
+  const reclaimed = Math.max(0, configured - Number(r.memTotalBytes))
+  const reclaimThreshold = Math.max(256 * 1024 * 1024, configured * 0.05)
   const memPct =
     r.memTotalBytes > 0
       ? ((r.memTotalBytes - r.memAvailableBytes) / Number(r.memTotalBytes)) *
@@ -68,6 +73,8 @@ export function buildHostStatsBody(
   const body: HostStatsBody = {
     cpu_percent: r.cpuPercent,
     cpu_count: r.cpuCount,
+    mem_configured_bytes: configured,
+    mem_reclaimed_bytes: reclaimed > reclaimThreshold ? reclaimed : 0,
     mem_total_bytes: Number(r.memTotalBytes),
     mem_used_bytes: Number(r.memTotalBytes) - Number(r.memAvailableBytes),
     mem_available_bytes: Number(r.memAvailableBytes),

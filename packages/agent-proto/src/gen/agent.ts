@@ -607,6 +607,8 @@ export interface HostStatsResponse {
   gpuMemTotalBytes: number;
   /** first GPU's product name, empty if none */
   gpuName: string;
+  /** online sysfs memory blocks, 0 if unknown */
+  memConfiguredBytes: number;
 }
 
 export interface ImageDfRequest {
@@ -6660,6 +6662,7 @@ function createBaseHostStatsResponse(): HostStatsResponse {
     gpuMemUsedBytes: 0,
     gpuMemTotalBytes: 0,
     gpuName: "",
+    memConfiguredBytes: 0,
   };
 }
 
@@ -6730,6 +6733,9 @@ export const HostStatsResponse: MessageFns<HostStatsResponse> = {
     }
     if (message.gpuName !== "") {
       writer.uint32(178).string(message.gpuName);
+    }
+    if (message.memConfiguredBytes !== 0) {
+      writer.uint32(184).uint64(message.memConfiguredBytes);
     }
     return writer;
   },
@@ -6917,6 +6923,14 @@ export const HostStatsResponse: MessageFns<HostStatsResponse> = {
           message.gpuName = reader.string();
           continue;
         }
+        case 23: {
+          if (tag !== 184) {
+            break;
+          }
+
+          message.memConfiguredBytes = longToNumber(reader.uint64());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -7034,6 +7048,11 @@ export const HostStatsResponse: MessageFns<HostStatsResponse> = {
         : isSet(object.gpu_name)
         ? globalThis.String(object.gpu_name)
         : "",
+      memConfiguredBytes: isSet(object.memConfiguredBytes)
+        ? globalThis.Number(object.memConfiguredBytes)
+        : isSet(object.mem_configured_bytes)
+        ? globalThis.Number(object.mem_configured_bytes)
+        : 0,
     };
   },
 
@@ -7105,6 +7124,9 @@ export const HostStatsResponse: MessageFns<HostStatsResponse> = {
     if (message.gpuName !== "") {
       obj.gpuName = message.gpuName;
     }
+    if (message.memConfiguredBytes !== 0) {
+      obj.memConfiguredBytes = Math.round(message.memConfiguredBytes);
+    }
     return obj;
   },
 
@@ -7135,6 +7157,7 @@ export const HostStatsResponse: MessageFns<HostStatsResponse> = {
     message.gpuMemUsedBytes = object.gpuMemUsedBytes ?? 0;
     message.gpuMemTotalBytes = object.gpuMemTotalBytes ?? 0;
     message.gpuName = object.gpuName ?? "";
+    message.memConfiguredBytes = object.memConfiguredBytes ?? 0;
     return message;
   },
 };
