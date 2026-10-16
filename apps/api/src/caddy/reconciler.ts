@@ -14,7 +14,6 @@ import {
   inArray,
   isNotNull,
   notExists,
-  or,
 } from "drizzle-orm"
 import {
   app_deploy_leases,
@@ -29,6 +28,7 @@ import type { Logger } from "pino"
 import { caddyStaticRootForApp } from "../worker/handlers/build-static.js"
 import { composeToContainers } from "../marketplace/compose-to-containers.js"
 import { upsertServiceRoute } from "./service-routes.js"
+import { runningBuildMatch } from "../services/runtime-build.js"
 import { ContainerHealthStatus } from "@ploydok/agent-proto"
 import type { Agent } from "../agent/index.js"
 import { isNotFound, toAgentError } from "../agent/errors.js"
@@ -173,24 +173,11 @@ export async function fetchRunningAppsForCaddy(
     )
   return Promise.all(
     rows.map(async (row) => {
-      // A Swarm build records its service name, while the app row holds the
-      // current task name, which changes every time Swarm replaces the task.
-      const swarmService =
-        row.runtime_mode === "swarm" ? row.swarm_service_name : null
-      const buildFilter = row.container_id
-        ? and(
-            eq(builds.app_id, row.id),
-            inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
-            or(
-              eq(builds.container_id, row.container_id),
-              eq(builds.runtime_ref, row.container_id),
-              ...(swarmService ? [eq(builds.runtime_ref, swarmService)] : [])
-            )
-          )
-        : and(
-            eq(builds.app_id, row.id),
-            inArray(builds.status, ["succeeded", "succeeded_with_warning"])
-          )
+      const buildFilter = and(
+        eq(builds.app_id, row.id),
+        inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
+        runningBuildMatch(row)
+      )
       const buildRows = await db
         .select({ id: builds.id })
         .from(builds)

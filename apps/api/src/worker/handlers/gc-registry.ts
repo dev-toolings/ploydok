@@ -22,6 +22,10 @@ import {
 } from "../registry"
 import type { Db } from "@ploydok/db"
 import { imageRepoForApp } from "../../services/runtime-containers"
+import {
+  runningBuildMatch,
+  type RuntimeIdentity,
+} from "../../services/runtime-build"
 import { enqueueWithDbRow } from "../queue-enqueue"
 
 // ---------------------------------------------------------------------------
@@ -122,6 +126,8 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
         .select({
           id: apps.id,
           container_id: apps.container_id,
+          runtime_mode: apps.runtime_mode,
+          swarm_service_name: apps.swarm_service_name,
           keep_per_repo: apps.keep_per_repo,
         })
         .from(apps)
@@ -131,6 +137,8 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
         .select({
           id: apps.id,
           container_id: apps.container_id,
+          runtime_mode: apps.runtime_mode,
+          swarm_service_name: apps.swarm_service_name,
           keep_per_repo: apps.keep_per_repo,
         })
         .from(apps)
@@ -138,7 +146,8 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
   let reposScanned = 0
   let tagsDeleted = 0
 
-  for (const { id: appId, container_id, keep_per_repo } of appRows) {
+  for (const app of appRows) {
+    const { id: appId, keep_per_repo } = app
     const repo = imageRepoForApp(appId)
     const tags = await rc.listTags(repo)
     if (tags.length === 0) continue
@@ -152,7 +161,7 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
     // Compute protected tags: latest succeeded build tied to the running
     // container, plus any build flagged by container_id. Always keep at least
     // these even if `effectiveKeep === 0` (delete-app uses 0 to wipe everything).
-    const protectedTags = await loadProtectedTags(db, appId, container_id)
+    const protectedTags = await loadProtectedTags(db, appId, app)
 
     if (effectiveKeep > 0 && tags.length <= effectiveKeep) continue
 
@@ -264,15 +273,16 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
 async function loadProtectedTags(
   db: Db,
   appId: string,
-  containerId: string | null
+  runtime: RuntimeIdentity
 ): Promise<Set<string>> {
   const tags = new Set<string>()
-  // Build tied to the running container.
-  if (containerId) {
+  // Build tied to the running container (or Swarm service).
+  const running = runningBuildMatch(runtime)
+  if (running) {
     const rows = await db
       .select({ image_tag: builds.image_tag })
       .from(builds)
-      .where(eq(builds.container_id, containerId))
+      .where(and(eq(builds.app_id, appId), running))
       .limit(1)
     const tag = rows[0]?.image_tag
     if (tag) tags.add(tag.split(":").at(-1) ?? tag)
