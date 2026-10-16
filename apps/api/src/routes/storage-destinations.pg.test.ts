@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import path from "node:path"
 import { Hono } from "hono"
 import { eq } from "drizzle-orm"
 import {
@@ -16,6 +17,7 @@ import {
   type Db,
 } from "@ploydok/db"
 import type { AuthUser } from "../auth/middleware"
+import { env } from "../env"
 import { createStorageDestinationsRouter } from "./storage-destinations"
 import { makeTestDb, TEST_PG_URL } from "../test/db-helpers"
 
@@ -213,6 +215,7 @@ describe.skipIf(skip)("workspace storage destination routes", () => {
           usageCount: 0,
         },
       ],
+      localRoot: path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR),
     })
 
     const memberWrite = testApp(db, {

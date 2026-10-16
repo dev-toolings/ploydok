@@ -143,12 +143,14 @@ function pathStyleAccount(
 export function DestinationFormDialog({
   open,
   destination,
+  localRoot,
   isPending,
   onOpenChange,
   onSubmit,
 }: {
   open: boolean
   destination: StorageDestination | null
+  localRoot: string | undefined
   isPending: boolean
   onOpenChange: (open: boolean) => void
   onSubmit: (
@@ -345,9 +347,17 @@ export function DestinationFormDialog({
             </Field>
 
             {preset.kind === "local" ? (
-              <p className="rounded-lg border border-panel-border/70 bg-panel-inset p-3 text-sm text-muted-foreground">
-                {t("localHint")}
-              </p>
+              <div className="space-y-2 rounded-lg border border-panel-border/70 bg-panel-inset p-3 text-sm text-muted-foreground">
+                {(destination?.localPath ?? localRoot) ? (
+                  <p>
+                    {t(destination ? "localPathLabel" : "localRootLabel")}{" "}
+                    <code className="font-mono text-xs break-all text-foreground">
+                      {destination?.localPath ?? localRoot}
+                    </code>
+                  </p>
+                ) : null}
+                <p>{t("localHint")}</p>
+              </div>
             ) : (
               <RemoteFields
                 preset={preset}

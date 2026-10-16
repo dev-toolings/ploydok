@@ -23,6 +23,7 @@ import {
 import type { AuthUser } from "../auth/middleware"
 import { requireRole } from "../auth/require-role"
 import { requireScope } from "../auth/require-scope"
+import { env } from "../env"
 import { encryptField } from "../github/app-credentials"
 import {
   localDestinationDir,
@@ -62,6 +63,8 @@ function destinationSummary(
     endpoint: row.s3_endpoint,
     bucket: row.s3_bucket,
     region: row.s3_region,
+    localPath:
+      row.kind === "local" ? localDestinationDir(row.org_id, row.id) : null,
     credentialsConfigured: Boolean(row.credentials_secret_id),
     usageCount,
     lastTestAt: row.last_test_at?.toISOString() ?? null,
@@ -204,6 +207,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
     )
     return c.json({
       destinations: summaries,
+      localRoot: path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR),
     })
   })
 

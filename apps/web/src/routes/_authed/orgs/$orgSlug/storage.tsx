@@ -30,6 +30,7 @@ import {
   testFailureKey,
   useCreateStorageDestination,
   useDeleteStorageDestination,
+  useLocalStorageRoot,
   useStorageDestinations,
   useTestStorageDestination,
   useUpdateStorageDestination,
@@ -115,7 +116,7 @@ function DestinationRow({
         </p>
         <p className="font-mono text-xs break-all text-foreground">
           {destination.kind === "local"
-            ? t("notApplicable")
+            ? destination.localPath || t("notApplicable")
             : destination.endpoint || t("notApplicable")}
         </p>
       </div>
@@ -237,15 +238,18 @@ function StorageDestinationsPage(): React.JSX.Element {
     isLoading,
     error,
   } = useStorageDestinations(orgSlug)
+  const { data: localRoot } = useLocalStorageRoot(orgSlug)
   const createDestination = useCreateStorageDestination(orgSlug)
   const updateDestination = useUpdateStorageDestination(orgSlug)
   const testDestination = useTestStorageDestination(orgSlug)
   const deleteDestination = useDeleteStorageDestination(orgSlug)
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<StorageDestination | null>(null)
+  // Kept after close so the dialog does not empty itself while animating out.
   const [deleting, setDeleting] = React.useState<StorageDestination | null>(
     null
   )
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
 
   const openCreate = (): void => {
     setEditing(null)
@@ -282,7 +286,7 @@ function StorageDestinationsPage(): React.JSX.Element {
   const handleDelete = (): void => {
     if (!deleting) return
     deleteDestination.mutate(deleting.id)
-    setDeleting(null)
+    setDeleteOpen(false)
   }
 
   const savePending = createDestination.isPending || updateDestination.isPending
@@ -360,7 +364,10 @@ function StorageDestinationsPage(): React.JSX.Element {
                   destination={destination}
                   locale={i18n.resolvedLanguage ?? i18n.language}
                   onEdit={() => openEdit(destination)}
-                  onDelete={() => setDeleting(destination)}
+                  onDelete={() => {
+                    setDeleting(destination)
+                    setDeleteOpen(true)
+                  }}
                   onTest={() =>
                     testDestination.mutate({ destinationId: destination.id })
                   }
@@ -383,16 +390,15 @@ function StorageDestinationsPage(): React.JSX.Element {
       <DestinationFormDialog
         open={formOpen}
         destination={editing}
+        localRoot={localRoot}
         isPending={savePending}
         onOpenChange={setFormOpen}
         onSubmit={handleSave}
       />
 
       <AlertDialog
-        open={Boolean(deleting)}
-        onOpenChange={(open) => {
-          if (!deleteDestination.isPending && !open) setDeleting(null)
-        }}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -414,7 +420,7 @@ function StorageDestinationsPage(): React.JSX.Element {
                 event.preventDefault()
                 handleDelete()
               }}
-              className="bg-destructive bg-none text-white hover:bg-destructive/90"
+              className="bg-none bg-destructive text-white hover:bg-none hover:bg-destructive/90 active:bg-none"
             >
               {t("deleteConfirm")}
             </AlertDialogAction>
