@@ -683,6 +683,7 @@ export async function resumeServiceCreation(
       if (service.domain && routeEntrypoint) {
         await fence()
         await caddy.upsertRoute({
+          accessLogs: false,
           host: service.domain,
           upstream: `${routeEntrypoint.name}:${routeEntrypoint.port}`,
           appId: serviceId,

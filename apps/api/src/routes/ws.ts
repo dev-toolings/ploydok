@@ -30,6 +30,7 @@ import { createDb, apps, projects, memberships, databases } from "@ploydok/db"
 import { getServiceForUser } from "@ploydok/db/queries"
 import { verifyAccessToken, ACCESS_COOKIE } from "../auth/jwt"
 import { logBus } from "../worker/log-bus"
+import { getRequestLogs, runtimeLogSource } from "../services/request-logs"
 import { env } from "../env"
 import type { LogEntry } from "../worker/log-bus"
 import { getSharedAgent } from "../debug/singletons"
@@ -207,13 +208,15 @@ type ContainerLogResolve =
 type WsContext = Parameters<typeof upgradeWebSocket>[0]
 
 function createContainerLogStreamHandler(
-  resolve: (c: WsContext, userId: string) => Promise<ContainerLogResolve>
+  resolve: (c: WsContext, userId: string) => Promise<ContainerLogResolve>,
+  appRuntime = false
 ) {
   return upgradeWebSocket((c) => {
     let pingTimer: ReturnType<typeof setInterval> | null = null
     let missedPings = 0
     let closed = false
     let stopStreaming: (() => void) | null = null
+    let stopRequests: (() => void) | null = null
 
     return {
       async onOpen(_evt, ws) {
@@ -223,25 +226,52 @@ function createContainerLogStreamHandler(
           return
         }
 
-        const resolved = await resolve(c, userId)
+        const source = appRuntime
+          ? runtimeLogSource(c.req.query("source"))
+          : "app"
+        if (!source) {
+          ws.close(1008, "invalid source")
+          return
+        }
+        if (appRuntime && source !== "app") {
+          if (!(await userOwnsApp(c.req.param("id") ?? "", userId))) {
+            ws.close(4001, "unauthorized")
+            return
+          }
+          if (closed) return
+          const requests = getRequestLogs(db)
+          const appId = c.req.param("id")!
+          const history = await requests.replay(appId)
+          if (closed) return
+          for (const entry of history) ws.send(JSON.stringify(entry))
+          stopRequests = requests.subscribe(appId, (entry) => {
+            if (!closed) ws.send(JSON.stringify(entry))
+          })
+        }
+        const resolved =
+          source === "requests"
+            ? { status: "missing" as const }
+            : await resolve(c, userId)
+        if (closed) return
         if (resolved.status === "unauthorized") {
           ws.close(4001, "unauthorized")
           return
         }
 
-        if (resolved.status === "missing") {
+        if (resolved.status === "missing" && source === "app") {
           ws.send(JSON.stringify({ type: "runtime.missing", t: Date.now() }))
           ws.close(1000, "no runtime container")
           return
         }
 
-        ws.send(
-          JSON.stringify({
-            type: "runtime.source",
-            containers: resolved.containers,
-            index: resolved.index,
-          })
-        )
+        if (resolved.status === "ok")
+          ws.send(
+            JSON.stringify({
+              type: "runtime.source",
+              containers: resolved.containers,
+              index: resolved.index,
+            })
+          )
 
         pingTimer = setInterval(() => {
           missedPings++
@@ -252,6 +282,7 @@ function createContainerLogStreamHandler(
           ws.send(JSON.stringify({ type: "ping", t: Date.now() }))
         }, HEARTBEAT_INTERVAL_MS)
 
+        if (resolved.status !== "ok") return
         const iterator = getSharedAgent()
           .containerLogs({
             containerId: resolved.containerId,
@@ -310,6 +341,7 @@ function createContainerLogStreamHandler(
       onClose() {
         closed = true
         stopStreaming?.()
+        stopRequests?.()
         if (pingTimer) {
           clearInterval(pingTimer)
           pingTimer = null
@@ -434,7 +466,7 @@ wsRouter.get(
 // GET /ws/apps/:id/logs — runtime log stream
 wsRouter.get(
   "/apps/:id/logs",
-  createContainerLogStreamHandler(resolveAppRuntimeContainer)
+  createContainerLogStreamHandler(resolveAppRuntimeContainer, true)
 )
 
 // GET /ws/databases/:id/logs — database container log stream

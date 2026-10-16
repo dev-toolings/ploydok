@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
-import { detectLevel, parseStructuredLine } from "../../lib/hooks/use-log-stream"
+import { useTranslation } from "react-i18next"
+import { Button } from "@workspace/ui/components/button"
+import { lineLevel, parseStructuredLine } from "../../lib/hooks/use-log-stream"
 import type {
   LogLine as LogLineData,
   LogSeverity,
@@ -141,7 +143,7 @@ function StructuredBody({
   search: string
 }): React.JSX.Element {
   return (
-    <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5 whitespace-normal align-baseline">
+    <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5 align-baseline whitespace-normal">
       {structured.message !== null && (
         <span className="break-all">
           <HighlightedText text={structured.message} query={search} />
@@ -169,6 +171,7 @@ function StructuredBody({
 // ---------------------------------------------------------------------------
 
 export interface LogLineProps {
+  onRequestId?: (requestId: string) => void
   line: LogLineData
   search: string
   /** Word-wrap long lines. When false, lines truncate horizontally with scroll. */
@@ -182,11 +185,13 @@ export interface LogLineProps {
 export const LogLine = React.memo(function LogLineRow({
   line,
   search,
+  onRequestId,
   wrap = true,
   showTimestamps = true,
   lineNumber,
 }: LogLineProps): React.JSX.Element {
-  const level = detectLevel(line.text)
+  const { t } = useTranslation("apps")
+  const level = lineLevel(line)
   const isError = level === "error"
   const isWarn = level === "warn"
   const isDebug = level === "debug"
@@ -251,7 +256,46 @@ export const LogLine = React.memo(function LogLineRow({
       <span
         className={`min-w-0 flex-1 ${textColor} ${isStackTrace ? "pl-4 text-xs" : ""}`}
       >
-        {structured ? (
+        {line.request ? (
+          <span className="inline-flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <span>
+              <HighlightedText
+                text={`${line.request.method} ${line.request.path}`}
+                query={search}
+              />
+            </span>
+            <span
+              className={
+                line.request.status >= 500
+                  ? "text-red-400"
+                  : line.request.status >= 400
+                    ? "text-amber-400"
+                    : "text-emerald-400"
+              }
+            >
+              {line.request.status}
+            </span>
+            <span>{line.request.durationMs} ms</span>
+            <span className="text-white/50">
+              <HighlightedText text={line.request.host} query={search} />
+            </span>
+            <span className="text-white/50">{line.request.size} B</span>
+            {line.request.requestId && (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto min-w-0 p-0 font-mono text-xs break-all text-sky-400"
+                onClick={() => onRequestId?.(line.request!.requestId)}
+                aria-label={t("logs.filterRequestId", {
+                  id: line.request.requestId,
+                })}
+              >
+                <HighlightedText text={line.request.requestId} query={search} />
+              </Button>
+            )}
+          </span>
+        ) : structured ? (
           <StructuredBody structured={structured} search={search} />
         ) : (
           <HighlightedText text={bodyText} query={search} />

@@ -162,6 +162,11 @@ function streamToAsyncIterable<T>(
           return { done: false, value: item.value as T }
         },
         return(): Promise<IteratorResult<T>> {
+          finished = true
+          queue.length = 0
+          resolveNext?.()
+          resolveNext = null
+          stream.cancel()
           stream.destroy()
           return Promise.resolve({
             done: true,

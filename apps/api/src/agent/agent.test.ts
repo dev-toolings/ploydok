@@ -474,10 +474,16 @@ describe("Agent — containerLogs stream", () => {
   let server: grpc.Server
   let socketPath: string
   let agent: Agent
+  let followCancelled = false
 
   beforeAll(async () => {
     ;({ server, socketPath } = await startMockServer({
       containerLogs: (call) => {
+        if (call.request.follow) {
+          call.on("cancelled", () => { followCancelled = true; call.end() })
+          call.write({ stream: "stdout", line: "ready", timestamp: "2024-01-01T00:00:00Z" })
+          return
+        }
         const lines: LogLine[] = [
           {
             stream: "stdout",
@@ -532,4 +538,14 @@ describe("Agent — containerLogs stream", () => {
     expect(received[1]?.line).toBe("ligne 2")
     expect(received[2]?.stream).toBe("stderr")
   })
+  it("cancels the gRPC follow stream and releases a pending next on return", async () => {
+    const iterator = agent.containerLogs({ containerId: "follow", follow: true, sinceUnix: 0, tail: 0 })[Symbol.asyncIterator]()
+    expect((await iterator.next()).value?.line).toBe("ready")
+    const pending = iterator.next()
+    await iterator.return?.()
+    expect((await pending).done).toBe(true)
+    await Bun.sleep(10)
+    expect(followCancelled).toBe(true)
+  })
+
 })

@@ -13,6 +13,7 @@
 // `docker compose up -d --force-recreate caddy` without restarting the API),
 // the missing routes are detected and re-pushed → self-heal.
 
+import { apps as appsTable, domains } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { Logger } from "pino"
 import type { CaddyClient } from "../caddy/client.js"
@@ -68,6 +69,20 @@ export async function reconcileIngressOnce(opts: {
       reconcileDatabaseTcpProxies({ caddy, logger, databases }),
       reconcileCaddyAttachments(agent, db),
     ])
+
+  // Canonical hosts also include extra domains. This restores logger state after
+  // Caddy restarts from its Caddyfile, even when upstreams have not changed.
+  const [primaryHosts, extraHosts] = await Promise.all([
+    db.select({ host: appsTable.domain }).from(appsTable),
+    db.select({ host: domains.hostname }).from(domains),
+  ])
+  await caddy.ensureRequestLogging([
+    ...new Set(
+      [...primaryHosts, ...extraHosts]
+        .map((row) => row.host)
+        .filter((host): host is string => Boolean(host))
+    ),
+  ])
 
   const totalSynced =
     appRoutes.synced + serviceRoutes.synced + databaseProxies.synced

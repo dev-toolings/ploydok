@@ -6,9 +6,9 @@ import { NativeSelect } from "@workspace/ui/components/native-select"
 import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 import {
-  detectLevel,
   filterByLevel,
   filterBySearch,
+  lineLevel,
   useLogStream,
 } from "../../lib/hooks/use-log-stream"
 import { LogFilters, useLogFilters } from "./LogFilters"
@@ -281,7 +281,10 @@ function LogViewerContent({
     error,
     provenance,
   } = useLogStream({
-    source,
+    source:
+      source.kind === "app" && (!source.buildId || source.buildId === "latest")
+        ? { ...source, runtimeSource: filters.source }
+        : source,
     maxLines: filters.volume,
   })
 
@@ -311,9 +314,12 @@ function LogViewerContent({
         followRef.current = false
         detachLineCountRef.current = displayLines.at(-1)?.id ?? 0
       }
-      setFilters(next)
+      if (next.source) {
+        updateSelecting(false)
+        setFilters({ ...next, paused: false })
+      } else setFilters(next)
     },
-    [displayLines, setFilters]
+    [displayLines, setFilters, updateSelecting]
   )
 
   // ---------------------------------------------------------------------------
@@ -333,7 +339,7 @@ function LogViewerContent({
     let e = 0
     let w = 0
     for (const l of filtered) {
-      const lvl = detectLevel(l.text)
+      const lvl = lineLevel(l)
       if (lvl === "error") e++
       else if (lvl === "warn") w++
     }
@@ -387,12 +393,7 @@ function LogViewerContent({
       const el = scrollRef.current
       if (!el) return
       const { paused, displayedLineId } = followInputsRef.current
-      if (
-        catchUp &&
-        followRef.current &&
-        !paused &&
-        !selectionActive()
-      ) {
+      if (catchUp && followRef.current && !paused && !selectionActive()) {
         const bottom = Math.max(0, el.scrollHeight - el.clientHeight)
         if (el.scrollTop !== bottom) el.scrollTop = bottom
       }
@@ -400,7 +401,10 @@ function LogViewerContent({
       const away =
         overflow && el.scrollHeight - el.scrollTop - el.clientHeight > 50
       const previous = scrollStateRef.current
-      if (previous.hasOverflow !== overflow || previous.awayFromBottom !== away) {
+      if (
+        previous.hasOverflow !== overflow ||
+        previous.awayFromBottom !== away
+      ) {
         const next = { hasOverflow: overflow, awayFromBottom: away }
         scrollStateRef.current = next
         setScrollState(next)
@@ -511,7 +515,7 @@ function LogViewerContent({
       if (selectionActive()) return
       const errorIndices: Array<number> = []
       for (let i = 0; i < filtered.length; i++) {
-        if (detectLevel(filtered[i].text) === "error") errorIndices.push(i)
+        if (lineLevel(filtered[i]) === "error") errorIndices.push(i)
       }
       if (errorIndices.length === 0) return
 
@@ -726,6 +730,10 @@ function LogViewerContent({
       />
 
       <LogFilters
+        showSource={
+          source.kind === "app" &&
+          (!source.buildId || source.buildId === "latest")
+        }
         className={fillHeight ? "shrink-0" : undefined}
         state={filters}
         onChange={handleFiltersChange}
@@ -785,6 +793,9 @@ function LogViewerContent({
                 <LogLine
                   key={line.id}
                   line={line}
+                  onRequestId={(requestId) =>
+                    handleFiltersChange({ search: requestId })
+                  }
                   search={filters.search}
                   wrap={filters.wrap}
                   showTimestamps={filters.timestamps}

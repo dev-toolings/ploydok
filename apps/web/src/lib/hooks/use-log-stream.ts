@@ -14,7 +14,20 @@ const ABSOLUTE_MAX_LINES = 10_000
 // Types
 // ---------------------------------------------------------------------------
 
+export type RuntimeLogSource = "app" | "requests" | "all"
+
+export interface HttpRequestLog {
+  method: string
+  host: string
+  path: string
+  status: number
+  durationMs: number
+  size: number
+  requestId: string
+}
+
 export interface LogLine {
+  request?: HttpRequestLog
   id: number
   text: string
   t?: number
@@ -237,6 +250,16 @@ export function parseStructuredLine(text: string): StructuredLogLine | null {
   return null
 }
 
+export function lineLevel(line: LogLine): LogSeverity {
+  return line.request
+    ? line.request.status >= 500
+      ? "error"
+      : line.request.status >= 400
+        ? "warn"
+        : "info"
+    : detectLevel(line.text)
+}
+
 /**
  * Applies a level filter to a list of lines.
  * "all" is a no-op.
@@ -246,7 +269,7 @@ export function filterByLevel(
   level: LogLevel
 ): Array<LogLine> {
   if (level === "all") return lines as Array<LogLine>
-  return lines.filter((l) => detectLevel(l.text) === level)
+  return lines.filter((l) => lineLevel(l) === level)
 }
 
 /**
@@ -296,7 +319,33 @@ function parseLineEnvelope(raw: string, fallbackT: number): ParsedLogLine {
           obj["stream"] === "stdout" || obj["stream"] === "stderr"
             ? obj["stream"]
             : undefined
-        return { id: 0, text: obj["line"] as string, t, stream, _raw: raw }
+        const request =
+          obj.kind === "request" &&
+          typeof obj.method === "string" &&
+          typeof obj.host === "string" &&
+          typeof obj.path === "string" &&
+          typeof obj.status === "number" &&
+          typeof obj.durationMs === "number" &&
+          typeof obj.size === "number" &&
+          typeof obj.requestId === "string"
+            ? {
+                method: obj.method,
+                host: obj.host,
+                path: obj.path,
+                status: obj.status,
+                durationMs: obj.durationMs,
+                size: obj.size,
+                requestId: obj.requestId,
+              }
+            : undefined
+        return {
+          id: 0,
+          text: obj["line"] as string,
+          t,
+          stream,
+          request,
+          _raw: raw,
+        }
       }
     } catch {
       // not JSON — fall through
@@ -397,6 +446,7 @@ export function createLogEntryNormalizer(): {
   return {
     append(raw: string, fallbackT: number): Array<ParsedLogLine> {
       const envelope = parseLineEnvelope(raw, fallbackT)
+      if (envelope.request) return [...flush(), envelope]
       const chunk = parseFastCgiChunk(envelope.text)
 
       if (!chunk) {
@@ -465,6 +515,7 @@ export type LogSource =
       buildId?: string
       archiveOnly?: boolean
       containerId?: string
+      runtimeSource?: RuntimeLogSource
     }
   | { kind: "database"; resourceId: string }
   | { kind: "service"; resourceId: string; containerIndex?: number }
@@ -523,9 +574,11 @@ export function resolveLogSource(source: LogSource): ResolvedLogSource {
     }
   }
 
-  const query = source.containerId
-    ? `?container=${encodeURIComponent(source.containerId)}`
-    : ""
+  const params = new URLSearchParams()
+  if (source.containerId) params.set("container", source.containerId)
+  if (source.runtimeSource && source.runtimeSource !== "app")
+    params.set("source", source.runtimeSource)
+  const query = params.size ? `?${params}` : ""
   return {
     wsPath: `/ws/apps/${source.resourceId}/logs${query}`,
     snapshot: {

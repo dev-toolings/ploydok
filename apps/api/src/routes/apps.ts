@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { getRequestLogs, runtimeLogSource } from "../services/request-logs"
 import { readFile, stat } from "node:fs/promises"
 import * as nodePath from "node:path"
 import { createHash, randomBytes } from "node:crypto"
@@ -2594,6 +2595,12 @@ export function createAppsRouter(db: Db): Hono {
   router.get("/:id/runtime-logs", appsRead, async (c) => {
     const user = getUser(c)
     const appId = c.req.param("id")!
+    const source = runtimeLogSource(c.req.query("source"))
+    if (!source)
+      return c.json(
+        { error: { code: "INVALID_SOURCE", message: "Invalid log source" } },
+        400
+      )
     const tailRaw = Number(c.req.query("tail") ?? 200)
     const tail = Number.isFinite(tailRaw)
       ? Math.max(1, Math.min(Math.floor(tailRaw), 1_000))
@@ -2607,7 +2614,18 @@ export function createAppsRouter(db: Db): Hono {
       )
     }
 
+    if (source !== "app" && !(await getAppForOwner(db, appId, user.id))) {
+      return c.json(
+        { error: { code: "NOT_FOUND", message: "App not found" } },
+        404
+      )
+    }
     try {
+      const requestLines =
+        source === "app" ? [] : await getRequestLogs(db).snapshot(appId, tail)
+      if (source === "requests") {
+        return c.json({ lines: requestLines, containerFound: true })
+      }
       const agent = getSharedAgent()
       const resolvedContainerId = await resolveAppRuntimeContainerId(
         db,
@@ -2622,7 +2640,7 @@ export function createAppsRouter(db: Db): Hono {
       )
       const container = provenance?.containers[provenance.index]
       if (!container) {
-        return c.json({ lines: [], containerFound: false })
+        return c.json({ lines: requestLines, containerFound: source === "all" })
       }
 
       const lines: Array<{
@@ -2648,7 +2666,9 @@ export function createAppsRouter(db: Db): Hono {
       }
 
       return c.json({
-        lines,
+        lines: [...lines, ...requestLines]
+          .sort((a, b) => a.t - b.t)
+          .slice(-tail),
         containerFound: true,
         ...provenance,
       })

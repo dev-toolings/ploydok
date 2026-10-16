@@ -35,7 +35,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../i18n/dialog"
-import type { LogLevel } from "../../lib/hooks/use-log-stream"
+import type { LogLevel, RuntimeLogSource } from "../../lib/hooks/use-log-stream"
 
 export type VolumeOption = 100 | 500 | 1000 | 5000
 
@@ -44,6 +44,7 @@ export const VOLUME_OPTIONS: ReadonlyArray<VolumeOption> = [
 ]
 
 export interface LogFiltersState {
+  source: RuntimeLogSource
   volume: VolumeOption
   level: LogLevel
   search: string
@@ -55,6 +56,7 @@ export interface LogFiltersState {
 }
 
 export interface LogFiltersProps {
+  showSource?: boolean
   state: LogFiltersState
   onChange: (next: Partial<LogFiltersState>) => void
   /** Called when the user clicks Download (raw .log). */
@@ -77,6 +79,7 @@ export function formatVolume(v: VolumeOption): string {
 }
 
 export function LogFilters({
+  showSource = false,
   state,
   onChange,
   onDownload,
@@ -92,6 +95,7 @@ export function LogFilters({
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [copied, setCopied] = React.useState(false)
   const [copying, setCopying] = React.useState(false)
+  const sourceId = React.useId()
   const volumeId = React.useId()
   const levelId = React.useId()
 
@@ -162,6 +166,25 @@ export function LogFilters({
       role="toolbar"
       aria-label={t("logs.filters")}
     >
+      {showSource && (
+        <div className="flex max-w-full min-w-0 items-center gap-1.5">
+          <label htmlFor={sourceId} className="text-xs text-muted-foreground">
+            {t("logs.source")}
+          </label>
+          <NativeSelect
+            id={sourceId}
+            value={state.source}
+            onChange={(event) =>
+              onChange({ source: event.target.value as RuntimeLogSource })
+            }
+            className="w-auto min-w-0 text-base md:text-sm"
+          >
+            <option value="app">{t("logs.sourceApp")}</option>
+            <option value="requests">{t("logs.sourceRequests")}</option>
+            <option value="all">{t("logs.sourceAll")}</option>
+          </NativeSelect>
+        </div>
+      )}
       <InputGroup className="h-9 basis-full sm:grow sm:basis-56">
         <InputGroupAddon>
           <RiSearchLine aria-hidden="true" />
@@ -356,6 +379,7 @@ export function LogFilters({
 const PREFS_KEY = "ploydok:logs:prefs"
 
 interface PersistedPrefs {
+  source?: RuntimeLogSource
   wrap?: boolean
   timestamps?: boolean
   volume?: VolumeOption
@@ -388,6 +412,10 @@ export function useLogFilters(
   const [state, setState] = React.useState<LogFiltersState>(() => {
     const persisted = loadPrefs()
     return {
+      source:
+        persisted.source === "requests" || persisted.source === "all"
+          ? persisted.source
+          : "app",
       volume: persisted.volume ?? 100,
       level: "all",
       search: "",
@@ -402,8 +430,14 @@ export function useLogFilters(
     setState((prev) => {
       const merged = { ...prev, ...next }
       // Persist UI prefs only: search/level/paused are session-scoped
-      if ("wrap" in next || "timestamps" in next || "volume" in next) {
+      if (
+        "source" in next ||
+        "wrap" in next ||
+        "timestamps" in next ||
+        "volume" in next
+      ) {
         savePrefs({
+          source: merged.source,
           wrap: merged.wrap,
           timestamps: merged.timestamps,
           volume: merged.volume,

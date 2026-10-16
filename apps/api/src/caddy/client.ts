@@ -8,6 +8,12 @@ import type {
   CaddyRoute,
   CaddyTlsOptions,
 } from "./types.js"
+import {
+  requestLogOutput,
+  REQUEST_LOGGER,
+  requestServerLogs,
+  withRequestId,
+} from "./access-logging"
 import { applyCdnHandlers } from "./cdn.js"
 
 function defaultCaddyAdminUrl(): string {
@@ -17,6 +23,13 @@ function defaultCaddyAdminUrl(): string {
 export class CaddyClient {
   private readonly baseUrl: string
   private bootstrapL4InFlight: Promise<void> | null = null
+  private ingressUpdate: Promise<void> = Promise.resolve()
+
+  private serializeIngress(update: () => Promise<void>): Promise<void> {
+    const result = this.ingressUpdate.then(update)
+    this.ingressUpdate = result.catch(() => {})
+    return result
+  }
 
   constructor(baseUrl = defaultCaddyAdminUrl()) {
     // Remove trailing slash for consistent URL building
@@ -117,12 +130,14 @@ export class CaddyClient {
     appId,
     tls,
     middlewares,
+    accessLogs = true,
   }: {
     host: string
     upstream: string
     appId: string
     tls?: CaddyTlsOptions
     middlewares?: CaddyMiddlewares
+    accessLogs?: boolean
   }): Promise<void> {
     const routeId = `ploydok-${appId}`
 
@@ -150,7 +165,11 @@ export class CaddyClient {
       ? applyCdnHandlers(middlewares.cdn, route)
       : route
 
-    await this.putRouteFirst(routeWithCdn, "upsertRoute")
+    await this.putRouteFirst(
+      accessLogs ? withRequestId(routeWithCdn) : routeWithCdn,
+      "upsertRoute",
+      accessLogs
+    )
   }
 
   buildStaticHandlers(root: string, spaFallback: boolean): CaddyHandler[] {
@@ -213,10 +232,28 @@ export class CaddyClient {
       ? applyCdnHandlers(cdn, route, { staticRoot: root })
       : route
 
-    await this.putRouteFirst(routeWithCdn, "upsertStaticRoute")
+    await this.putRouteFirst(
+      withRequestId(routeWithCdn),
+      "upsertStaticRoute",
+      true
+    )
   }
 
-  private async putRouteFirst(route: CaddyRoute, label: string): Promise<void> {
+  private async putRouteFirst(
+    route: CaddyRoute,
+    label: string,
+    accessLogs = false
+  ): Promise<void> {
+    return this.serializeIngress(() =>
+      this.writeRouteFirst(route, label, accessLogs)
+    )
+  }
+
+  private async writeRouteFirst(
+    route: CaddyRoute,
+    label: string,
+    accessLogs: boolean
+  ): Promise<void> {
     const routeId = route["@id"]
     const res = await fetch(
       `${this.baseUrl}/config/apps/http/servers/srv0/routes`
@@ -239,28 +276,106 @@ export class CaddyClient {
         body: JSON.stringify(nextRoutes),
       }
     )
-    if (patchRes.ok) return
+    if (patchRes.ok) {
+      if (accessLogs)
+        await this.writeRequestLogging(
+          route.match?.flatMap((m) => m.host ?? []) ?? [],
+          false
+        )
+      return
+    }
     throw new Error(
       `CaddyClient.${label} PATCH routes failed: ${patchRes.status} ${await patchRes.text()}`
     )
+  }
+
+  /** Rebuilt by ingress reconciliation after Caddy reloads its base Caddyfile. */
+  async ensureRequestLogging(
+    hosts: string[],
+    authoritative = true
+  ): Promise<void> {
+    return this.serializeIngress(() =>
+      this.writeRequestLogging(hosts, authoritative)
+    )
+  }
+
+  private async writeRequestLogging(
+    hosts: string[],
+    authoritative: boolean
+  ): Promise<void> {
+    const config = await this.getConfig()
+    const logs = config.logging?.logs ?? {}
+    if (
+      JSON.stringify(logs[REQUEST_LOGGER]) !== JSON.stringify(requestLogOutput)
+    ) {
+      const next = {
+        ...config.logging,
+        logs: { ...logs, [REQUEST_LOGGER]: requestLogOutput },
+      }
+      await this.putOrFail("/config/logging", next, "request logging")
+    }
+    for (const [name, server] of Object.entries(
+      config.apps?.http?.servers ?? {}
+    )) {
+      const currentHosts = Object.entries(server.logs?.logger_names ?? {})
+        .filter(([, names]) =>
+          (Array.isArray(names) ? names : [names]).includes(REQUEST_LOGGER)
+        )
+        .map(([host]) => host)
+      const selected = authoritative
+        ? hosts
+        : [...new Set([...currentHosts, ...hosts])]
+      const nextLogs = requestServerLogs(server, selected)
+      if (JSON.stringify(server.logs) !== JSON.stringify(nextLogs)) {
+        await this.putOrFail(
+          `/config/apps/http/servers/${name}/logs`,
+          nextLogs,
+          "server request logging"
+        )
+      }
+      const nextRoutes = (server.routes ?? []).map((route) =>
+        route["@id"]?.startsWith("ploydok-") &&
+        route.match?.some((m) =>
+          m.host?.some((host) => selected.includes(host))
+        )
+          ? withRequestId(route)
+          : route
+      )
+      if (JSON.stringify(nextRoutes) !== JSON.stringify(server.routes ?? [])) {
+        const res = await fetch(
+          `${this.baseUrl}/config/apps/http/servers/${name}/routes`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(nextRoutes),
+          }
+        )
+        if (!res.ok)
+          throw new Error(
+            `Caddy request correlation update failed: ${res.status}`
+          )
+      }
+    }
   }
 
   /**
    * Remove a route by appId. Idempotent: 404 is treated as success.
    */
   async removeRoute(appId: string): Promise<void> {
-    const routeId = `ploydok-${appId}`
-    const res = await fetch(`${this.baseUrl}/id/${routeId}`, {
-      method: "DELETE",
+    return this.serializeIngress(async () => {
+      const routeId = `ploydok-${appId}`
+      const res = await fetch(`${this.baseUrl}/id/${routeId}`, {
+        method: "DELETE",
+      })
+
+      if (res.ok || res.status === 404) {
+        return
+      }
+
+      throw new Error(
+        `CaddyClient.removeRoute failed: ${res.status} ${await res.text()}`
+      )
     })
-
-    if (res.ok || res.status === 404) {
-      return
-    }
-
-    throw new Error(
-      `CaddyClient.removeRoute failed: ${res.status} ${await res.text()}`
-    )
   }
 
   // ---------------------------------------------------------------------------

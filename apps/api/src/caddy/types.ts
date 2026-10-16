@@ -10,6 +10,7 @@ export interface CaddyTlsOptions {
 }
 
 export interface CaddyConfig {
+  logging?: { logs?: Record<string, Record<string, unknown>> }
   apps?: {
     http?: {
       servers?: Record<string, CaddyServer>
@@ -38,6 +39,11 @@ export interface CaddyTlsPolicy {
 }
 
 export interface CaddyServer {
+  logs?: {
+    logger_names?: Record<string, string | string[]>
+    skip_unmapped_hosts?: boolean
+    should_log_credentials?: boolean
+  }
   listen?: string[]
   routes?: CaddyRoute[]
   automatic_https?: {
@@ -76,6 +82,7 @@ export interface CaddyRoute {
 }
 
 export interface CaddyMatch {
+  header?: Record<string, string[] | null>
   host?: string[]
   path?: string[]
   query?: Record<string, string[]>

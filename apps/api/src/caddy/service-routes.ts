@@ -107,6 +107,7 @@ export async function upsertServiceRoute(
   const upstream = `${name}:${port}`
 
   await client.upsertRoute({
+    accessLogs: false,
     host: domain,
     upstream,
     appId: serviceId,
