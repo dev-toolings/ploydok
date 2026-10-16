@@ -173,13 +173,18 @@ export async function fetchRunningAppsForCaddy(
     )
   return Promise.all(
     rows.map(async (row) => {
+      // A Swarm build records its service name, while the app row holds the
+      // current task name, which changes every time Swarm replaces the task.
+      const swarmService =
+        row.runtime_mode === "swarm" ? row.swarm_service_name : null
       const buildFilter = row.container_id
         ? and(
             eq(builds.app_id, row.id),
             inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
             or(
               eq(builds.container_id, row.container_id),
-              eq(builds.runtime_ref, row.container_id)
+              eq(builds.runtime_ref, row.container_id),
+              ...(swarmService ? [eq(builds.runtime_ref, swarmService)] : [])
             )
           )
         : and(
@@ -395,12 +400,21 @@ async function hasActiveDeployLease(db: Db, appId: string): Promise<boolean> {
 
 async function withReconcileDeployLease<T>(opts: {
   db: Db
+  logger: Logger
   app: AppForReconcile
   enabled: boolean
   task: () => Promise<T>
 }): Promise<T | null> {
   if (!opts.enabled) return opts.task()
-  if (!opts.app.current_build_id) return null
+  if (!opts.app.current_build_id) {
+    // Without a build the route cannot be fenced, so it is never restored.
+    // Say so: a silent skip leaves the app unreachable with no trace.
+    opts.logger.warn(
+      { appId: opts.app.id, containerId: opts.app.container_id },
+      "caddy reconcile: no succeeded build matches the running runtime"
+    )
+    return null
+  }
   try {
     return await withAppDeployLease(
       opts.db,
@@ -768,6 +782,7 @@ export async function reconcileCaddyRoutes(
       const reconciled = opts.db
         ? await withReconcileDeployLease({
             db: opts.db,
+            logger,
             app: row,
             enabled: opts.enableDeployLease === true,
             task: reconcileOne,
