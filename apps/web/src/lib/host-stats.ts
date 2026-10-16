@@ -146,10 +146,19 @@ function startLeaseTimer(lease: WatchLease): void {
   }, WATCH_INTERVAL_MS)
 }
 
+// crypto.randomUUID only exists in secure contexts; a plain-HTTP install
+// (http://<ip>.sslip.io) must still get a lease id. getRandomValues does not
+// have that restriction.
+function newClientId(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+}
+
 function retainLease(onChange: () => void): () => void {
   if (!watchLease) {
     watchLease = {
-      clientId: crypto.randomUUID(),
+      clientId: newClientId(),
       refs: 0,
       generation: 1,
       timer: null,
