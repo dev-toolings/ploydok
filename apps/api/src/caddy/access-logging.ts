@@ -9,6 +9,16 @@ export const requestLogOutput = {
   include: [REQUEST_LOG_NAME],
 }
 
+export function requestDefaultLogOutput(log: Record<string, unknown> = {}) {
+  const exclude = (log.exclude ?? []) as string[]
+  return {
+    ...log,
+    exclude: exclude.includes(REQUEST_LOG_NAME)
+      ? exclude
+      : [...exclude, REQUEST_LOG_NAME],
+  }
+}
+
 /** Mutate the actual request before proxying, so upstream and access log agree. */
 export function requestIdHandlers(): CaddyHandler[] {
   return [

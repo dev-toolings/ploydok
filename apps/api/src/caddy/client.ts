@@ -9,6 +9,7 @@ import type {
   CaddyTlsOptions,
 } from "./types.js"
 import {
+  requestDefaultLogOutput,
   requestLogOutput,
   REQUEST_LOGGER,
   requestServerLogs,
@@ -305,12 +306,14 @@ export class CaddyClient {
   ): Promise<void> {
     const config = await this.getConfig()
     const logs = config.logging?.logs ?? {}
+    const defaultLog = requestDefaultLogOutput(logs.default)
     if (
-      JSON.stringify(logs[REQUEST_LOGGER]) !== JSON.stringify(requestLogOutput)
+      JSON.stringify(logs[REQUEST_LOGGER]) !== JSON.stringify(requestLogOutput) ||
+      JSON.stringify(logs.default) !== JSON.stringify(defaultLog)
     ) {
       const next = {
         ...config.logging,
-        logs: { ...logs, [REQUEST_LOGGER]: requestLogOutput },
+        logs: { ...logs, default: defaultLog, [REQUEST_LOGGER]: requestLogOutput },
       }
       await this.setRequestLogConfig("/config/logging", next)
     }

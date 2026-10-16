@@ -6,6 +6,7 @@ import {
   requestServerLogs,
   withRequestId,
   REQUEST_LOGGER,
+  REQUEST_LOG_NAME,
 } from "./access-logging"
 import type { CaddyConfig } from "./types"
 
@@ -94,7 +95,12 @@ it("reinstalls logging on all HTTP servers after a base-config restart, preservi
     ])
     expect(
       writes.find((w) => w.path === "/config/logging")?.body
-    ).toMatchObject({ logs: { [REQUEST_LOGGER]: requestLogOutput } })
+    ).toEqual({
+      logs: {
+        default: { exclude: [REQUEST_LOG_NAME] },
+        [REQUEST_LOGGER]: requestLogOutput,
+      },
+    })
     for (const server of ["srv0", "srv1"])
       expect(
         writes.some(
@@ -107,6 +113,54 @@ it("reinstalls logging on all HTTP servers after a base-config restart, preservi
     expect(routes[0]).toMatchObject({
       handle: [{ handler: "subroute" }, { handler: "log_append" }],
     })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+it("preserves the default logger and adds its request-log exclusion only once", async () => {
+  const originalFetch = globalThis.fetch
+  const defaultLog = {
+    writer: { output: "file", filename: "/var/log/caddy/runtime.log" },
+    level: "DEBUG",
+    encoder: { format: "console" },
+    exclude: ["admin.api"],
+    sampling: { interval: 1000000000, first: 10, thereafter: 5 },
+  }
+  const otherLog = { writer: { output: "stderr" }, include: ["tls"] }
+  const config: CaddyConfig = {
+    logging: {
+      logs: {
+        default: defaultLog,
+        other: otherLog,
+        [REQUEST_LOGGER]: requestLogOutput,
+      },
+    },
+  }
+  const writes: unknown[] = []
+  globalThis.fetch = (async (_input, options) => {
+    if (!options?.method) return Response.json(config)
+    expect(options.method).toBe("POST")
+    expect(new URL(String(_input)).pathname).toBe("/config/logging")
+    const body = JSON.parse(String(options.body))
+    writes.push(body)
+    config.logging = body
+    return new Response(null, { status: 200 })
+  }) as typeof fetch
+  try {
+    const client = new CaddyClient("http://caddy.invalid")
+    await client.ensureRequestLogging([])
+    await client.ensureRequestLogging([])
+    expect(writes).toEqual([
+      {
+        logs: {
+          default: { ...defaultLog, exclude: ["admin.api", REQUEST_LOG_NAME] },
+          other: otherLog,
+          [REQUEST_LOGGER]: requestLogOutput,
+        },
+      },
+    ])
+    expect(defaultLog.exclude).toEqual(["admin.api"])
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -153,6 +207,7 @@ it("serializes app-route writes so concurrent apps retain both logger mappings",
       "a.example.com",
       "b.example.com",
     ])
+    expect(config.logging?.logs?.default).toEqual({ exclude: [REQUEST_LOG_NAME] })
   } finally {
     globalThis.fetch = originalFetch
   }
