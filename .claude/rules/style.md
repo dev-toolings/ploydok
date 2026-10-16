@@ -90,5 +90,7 @@ poser `size-4` partout aplatit les états vides et décentre les glyphes en past
   `bg-background` s'inverse en dark (`#0a0a0a` plus sombre que le panel `#171717`).
 - Ne pas surcharger une `Card` avec `bg-*` : le primitive porte déjà `bg-panel`.
 - `text-destructive-foreground` **n'existe pas** comme token. Sur un bouton d'action
-  destructive, utiliser `bg-none bg-destructive text-white` : `bg-none` est nécessaire
-  pour annuler le `background-image` du variant `default`, qui recouvrirait la couleur.
+  destructive, utiliser `bg-none bg-destructive text-white hover:bg-none
+  hover:bg-destructive/90 active:bg-none` : `bg-none` annule le `background-image`
+  du variant `default`, qui recouvrirait la couleur. Il faut le répéter en `hover:`
+  et `active:`, sinon le dégradé bleu revient au survol et au clic.
