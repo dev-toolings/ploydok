@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test"
 import {
   CreateStorageDestinationSchema,
+  LocalFolderSchema,
   isUnsafeStorageDestinationAddress,
   isUnsafeStorageDestinationEndpoint,
 } from "./storage-destinations"
@@ -52,5 +53,26 @@ describe("storage destination endpoint safety", () => {
         }).success
       ).toBe(true)
     }
+  })
+})
+
+describe("local destination folder", () => {
+  it("accepts one plain path segment and refuses anything that could escape", () => {
+    expect(LocalFolderSchema.safeParse("nightly-01").success).toBe(true)
+    for (const folder of ["..", ".hidden", "a/b", "a\\b", "", "x".repeat(65)]) {
+      expect(LocalFolderSchema.safeParse(folder).success).toBe(false)
+    }
+  })
+
+  it("is only accepted on a local destination", () => {
+    const remote = CreateStorageDestinationSchema.safeParse({
+      name: "R2",
+      kind: "s3",
+      bucket: "backups",
+      endpoint: "https://s3.example.test",
+      credentials: { accessKeyId: "a", secretAccessKey: "b" },
+      localFolder: "nightly",
+    })
+    expect(remote.success).toBe(false)
   })
 })

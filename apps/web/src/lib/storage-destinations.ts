@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { apiFetch } from "./api"
+import { ApiError } from "./api/errors"
 import i18n from "./i18n"
 import type {
   StorageCredentialsInput,
@@ -38,6 +39,7 @@ export interface StorageDestinationInput {
   bucket?: string
   region?: string
   credentials?: StorageCredentialsInput
+  localFolder?: string
 }
 
 const storageDestinationsKey = (orgSlug: string) =>
@@ -49,7 +51,7 @@ function storageDestinationsPath(orgSlug: string): string {
 
 interface StorageDestinationsResponse {
   destinations: Array<StorageDestination>
-  /** Server directory under which each local destination gets its folder. */
+  /** Org folder on the server under which each local destination lives. */
   localRoot: string
 }
 
@@ -114,6 +116,9 @@ export function useCreateStorageDestination(orgSlug: string) {
       toast.success(i18n.t("storage:toasts.created"))
     },
     onError: (error: Error) => {
+      // The form marks the folder field itself.
+      if (error instanceof ApiError && error.code === "LOCAL_FOLDER_TAKEN")
+        return
       toast.error(
         i18n.t("storage:toasts.createFailed", { message: error.message })
       )

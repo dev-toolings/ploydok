@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core"
+import { index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core"
 import { projects } from "./projects"
 import { secrets } from "./secrets"
 
@@ -23,6 +23,8 @@ export const storage_destinations = pgTable(
     s3_endpoint: text("s3_endpoint"),
     s3_bucket: text("s3_bucket"),
     s3_region: text("s3_region"),
+    /** Folder of a local destination under <storage root>/<org_id>/; fixed. */
+    local_folder: text("local_folder"),
     credentials_secret_id: text("credentials_secret_id").references(
       () => secrets.id,
       { onDelete: "set null" }
@@ -48,7 +50,13 @@ export const storage_destinations = pgTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (table) => [index("storage_destinations_org_id_idx").on(table.org_id)]
+  (table) => [
+    index("storage_destinations_org_id_idx").on(table.org_id),
+    uniqueIndex("storage_destinations_org_local_folder_uniq").on(
+      table.org_id,
+      table.local_folder
+    ),
+  ]
 )
 
 export type StorageDestinationRow = typeof storage_destinations.$inferSelect

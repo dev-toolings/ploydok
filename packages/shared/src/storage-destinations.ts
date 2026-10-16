@@ -143,6 +143,21 @@ export const S3EndpointSchema = z
     }
   })
 
+/**
+ * Folder of a local destination, one path segment under the org's storage
+ * folder. No leading dot: it keeps "." and ".." out and leaves hidden names to
+ * Ploydok.
+ */
+export const LocalFolderSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/,
+    "Use letters, digits, dots, dashes or underscores, not starting with a dot"
+  )
+
 export const CreateStorageDestinationSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -152,6 +167,7 @@ export const CreateStorageDestinationSchema = z
     bucket: z.string().trim().min(1).max(255).optional(),
     region: z.string().trim().min(1).max(255).optional(),
     credentials: StorageCredentialInputSchema.optional(),
+    localFolder: LocalFolderSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (value.provider && STORAGE_PROVIDERS[value.provider].kind !== value.kind) {
@@ -170,6 +186,13 @@ export const CreateStorageDestinationSchema = z
         })
       }
       return
+    }
+    if (value.localFolder) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["localFolder"],
+        message: "Only local destinations have a folder",
+      })
     }
     if (!value.bucket) {
       ctx.addIssue({

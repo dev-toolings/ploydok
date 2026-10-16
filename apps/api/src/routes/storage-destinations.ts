@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { Hono } from "hono"
+import { Hono, type Context } from "hono"
 import { and, eq, sql } from "drizzle-orm"
 import { nanoid } from "nanoid"
 import {
@@ -64,7 +64,9 @@ function destinationSummary(
     bucket: row.s3_bucket,
     region: row.s3_region,
     localPath:
-      row.kind === "local" ? localDestinationDir(row.org_id, row.id) : null,
+      row.kind === "local"
+        ? localDestinationDir(row.org_id, row.local_folder ?? row.id)
+        : null,
     credentialsConfigured: Boolean(row.credentials_secret_id),
     usageCount,
     lastTestAt: row.last_test_at?.toISOString() ?? null,
@@ -177,6 +179,28 @@ function isUsedFieldChanged(
   )
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  const cause = (err as { cause?: unknown } | null)?.cause
+  return [err, cause].some(
+    (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      (value as { code?: unknown }).code === "23505"
+  )
+}
+
+function localFolderTaken(c: Context<AppEnv>) {
+  return c.json(
+    {
+      error: {
+        code: "LOCAL_FOLDER_TAKEN",
+        message: "Another local destination already uses this folder",
+      },
+    },
+    409
+  )
+}
+
 function destinationSnapshotWhere(
   destinationId: string,
   orgId: string,
@@ -207,7 +231,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
     )
     return c.json({
       destinations: summaries,
-      localRoot: path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR),
+      localRoot: path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR, orgId),
     })
   })
 
@@ -234,6 +258,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       s3_endpoint: remote ? input.endpoint ?? null : null,
       s3_bucket: remote ? input.bucket ?? null : null,
       s3_region: input.kind === "s3" ? input.region ?? null : null,
+      local_folder: remote ? null : input.localFolder ?? id,
       credentials_secret_id: null as string | null,
       last_test_at: null,
       last_test_status: null,
@@ -241,17 +266,36 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    await db.transaction(async (tx) => {
-      if (remote) {
-        destination.credentials_secret_id = await createCredentialsSecret(
-          tx,
-          orgId,
-          id,
-          input.credentials!
+    if (destination.local_folder) {
+      const taken = await db
+        .select({ id: storage_destinations.id })
+        .from(storage_destinations)
+        .where(
+          and(
+            eq(storage_destinations.org_id, orgId),
+            eq(storage_destinations.local_folder, destination.local_folder)
+          )
         )
-      }
-      await tx.insert(storage_destinations).values(destination)
-    })
+        .limit(1)
+      if (taken[0]) return localFolderTaken(c)
+    }
+    try {
+      await db.transaction(async (tx) => {
+        if (remote) {
+          destination.credentials_secret_id = await createCredentialsSecret(
+            tx,
+            orgId,
+            id,
+            input.credentials!
+          )
+        }
+        await tx.insert(storage_destinations).values(destination)
+      })
+    } catch (err) {
+      // Two creations racing for the same folder: the unique index decides.
+      if (isUniqueViolation(err)) return localFolderTaken(c)
+      throw err
+    }
     return c.json({ destination: destinationSummary(destination, 0) }, 201)
   })
 
@@ -592,7 +636,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
       } else {
         // Same witness key as a remote destination, inside its own folder.
         const root = path.join(
-          localDestinationDir(orgId, destination.id),
+          localDestinationDir(orgId, destination.local_folder ?? destination.id),
           ".ploydok",
           "destination-tests"
         )

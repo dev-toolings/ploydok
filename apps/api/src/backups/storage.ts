@@ -74,11 +74,11 @@ class ByteCounter extends Transform {
  */
 export function localDestinationDir(
   orgId: string | null,
-  destinationId: string | null
+  folder: string | null
 ): string {
   const root = path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR)
-  if (!orgId || !destinationId) return path.join(root, "unassigned")
-  return path.join(root, orgId, destinationId)
+  if (!orgId || !folder) return path.join(root, "unassigned")
+  return path.join(root, orgId, folder)
 }
 
 /** Local backup path: the remote object key, under the destination folder. */
@@ -107,14 +107,20 @@ export async function buildBackupLocation(
   if (config.destination_kind === "local") {
     const rows = config.destination_id
       ? await db
-          .select({ orgId: storage_destinations.org_id })
+          .select({
+            orgId: storage_destinations.org_id,
+            folder: storage_destinations.local_folder,
+          })
           .from(storage_destinations)
           .where(eq(storage_destinations.id, config.destination_id))
           .limit(1)
       : []
-    const orgId = rows[0]?.orgId ?? null
+    const row = rows[0]
     return localBackupPath(
-      localDestinationDir(orgId, orgId ? (config.destination_id ?? null) : null),
+      localDestinationDir(
+        row?.orgId ?? null,
+        row ? (row.folder ?? config.destination_id ?? null) : null
+      ),
       key
     )
   }
