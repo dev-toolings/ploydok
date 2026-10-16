@@ -592,7 +592,7 @@ function DeveloperEnvEditor({
                 setShowReplaceConfirm(false)
                 submitImport("replace")
               }}
-              className="bg-none bg-destructive text-white hover:bg-destructive/90"
+              className="bg-none bg-destructive text-white hover:bg-none hover:bg-destructive/90 active:bg-none"
             >
               Replace
             </AlertDialogAction>

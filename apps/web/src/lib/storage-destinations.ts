@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { apiFetch } from "./api"
+import { ApiError } from "./api/errors"
 import i18n from "./i18n"
 import type {
   StorageCredentialsInput,
@@ -20,6 +21,8 @@ export interface StorageDestination {
   endpoint: string | null
   bucket: string | null
   region: string | null
+  /** Folder of a local destination on the server, null for remote ones. */
+  localPath: string | null
   credentialsConfigured: boolean
   usageCount: number
   lastTestAt: string | null
@@ -36,6 +39,7 @@ export interface StorageDestinationInput {
   bucket?: string
   region?: string
   credentials?: StorageCredentialsInput
+  localFolder?: string
 }
 
 const storageDestinationsKey = (orgSlug: string) =>
@@ -45,17 +49,45 @@ function storageDestinationsPath(orgSlug: string): string {
   return `/orgs/${encodeURIComponent(orgSlug)}/storage-destinations`
 }
 
-export function useStorageDestinations(orgSlug: string | null) {
-  return useQuery({
+interface StorageDestinationsResponse {
+  destinations: Array<StorageDestination>
+  /** Org folder on the server under which each local destination lives. */
+  localRoot: string
+}
+
+function storageDestinationsQuery(orgSlug: string | null) {
+  return {
     queryKey: storageDestinationsKey(orgSlug ?? ""),
     enabled: Boolean(orgSlug),
-    queryFn: async () => {
-      const data = await apiFetch<{
-        destinations: Array<StorageDestination>
-      }>(storageDestinationsPath(orgSlug!))
-      return data.destinations
-    },
+    queryFn: () =>
+      apiFetch<StorageDestinationsResponse>(storageDestinationsPath(orgSlug!)),
+  }
+}
+
+export function useStorageDestinations(orgSlug: string | null) {
+  return useQuery({
+    ...storageDestinationsQuery(orgSlug),
+    select: (data) => data.destinations,
   })
+}
+
+export function useLocalStorageRoot(orgSlug: string | null) {
+  return useQuery({
+    ...storageDestinationsQuery(orgSlug),
+    select: (data) => data.localRoot,
+  })
+}
+
+function updateCachedDestinations(
+  queryClient: ReturnType<typeof useQueryClient>,
+  orgSlug: string,
+  update: (destinations: Array<StorageDestination>) => Array<StorageDestination>
+): void {
+  queryClient.setQueryData<StorageDestinationsResponse>(
+    storageDestinationsKey(orgSlug),
+    (current) =>
+      current && { ...current, destinations: update(current.destinations) }
+  )
 }
 
 export function useCreateStorageDestination(orgSlug: string) {
@@ -70,13 +102,23 @@ export function useCreateStorageDestination(orgSlug: string) {
           body: input,
         }
       ),
-    onSuccess: () => {
+    onSuccess: ({ destination }) => {
+      // Show the row in the same frame as the toast instead of after a refetch.
+      // The API orders by name: insert in place so the refetch does not move it.
+      updateCachedDestinations(queryClient, orgSlug, (current) =>
+        [...current, destination].sort((left, right) =>
+          left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+        )
+      )
       void queryClient.invalidateQueries({
         queryKey: storageDestinationsKey(orgSlug),
       })
       toast.success(i18n.t("storage:toasts.created"))
     },
     onError: (error: Error) => {
+      // The form marks the folder field itself.
+      if (error instanceof ApiError && error.code === "LOCAL_FOLDER_TAKEN")
+        return
       toast.error(
         i18n.t("storage:toasts.createFailed", { message: error.message })
       )
@@ -156,10 +198,10 @@ export function useTestStorageDestination(orgSlug: string) {
       // The API stores a classified reason; read it from the refreshed row
       // so the toast says what to fix rather than "test failed".
       const destination = queryClient
-        .getQueryData<Array<StorageDestination>>(
+        .getQueryData<StorageDestinationsResponse>(
           storageDestinationsKey(orgSlug)
         )
-        ?.find((item) => item.id === destinationId)
+        ?.destinations.find((item) => item.id === destinationId)
       toast.error(i18n.t("storage:toasts.testFailedTitle"), {
         description: i18n.t(testFailureKey(destination?.lastTestError ?? null)),
       })
@@ -188,7 +230,10 @@ export function useDeleteStorageDestination(orgSlug: string) {
         `${storageDestinationsPath(orgSlug)}/${destinationId}`,
         { method: "DELETE" }
       ),
-    onSuccess: () => {
+    onSuccess: (_data, destinationId) => {
+      updateCachedDestinations(queryClient, orgSlug, (current) =>
+        current.filter((item) => item.id !== destinationId)
+      )
       void queryClient.invalidateQueries({
         queryKey: storageDestinationsKey(orgSlug),
       })

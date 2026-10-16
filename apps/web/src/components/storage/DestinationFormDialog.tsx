@@ -3,6 +3,7 @@ import * as React from "react"
 import { RiArrowLeftLine, RiExternalLinkLine } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
 import {
+  LocalFolderSchema,
   STORAGE_PROVIDERS,
   buildStorageProviderEndpoint,
   parseAzureConnectionString,
@@ -28,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
+import { ApiError } from "../../lib/api/errors"
 import { ProviderMark } from "./ProviderMark"
 import type { StorageProvider } from "@ploydok/shared"
 import type {
@@ -69,11 +71,19 @@ interface FormState {
   secretAccessKey: string
   accountKey: string
   connectionString: string
+  localFolder: string
   createBucket: boolean
 }
 
 type FormError =
-  "account" | "region" | "endpoint" | "credentials" | "connectionString" | null
+  | "account"
+  | "region"
+  | "endpoint"
+  | "credentials"
+  | "connectionString"
+  | "localFolder"
+  | "localFolderTaken"
+  | null
 
 export interface DestinationSubmitOptions {
   createBucket: boolean
@@ -95,6 +105,7 @@ function initialState(
       secretAccessKey: "",
       accountKey: "",
       connectionString: "",
+      localFolder: "",
       createBucket: true,
     }
   }
@@ -123,6 +134,7 @@ function initialState(
     secretAccessKey: "",
     accountKey: "",
     connectionString: "",
+    localFolder: "",
     createBucket: !destination,
   }
 }
@@ -143,12 +155,14 @@ function pathStyleAccount(
 export function DestinationFormDialog({
   open,
   destination,
+  localRoot,
   isPending,
   onOpenChange,
   onSubmit,
 }: {
   open: boolean
   destination: StorageDestination | null
+  localRoot: string | undefined
   isPending: boolean
   onOpenChange: (open: boolean) => void
   onSubmit: (
@@ -232,6 +246,11 @@ export function DestinationFormDialog({
       kind: preset.kind,
       provider: preset.id,
     }
+    if (preset.kind === "local" && !destination && form.localFolder.trim()) {
+      const folder = LocalFolderSchema.safeParse(form.localFolder)
+      if (!folder.success) return setError("localFolder")
+      input.localFolder = folder.data
+    }
     if (preset.kind !== "local") {
       const override = form.endpoint.trim()
       if (preset.customEndpoint && !override) return setError("endpoint")
@@ -271,9 +290,16 @@ export function DestinationFormDialog({
       }
     }
     setError(null)
-    await onSubmit(input, {
-      createBucket: preset.kind !== "local" && form.createBucket,
-    })
+    try {
+      await onSubmit(input, {
+        createBucket: preset.kind !== "local" && form.createBucket,
+      })
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "LOCAL_FOLDER_TAKEN") {
+        return setError("localFolderTaken")
+      }
+      throw err
+    }
   }
 
   const title = destination
@@ -345,9 +371,47 @@ export function DestinationFormDialog({
             </Field>
 
             {preset.kind === "local" ? (
-              <p className="rounded-lg border border-panel-border/70 bg-panel-inset p-3 text-sm text-muted-foreground">
-                {t("localHint")}
-              </p>
+              <>
+                {!destination ? (
+                  <Field
+                    id="storage-destination-folder"
+                    label={t("localFolder")}
+                    hint={t("localFolderHint")}
+                    error={
+                      error === "localFolder"
+                        ? t("localFolderInvalid")
+                        : error === "localFolderTaken"
+                          ? t("localFolderTaken")
+                          : null
+                    }
+                  >
+                    <Input
+                      id="storage-destination-folder"
+                      value={form.localFolder}
+                      onChange={(event) =>
+                        update("localFolder", event.target.value)
+                      }
+                      placeholder={t("localFolderPlaceholder")}
+                      aria-invalid={
+                        error === "localFolder" || error === "localFolderTaken"
+                      }
+                      className="font-mono"
+                    />
+                  </Field>
+                ) : null}
+                <div className="space-y-2 rounded-lg border border-panel-border/70 bg-panel-inset p-3 text-sm text-muted-foreground">
+                  {destination?.localPath || localRoot ? (
+                    <p>
+                      {t(destination ? "localPathLabel" : "localRootLabel")}{" "}
+                      <code className="font-mono text-xs break-all text-foreground">
+                        {destination?.localPath ??
+                          `${localRoot}/${form.localFolder.trim() || t("localFolderAuto")}`}
+                      </code>
+                    </p>
+                  ) : null}
+                  <p>{t("localHint")}</p>
+                </div>
+              </>
             ) : (
               <RemoteFields
                 preset={preset}

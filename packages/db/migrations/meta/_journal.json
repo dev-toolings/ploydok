@@ -666,6 +666,13 @@
       "when": 1792100100000,
       "tag": "0095_storage_destination_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1792152900000,
+      "tag": "0096_storage_destination_local_folder",
+      "breakpoints": true
     }
   ]
 }

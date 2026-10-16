@@ -165,7 +165,7 @@ function GeneralSettingsPage(): React.JSX.Element {
                 e.preventDefault()
                 void handleDelete()
               }}
-              className="bg-none bg-destructive text-white hover:bg-destructive/90"
+              className="bg-none bg-destructive text-white hover:bg-none hover:bg-destructive/90 active:bg-none"
             >
               {deleteOrg.isPending
                 ? t("settings.deleting")

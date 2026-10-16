@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import path from "node:path"
 import { Hono } from "hono"
 import { eq } from "drizzle-orm"
 import {
@@ -16,6 +17,7 @@ import {
   type Db,
 } from "@ploydok/db"
 import type { AuthUser } from "../auth/middleware"
+import { env } from "../env"
 import { createStorageDestinationsRouter } from "./storage-destinations"
 import { makeTestDb, TEST_PG_URL } from "../test/db-helpers"
 
@@ -213,6 +215,7 @@ describe.skipIf(skip)("workspace storage destination routes", () => {
           usageCount: 0,
         },
       ],
+      localRoot: path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR, fixture.orgId),
     })
 
     const memberWrite = testApp(db, {
@@ -358,6 +361,54 @@ describe.skipIf(skip)("workspace storage destination routes", () => {
     expect(
       await db.select().from(secrets).where(eq(secrets.project_id, fixture.orgId))
     ).toHaveLength(0)
+  })
+
+  it("files local destinations under a fixed, unique folder", async () => {
+    const fixture = await seedOrg(db, crypto.randomUUID().slice(0, 8))
+    orgIds.push(fixture.orgId)
+    const ownerApp = testApp(db, fixture.owner)
+    const orgDir = path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR, fixture.orgId)
+    const create = (body: Record<string, unknown>) =>
+      ownerApp.request(
+        request("POST", `/orgs/${fixture.orgId}/storage-destinations`, {
+          kind: "local",
+          ...body,
+        })
+      )
+
+    const named = await create({ name: "Nightly", localFolder: "nightly" })
+    expect(named.status).toBe(201)
+    const { destination } = (await named.json()) as {
+      destination: { id: string; localPath: string }
+    }
+    expect(destination.localPath).toBe(path.join(orgDir, "nightly"))
+
+    const clash = await create({ name: "Other", localFolder: "nightly" })
+    expect(clash.status).toBe(409)
+    expect(await clash.json()).toMatchObject({
+      error: { code: "LOCAL_FOLDER_TAKEN" },
+    })
+
+    const unnamed = await create({ name: "Default" })
+    const { destination: byId } = (await unnamed.json()) as {
+      destination: { id: string; localPath: string }
+    }
+    expect(byId.localPath).toBe(path.join(orgDir, byId.id))
+
+    const renamed = await ownerApp.request(
+      request(
+        "PATCH",
+        `/orgs/${fixture.orgId}/storage-destinations/${destination.id}`,
+        { name: "Nightly renamed", localFolder: "moved" }
+      )
+    )
+    expect(renamed.status).toBe(200)
+    const rows = await db
+      .select()
+      .from(storage_destinations)
+      .where(eq(storage_destinations.id, destination.id))
+    expect(rows[0]?.name).toBe("Nightly renamed")
+    expect(rows[0]?.local_folder).toBe("nightly")
   })
 
   it("performs the local witness put/read/delete cycle and records failures", async () => {
