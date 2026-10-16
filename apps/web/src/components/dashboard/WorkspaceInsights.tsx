@@ -519,7 +519,10 @@ function Gauge({
             cx="40"
             cy="40"
             r={radius}
-            className={cn("fill-none transition-[stroke-dashoffset]", tone)}
+            className={cn(
+              "fill-none transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none",
+              tone
+            )}
             strokeWidth="8"
             strokeLinecap="round"
             strokeDasharray={circumference}
