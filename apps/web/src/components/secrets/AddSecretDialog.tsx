@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
@@ -36,6 +37,7 @@ export function AddSecretDialog({
   defaultScope = "shared",
   onOpenChange,
 }: AddSecretDialogProps): React.JSX.Element {
+  const { t } = useTranslation("workspace")
   const [key, setKey] = React.useState("")
   const [value, setValue] = React.useState("")
   const [scope, setScope] = React.useState<SecretScope>(defaultScope)
@@ -53,7 +55,7 @@ export function AddSecretDialog({
     e.preventDefault()
 
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
-      setKeyError("Key must be UPPER_SNAKE_CASE (e.g. MY_VAR)")
+      setKeyError(t("secrets.keyFormat"))
       return
     }
     setKeyError(null)
@@ -62,7 +64,7 @@ export function AddSecretDialog({
       { key, value, scope, phase },
       {
         onSuccess: () => {
-          toast.success(`Secret ${key} saved`)
+          toast.success(t("secrets.saved", { key }))
           setKey("")
           setValue("")
           setScope(defaultScope)
@@ -80,11 +82,11 @@ export function AddSecretDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add secret</DialogTitle>
+          <DialogTitle>{t("secrets.add")}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <Field>
-            <FieldLabel htmlFor="secret-key">Key</FieldLabel>
+            <FieldLabel htmlFor="secret-key">{t("secrets.key")}</FieldLabel>
             <FieldContent>
               <Input
                 id="secret-key"
@@ -99,7 +101,7 @@ export function AddSecretDialog({
           </Field>
 
           <Field>
-            <FieldLabel htmlFor="secret-scope">Scope</FieldLabel>
+            <FieldLabel htmlFor="secret-scope">{t("secrets.scope")}</FieldLabel>
             <FieldContent>
               <NativeSelect
                 id="secret-scope"
@@ -116,7 +118,7 @@ export function AddSecretDialog({
           </Field>
 
           <Field>
-            <FieldLabel htmlFor="secret-phase">Phase</FieldLabel>
+            <FieldLabel htmlFor="secret-phase">{t("secrets.phase")}</FieldLabel>
             <FieldContent>
               <NativeSelect
                 id="secret-phase"
@@ -133,7 +135,7 @@ export function AddSecretDialog({
           </Field>
 
           <Field>
-            <FieldLabel htmlFor="secret-value">Value</FieldLabel>
+            <FieldLabel htmlFor="secret-value">{t("secrets.value")}</FieldLabel>
             <FieldContent>
               <div className="relative">
                 <Input
@@ -141,7 +143,7 @@ export function AddSecretDialog({
                   type={showValue ? "text" : "password"}
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  placeholder="Secret value"
+                  placeholder={t("secrets.placeholder")}
                   autoComplete="new-password"
                   required
                   className="pr-16"
@@ -151,7 +153,7 @@ export function AddSecretDialog({
                   onClick={() => setShowValue((v) => !v)}
                   className="absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
                 >
-                  {showValue ? "Hide" : "Show"}
+                  {showValue ? t("secrets.hide") : t("secrets.show")}
                 </button>
               </div>
             </FieldContent>
@@ -163,10 +165,10 @@ export function AddSecretDialog({
               variant="ghost"
               onClick={() => onOpenChange(false)}
             >
-              Cancel
+              {t("cancel", { ns: "common" })}
             </Button>
             <Button type="submit" loading={isPending}>
-              {isPending ? "Saving…" : "Save secret"}
+              {isPending ? t("secrets.saving") : t("secrets.save")}
             </Button>
           </DialogFooter>
         </form>

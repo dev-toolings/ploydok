@@ -347,6 +347,8 @@
     "phase": "Phase",
     "value": "Valeur",
     "newValue": "Nouvelle valeur",
+    "show": "Afficher",
+    "hide": "Masquer",
     "placeholder": "Valeur du secret",
     "save": "Enregistrer le secret",
     "saving": "Enregistrement…",
