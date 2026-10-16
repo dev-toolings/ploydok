@@ -22,10 +22,10 @@ import { Label } from "@workspace/ui/components/label"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Switch } from "@workspace/ui/components/switch"
 import { Textarea } from "@workspace/ui/components/textarea"
-import { cn } from "@workspace/ui/lib/utils"
 import { useApp } from "../../lib/apps"
 import { useUpdateAppSettings } from "../../lib/apps-mutations"
 import { patchAppSettings } from "../../lib/webhooks"
+import { ReadOnlyValue } from "./ReadOnlyValue"
 import type { AppDetail } from "../../lib/apps"
 import type { AutoDeploySettings } from "../../lib/webhooks"
 
@@ -372,24 +372,3 @@ function ToggleRow({
   )
 }
 
-function ReadOnlyValue({
-  value,
-  placeholder,
-  mono = false,
-}: {
-  value: string
-  placeholder: string
-  mono?: boolean
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        "min-w-0 rounded-md border bg-muted/40 px-3 py-2 text-sm",
-        mono && "font-mono",
-        value ? "text-foreground" : "text-muted-foreground"
-      )}
-    >
-      <span className="block truncate">{value || placeholder}</span>
-    </div>
-  )
-}
