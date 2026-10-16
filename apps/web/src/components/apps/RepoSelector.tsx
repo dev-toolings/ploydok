@@ -3,6 +3,7 @@ import * as React from "react"
 import { Link } from "@tanstack/react-router"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import { useGitHubAppConfig, useGitHubRepos } from "../../lib/github"
 import type { GitRepo } from "@ploydok/shared"
 
@@ -51,7 +52,7 @@ export function RepoSelector({
 
   const repos = data?.pages.flatMap((p) => p.repos) ?? []
   const groupedRepos = React.useMemo(() => {
-    const groups = new Map<string, GitRepo[]>()
+    const groups = new Map<string, Array<GitRepo>>()
     for (const repo of repos) {
       const accountLogin =
         "accountLogin" in repo && typeof repo.accountLogin === "string"
@@ -96,12 +97,12 @@ export function RepoSelector({
 
   return (
     <div className="space-y-3">
-      <input
+      <Input
         type="search"
         placeholder={t("create.searchRepos")}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-ring focus:outline-none"
+        className="h-9"
         aria-label={t("repo.searchAria")}
       />
 

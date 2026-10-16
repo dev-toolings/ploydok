@@ -22,6 +22,7 @@ import {
 import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Switch } from "@workspace/ui/components/switch"
+import { Input } from "@workspace/ui/components/input"
 import { QRCodeSVG } from "qrcode.react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -274,7 +275,7 @@ function TotpScanView({
           >
             {t("totp.verificationCode")}
           </label>
-          <input
+          <Input
             id="totp-code"
             type="text"
             inputMode="numeric"
@@ -284,7 +285,7 @@ function TotpScanView({
             value={code}
             onChange={(e) => onCodeChange(e.target.value.replace(/\D/g, ""))}
             placeholder="000000"
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-center font-mono text-lg tracking-[0.4em] text-foreground placeholder:text-muted-foreground/40 focus:ring-2 focus:ring-primary focus:outline-none"
+            className="h-auto px-3 py-2 text-center font-mono text-lg tracking-[0.4em] placeholder:text-muted-foreground/40 md:text-lg"
             aria-describedby={error ? "totp-error" : undefined}
           />
           {error ? (

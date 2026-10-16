@@ -3,6 +3,7 @@ import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
 import { Label } from "@workspace/ui/components/label"
+import { NativeSelect } from "@workspace/ui/components/native-select"
 import {
   Dialog,
   DialogContent,
@@ -91,9 +92,8 @@ export function TlsModeSwitcher({
           {tlsMode === "dns01" && (
             <div className="space-y-1.5">
               <Label htmlFor="switch-provider">{t("domains.dnsProvider")}</Label>
-              <select
+              <NativeSelect
                 id="switch-provider"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
                 value={dns01Provider}
                 onChange={(e) => setDns01Provider(e.target.value as Dns01Provider)}
               >
@@ -102,7 +102,7 @@ export function TlsModeSwitcher({
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
           )}
 

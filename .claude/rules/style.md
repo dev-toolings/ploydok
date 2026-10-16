@@ -84,6 +84,18 @@ poser `size-4` partout aplatit les états vides et décentre les glyphes en past
 - Les pastilles numérotées (`inline-flex size-5 rounded-full`) ne sont pas des icônes :
   elles suivent leur texte, pas cette table.
 
+## Champs de formulaire — une seule surface
+
+Tout champ passe par un primitive de `@workspace/ui` : `Input`, `Textarea`,
+`InputGroup`, `SelectTrigger`, ou `NativeSelect` pour un `<select>` natif. Ils
+partagent la même surface : `bg-background` (blanc dans une `Card` en clair),
+`border-input`, `rounded-[10px]`, focus `ring-2 ring-ring/20`. Pas de
+`<input>`/`<select>`/`<textarea>` stylé à la main, et pas de `bg-muted` sur un
+champ en lecture seule (gris sur le gris du panel) : `ReadOnlyValue` ou `Input
+readOnly`. Un champ dense surcharge la taille (`h-auto py-1.5 text-xs
+md:text-xs`), jamais la surface. Exceptions : la barre sombre des logs, Monaco,
+et `AuthShell` (`authFieldClass`).
+
 ## Couleurs de surface — utiliser les tokens panel
 
 - Surface encastrée dans une `Card` : `bg-panel-inset` + `border-panel-border/70`.

@@ -2,6 +2,7 @@
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import { useGitLabCacheStatus, useGitLabRepos } from "../../lib/gitlab"
 import type { GitRepo } from "@ploydok/shared"
 
@@ -82,12 +83,12 @@ export function GitLabRepoSelector({
 
   return (
     <div className="space-y-3">
-      <input
+      <Input
         type="search"
         placeholder={t("apps:create.searchGitLab")}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-ring focus:outline-none"
+        className="h-9"
         aria-label={t("apps:repo.searchGitLabAria")}
       />
 
