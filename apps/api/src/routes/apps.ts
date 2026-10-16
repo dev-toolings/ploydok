@@ -6,7 +6,7 @@ import { Hono } from "hono"
 import type { MiddlewareHandler } from "hono"
 import type { Queue } from "bullmq"
 import { z } from "zod"
-import { and, desc, eq, gt, inArray, isNotNull, or } from "drizzle-orm"
+import { and, desc, eq, gt, inArray, isNotNull } from "drizzle-orm"
 import { nanoid } from "nanoid"
 import { createDb } from "@ploydok/db"
 import {
@@ -99,6 +99,7 @@ import { ghProvider } from "./github"
 import { getSharedAgent } from "../debug/singletons"
 import { isNotFound, toAgentError } from "../agent/errors"
 import { resolveRuntimeContainer } from "../services/runtime-containers"
+import { runningBuildMatch } from "../services/runtime-build"
 import { resolveAppRuntimeContainerId } from "../services/runtime-target"
 import {
   reconcileAppStatus,
@@ -888,23 +889,20 @@ async function hasActiveDeployLease(db: Db, appId: string): Promise<boolean> {
   return rows.length > 0
 }
 
+type RoutingApp = Pick<
+  AppRow,
+  "id" | "container_id" | "runtime_mode" | "swarm_service_name"
+>
+
 async function currentRoutingBuildId(
   db: Db,
-  app: Pick<AppRow, "id" | "container_id">
+  app: RoutingApp
 ): Promise<string | null> {
-  const buildFilter = app.container_id
-    ? and(
-        eq(builds.app_id, app.id),
-        inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
-        or(
-          eq(builds.container_id, app.container_id),
-          eq(builds.runtime_ref, app.container_id)
-        )
-      )
-    : and(
-        eq(builds.app_id, app.id),
-        inArray(builds.status, ["succeeded", "succeeded_with_warning"])
-      )
+  const buildFilter = and(
+    eq(builds.app_id, app.id),
+    inArray(builds.status, ["succeeded", "succeeded_with_warning"]),
+    runningBuildMatch(app)
+  )
   const rows = await db
     .select({ id: builds.id })
     .from(builds)
@@ -916,7 +914,7 @@ async function currentRoutingBuildId(
 
 async function withRoutingDeployLease<T>(opts: {
   db: Db
-  app: Pick<AppRow, "id" | "container_id">
+  app: RoutingApp
   task: () => Promise<T>
 }): Promise<T | null> {
   const buildId = await currentRoutingBuildId(opts.db, opts.app)
