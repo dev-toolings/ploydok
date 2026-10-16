@@ -224,7 +224,7 @@ function LogsPanel({
       <LogViewer
         source={{ kind: "service", resourceId: id }}
         resourceName={name}
-        className="h-[min(60vh,480px)] min-h-[240px]"
+        className="max-h-[min(60vh,480px)]"
       />
     </ShellPanel>
   )

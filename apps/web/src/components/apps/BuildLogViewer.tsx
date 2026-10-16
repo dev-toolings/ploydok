@@ -2,6 +2,7 @@
 import * as React from "react"
 import { RiArrowDownLine } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
+import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 import {
   detectLevel,
@@ -14,12 +15,9 @@ import { LogLine } from "./LogLine"
 import type {
   LogLine as LogLineData,
   LogSource,
+  LogStreamStatus,
 } from "../../lib/hooks/use-log-stream"
 import type { LogFiltersState } from "./LogFilters"
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface LogViewerProps {
   source: LogSource
@@ -30,7 +28,7 @@ export interface LogViewerProps {
 
 interface BuildLogViewerProps {
   appId: string
-  /** Build ID — if undefined or "latest", streams runtime logs */
+  /** Build ID: if undefined or "latest", streams runtime logs */
   buildId?: string
   /** For completed builds, read the persisted log archive instead of live WS. */
   archiveOnly?: boolean
@@ -39,62 +37,103 @@ interface BuildLogViewerProps {
   className?: string
 }
 
-// ---------------------------------------------------------------------------
-// TitleBar
-// ---------------------------------------------------------------------------
-
 function TitleBar({
   title,
-  isLive,
+  status,
+  snapshotLoadedAt,
+  lastLineAt,
+  retry,
   lineCount,
   errorCount,
   warnCount,
+  error,
 }: {
   title: string
-  isLive: boolean
+  status: LogStreamStatus
+  snapshotLoadedAt: number | null
+  lastLineAt: number | null
+  retry: () => void
   lineCount: number
   errorCount: number
   warnCount: number
+  error: string | null
 }): React.JSX.Element {
-  const { t } = useTranslation("apps")
+  const { t, i18n } = useTranslation("apps")
+  const [now, setNow] = React.useState(Date.now)
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(timer)
+  }, [])
+  const seconds = Math.max(0, Math.floor((now - (lastLineAt ?? now)) / 1000))
+  const unit =
+    seconds < 60
+      ? "second"
+      : seconds < 3600
+        ? "minute"
+        : seconds < 86400
+          ? "hour"
+          : "day"
+  const divisor =
+    unit === "second"
+      ? 1
+      : unit === "minute"
+        ? 60
+        : unit === "hour"
+          ? 3600
+          : 86400
+  const relative = new Intl.RelativeTimeFormat(i18n.language, {
+    numeric: "auto",
+  }).format(-Math.floor(seconds / divisor), unit)
+  const snapshotTime =
+    snapshotLoadedAt === null
+      ? ""
+      : new Intl.DateTimeFormat(i18n.language, {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }).format(snapshotLoadedAt)
   return (
-    <div className="flex h-8 shrink-0 items-center gap-2 border-b border-white/10 bg-white/5 px-4">
-      <span
-        className={cn(
-          "size-2 shrink-0 rounded-full",
-          isLive ? "animate-pulse bg-emerald-500" : "bg-white/30"
+    <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-panel-border bg-panel px-4 py-3 font-sans text-xs">
+      <div className="min-w-0 flex-1 space-y-1">
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        <p className="text-muted-foreground">
+          <span className={cn(status === "error" && "text-destructive")}>
+            {status === "snapshot"
+              ? t("logs.snapshot", { time: snapshotTime })
+              : t(status === "error" ? "logs.statusError" : `logs.${status}`)}
+          </span>
+          {" · "}
+          {lastLineAt === null
+            ? t("logs.noLineYet")
+            : t("logs.lastLine", { relative })}
+        </p>
+        <p className="text-muted-foreground tabular-nums">
+          {t("logs.viewCounts", {
+            lines: t("logs.linesCount", { count: lineCount }),
+            errors: t("logs.errorsCount", { count: errorCount }),
+            warnings: t("logs.warningsCount", { count: warnCount }),
+          })}
+        </p>
+        {error && (
+          <p className="break-words text-destructive" role="alert">
+            {error}
+          </p>
         )}
-        aria-hidden="true"
-      />
-      <span className="truncate text-xs font-medium text-[#e5e7eb]">
-        {title}
-      </span>
-      <span className="shrink-0 text-xs text-white/40">
-        {isLive ? t("logs.live") : t("logs.disconnected")}
-      </span>
-      <div className="flex-1" />
-      {errorCount > 0 && (
-        <span className="shrink-0 text-xs text-red-400 tabular-nums">
-          {errorCount.toLocaleString()} {t("logs.err")}
-        </span>
-      )}
-      {warnCount > 0 && (
-        <span className="shrink-0 text-xs text-amber-400 tabular-nums">
-          {warnCount.toLocaleString()} {t("logs.warnShort")}
-        </span>
-      )}
-      {lineCount > 0 && (
-        <span className="shrink-0 text-xs text-white/50 tabular-nums">
-          {t("logs.linesCount", { count: lineCount.toLocaleString() })}
-        </span>
+      </div>
+      {status !== "live" && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          loading={status === "connecting"}
+          onClick={retry}
+        >
+          {t("logs.retry")}
+        </Button>
       )}
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// FollowButton
-// ---------------------------------------------------------------------------
 
 function FollowButton({
   visible,
@@ -125,22 +164,18 @@ function FollowButton({
   )
 }
 
-// ---------------------------------------------------------------------------
-// EmptyState
-// ---------------------------------------------------------------------------
-
 function EmptyState({
   filtered,
   total,
   filters,
-  connected,
+  status,
   hasError,
   waitingHint,
 }: {
   filtered: number
   total: number
   filters: LogFiltersState
-  connected: boolean
+  status: LogStreamStatus
   hasError: boolean
   waitingHint: string
 }): React.JSX.Element {
@@ -148,9 +183,9 @@ function EmptyState({
   const hasFilter = filters.search.length > 0 || filters.level !== "all"
   if (filtered === 0 && total > 0 && hasFilter) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-white/50">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-muted-foreground">
         <span>{t("logs.noMatch")}</span>
-        <span className="text-xs text-white/40">
+        <span className="text-xs text-muted-foreground">
           {t("logs.noMatchHint", { total: total.toLocaleString() })}
         </span>
       </div>
@@ -158,29 +193,29 @@ function EmptyState({
   }
   if (filtered === 0 && total === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-white/50">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-muted-foreground">
         {hasError ? (
           <span className="text-red-400">{t("logs.streamError")}</span>
-        ) : connected ? (
+        ) : status === "live" ? (
           <>
             <span className="inline-flex items-center gap-2">
               <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
               {t("logs.connectedWaiting")}
             </span>
-            <span className="text-xs text-white/40">{waitingHint}</span>
+            <span className="text-xs text-muted-foreground">{waitingHint}</span>
           </>
         ) : (
-          <span>{t("logs.connecting")}</span>
+          <span>
+            {status === "snapshot"
+              ? t("logs.snapshotEmpty")
+              : t("logs.connecting")}
+          </span>
         )}
       </div>
     )
   }
   return <></>
 }
-
-// ---------------------------------------------------------------------------
-// LogViewer
-// ---------------------------------------------------------------------------
 
 export function LogViewer({
   source,
@@ -190,10 +225,11 @@ export function LogViewer({
   const { t } = useTranslation("apps")
   const [filters, setFilters] = useLogFilters()
 
-  const { lines, connected, error } = useLogStream({
-    source,
-    maxLines: filters.volume,
-  })
+  const { lines, status, snapshotLoadedAt, lastLineAt, retry, error } =
+    useLogStream({
+      source,
+      maxLines: filters.volume,
+    })
 
   // ---------------------------------------------------------------------------
   // Pause / resume buffer
@@ -228,8 +264,14 @@ export function LogViewer({
   // ---------------------------------------------------------------------------
   // Filter pipeline
   // ---------------------------------------------------------------------------
-  const levelFiltered = filterByLevel(displayLines, filters.level)
-  const filtered = filterBySearch(levelFiltered, filters.search)
+  const filtered = React.useMemo(
+    () =>
+      filterBySearch(
+        filterByLevel(displayLines, filters.level),
+        filters.search
+      ),
+    [displayLines, filters.level, filters.search]
+  )
 
   // Counters computed against filtered set so they reflect the view
   const { errorCount, warnCount } = React.useMemo(() => {
@@ -389,15 +431,23 @@ export function LogViewer({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
-      const tag = target?.tagName
+      if (
+        !target ||
+        !containerRef.current?.contains(target) ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey
+      )
+        return
+      const tag = target.tagName
       const isInput =
         tag === "INPUT" ||
         tag === "TEXTAREA" ||
         tag === "SELECT" ||
-        target?.isContentEditable
+        target.isContentEditable
 
-      // "/" — focus search even when not in an input
-      if (e.key === "/" && !isInput && !e.ctrlKey && !e.metaKey) {
+      // "/": focus search even when not in an input
+      if (e.key === "/" && !isInput) {
         e.preventDefault()
         searchInputRef.current?.focus()
         searchInputRef.current?.select()
@@ -408,17 +458,13 @@ export function LogViewer({
       if (
         e.key === "Escape" &&
         tag === "INPUT" &&
-        target &&
         target === searchInputRef.current
       ) {
-        target.blur()
+        containerRef.current.focus()
         return
       }
 
       if (isInput) return
-
-      // Only handle shortcuts when our viewer is in the active document
-      if (!containerRef.current?.isConnected) return
 
       switch (e.key) {
         case "p":
@@ -479,63 +525,88 @@ export function LogViewer({
     ? resourceName
       ? t("logs.buildNamed", { id: buildIdShort, name: resourceName })
       : t("logs.buildOnly", { id: buildIdShort })
-    : resourceName
-      ? t("logs.runtimeNamed", { name: resourceName })
-      : t("logs.runtimeLogs")
+    : t("logs.runtimeLogs")
   const waitingHint = isBuild
     ? t("logs.waitingHint")
     : t("logs.waitingHintRuntime")
 
+  const [maxBodyHeight, setMaxBodyHeight] = React.useState<number | undefined>()
+  React.useEffect(() => {
+    const update = () => {
+      const top = scrollRef.current?.getBoundingClientRect().top
+      if (top !== undefined)
+        setMaxBodyHeight(Math.max(0, window.innerHeight - top - 24))
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    if (containerRef.current) observer.observe(containerRef.current)
+    window.addEventListener("resize", update)
+    window.addEventListener("scroll", update, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", update)
+      window.removeEventListener("scroll", update, true)
+    }
+  }, [])
+
   return (
     <div
       ref={containerRef}
+      tabIndex={0}
       className={cn(
-        "flex min-h-0 w-full flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0d0d0d]",
+        "flex min-h-0 w-full flex-col overflow-hidden rounded-lg border border-panel-border bg-panel font-sans outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
     >
       <TitleBar
         title={title}
-        isLive={connected}
+        status={status}
+        snapshotLoadedAt={snapshotLoadedAt}
+        lastLineAt={lastLineAt}
+        retry={retry}
+        error={error}
         lineCount={filtered.length}
         errorCount={errorCount}
         warnCount={warnCount}
       />
 
-      {error && (
-        <div className="shrink-0 border-b border-red-500/20 bg-red-500/10 px-4 py-1.5 text-xs text-red-400">
-          {error}
-        </div>
-      )}
-
       <LogFilters
         state={filters}
         onChange={handleFiltersChange}
         onDownload={handleDownload}
-        onCopy={() => void handleCopy()}
+        onCopy={handleCopy}
         onJumpError={jumpToError}
         bufferedCount={pauseBufferRef.current.length}
         errorCount={errorCount}
-        warnCount={warnCount}
         searchInputRef={searchInputRef}
       />
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-col overflow-hidden">
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full overflow-auto font-mono text-xs"
+          className={cn(
+            "min-h-0 overflow-auto text-xs",
+            filtered.length > 0
+              ? "bg-[#0d0d0d] font-mono"
+              : "bg-panel font-sans"
+          )}
+          style={{ maxHeight: maxBodyHeight }}
           role="log"
           aria-live="polite"
-          aria-label={`${title} output`}
+          aria-label={t("logs.output", { title })}
         >
-          <div ref={logBodyRef} className="py-2">
+          <div
+            ref={logBodyRef}
+            className="py-2"
+            style={{ minHeight: Math.min(192, maxBodyHeight ?? 192) }}
+          >
             {filtered.length === 0 ? (
               <EmptyState
                 filtered={filtered.length}
                 total={displayLines.length}
                 filters={filters}
-                connected={connected}
+                status={status}
                 hasError={Boolean(error)}
                 waitingHint={waitingHint}
               />

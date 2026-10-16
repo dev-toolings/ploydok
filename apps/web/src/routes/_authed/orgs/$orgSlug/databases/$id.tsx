@@ -639,7 +639,7 @@ function DatabaseDetailPage(): React.JSX.Element {
               <LogViewer
                 source={{ kind: "database", resourceId: dbId }}
                 resourceName={db.name}
-                className="h-[min(70vh,560px)] min-h-[280px]"
+                className="max-h-[min(70vh,560px)]"
               />
             )}
           </TabsContent>

@@ -569,9 +569,15 @@ export interface UseLogStreamOptions {
   maxLines?: number
 }
 
+export type LogStreamStatus = "connecting" | "live" | "snapshot" | "error"
+
 export interface UseLogStreamResult {
   lines: Array<LogLine>
   connected: boolean
+  status: LogStreamStatus
+  snapshotLoadedAt: number | null
+  lastLineAt: number | null
+  retry: () => void
   error: string | null
 }
 
@@ -630,7 +636,17 @@ export function useLogStream({
   const isBuild = isAppBuildSource(source)
 
   const [lines, setLines] = React.useState<Array<LogLine>>([])
-  const [connected, setConnected] = React.useState(false)
+  const [status, setStatus] = React.useState<LogStreamStatus>("connecting")
+  const [snapshotLoadedAt, setSnapshotLoadedAt] = React.useState<number | null>(
+    null
+  )
+  const [lastLineAt, setLastLineAt] = React.useState<number | null>(null)
+  const [attempt, setAttempt] = React.useState(0)
+  const retry = React.useCallback(() => {
+    setStatus("connecting")
+    setError(null)
+    setAttempt((value) => value + 1)
+  }, [])
   const [error, setError] = React.useState<string | null>(null)
   const counterRef = React.useRef(0)
   const normalizerRef = React.useRef(createLogEntryNormalizer())
@@ -638,6 +654,12 @@ export function useLogStream({
   const appendParsedEntries = React.useCallback(
     (parsedEntries: Array<ParsedLogLine>) => {
       if (parsedEntries.length === 0) return
+      const timestamp = parsedEntries[parsedEntries.length - 1].t
+      setLastLineAt(
+        typeof timestamp === "number" && Number.isFinite(timestamp)
+          ? timestamp
+          : Date.now()
+      )
       setLines((prev) => {
         const entries = parsedEntries.map((parsed) => {
           const id = ++counterRef.current
@@ -672,118 +694,108 @@ export function useLogStream({
   React.useEffect(() => {
     setLines([])
     setError(null)
-    setConnected(false)
+    setStatus("connecting")
+    setSnapshotLoadedAt(null)
+    setLastLineAt(null)
     counterRef.current = 0
     normalizerRef.current = createLogEntryNormalizer()
 
-    const loadSnapshot = (): Promise<RuntimeSnapshotFallback> =>
-      resolved.snapshot.type === "archive"
-        ? loadArchivedBuildLogs(resolved.snapshot.path)
-        : loadRuntimeSnapshot(resolved.snapshot.path)
-
-    if (archiveOnly && isBuild) {
-      let cancelled = false
-      loadSnapshot()
-        .then((result) => {
-          if (cancelled) return
-          if (result.kind !== "lines") return
-          setError(null)
-          setLines([])
-          counterRef.current = 0
-          normalizerRef.current = createLogEntryNormalizer()
-          for (const raw of result.lines) appendLine(raw)
-          flushPendingLines()
-        })
-        .catch((err: unknown) => {
-          if (cancelled) return
-          const msg = err instanceof Error ? err.message : loadFailedMessage()
-          setError(msg)
-        })
-      return () => {
-        cancelled = true
-      }
-    }
-
-    const wsUrl = `${apiWebSocketBaseUrl()}${resolved.wsPath}`
-
-    let ws: WebSocket
+    let cancelled = false
+    let ws: WebSocket | undefined
     let fallbackTriggered = false
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null
+    let connectionTimer: ReturnType<typeof setTimeout> | null = null
 
-    const triggerFallback = (): void => {
-      setError(
-        isBuild
-          ? i18n.t("apps:logs.wsUnavailableArchive")
-          : i18n.t("apps:logs.wsUnavailableRuntime")
-      )
-
-      loadSnapshot()
-        .then((result) => {
-          if (result.kind === "empty-runtime") {
-            setError(i18n.t("apps:logs.noRuntimeContainer"))
-            return
-          }
-          setError(null)
-          setLines([])
-          counterRef.current = 0
-          normalizerRef.current = createLogEntryNormalizer()
-          for (const raw of result.lines) appendLine(raw)
-          flushPendingLines()
-        })
-        .catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : loadFailedMessage()
-          setError(msg)
-        })
-    }
-
-    try {
-      ws = new WebSocket(wsUrl)
-
-      ws.onopen = () => {
-        setConnected(true)
-        setError(null)
-      }
-
-      ws.onmessage = (ev: MessageEvent<string>) => {
-        const text = typeof ev.data === "string" ? ev.data : String(ev.data)
-        const control = controlMessageKind(text)
-        if (control === "missing") {
+    const loadSnapshot = async (): Promise<void> => {
+      try {
+        const result = await (resolved.snapshot.type === "archive"
+          ? loadArchivedBuildLogs(resolved.snapshot.path)
+          : loadRuntimeSnapshot(resolved.snapshot.path))
+        if (cancelled) return
+        if (result.kind === "empty-runtime") {
           setError(i18n.t("apps:logs.noRuntimeContainer"))
+          setStatus("error")
           return
         }
-        if (control === "ignore") return
-        appendLine(text)
-      }
-
-      // Defer fallback by 1s so the API has a chance to persist log_path
-      // for builds that just finished (race between WS close and DB write).
-      const scheduleFallback = (): void => {
-        if (fallbackTriggered) return
-        fallbackTriggered = true
-        if (fallbackTimer) clearTimeout(fallbackTimer)
-        fallbackTimer = setTimeout(() => {
-          fallbackTimer = null
-          triggerFallback()
-        }, 1_000)
-      }
-
-      ws.onerror = scheduleFallback
-
-      ws.onclose = (ev) => {
-        setConnected(false)
+        setLines([])
+        counterRef.current = 0
+        normalizerRef.current = createLogEntryNormalizer()
+        for (const raw of result.lines) appendLine(raw)
         flushPendingLines()
-        if (!ev.wasClean) scheduleFallback()
+        setSnapshotLoadedAt(Date.now())
+        setStatus("snapshot")
+        setError(null)
+      } catch (err: unknown) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : loadFailedMessage())
+        setStatus("error")
       }
-    } catch {
-      if (!fallbackTriggered) {
-        fallbackTriggered = true
-        triggerFallback()
+    }
+
+    const scheduleFallback = (): void => {
+      if (cancelled || fallbackTriggered) return
+      fallbackTriggered = true
+      if (connectionTimer) clearTimeout(connectionTimer)
+      if (ws) {
+        ws.onopen = null
+        ws.onmessage = null
+        ws.onerror = null
+        ws.onclose = null
+        ws.close()
+      }
+      flushPendingLines()
+      setStatus("connecting")
+      // Finished builds may persist their archive just after the socket closes.
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null
+        void loadSnapshot()
+      }, 1_000)
+    }
+
+    if (archiveOnly && isBuild) {
+      void loadSnapshot()
+    } else {
+      try {
+        ws = new WebSocket(`${apiWebSocketBaseUrl()}${resolved.wsPath}`)
+        connectionTimer = setTimeout(scheduleFallback, 10_000)
+        ws.onopen = () => {
+          if (cancelled) return
+          if (connectionTimer) clearTimeout(connectionTimer)
+          setStatus("live")
+          setError(null)
+        }
+        ws.onmessage = (ev: MessageEvent<string>) => {
+          if (cancelled) return
+          const text = typeof ev.data === "string" ? ev.data : String(ev.data)
+          const control = controlMessageKind(text)
+          if (control === "missing") {
+            setError(i18n.t("apps:logs.noRuntimeContainer"))
+            setStatus("error")
+            return
+          }
+          if (control === "ignore") return
+          setStatus("live")
+          setError(null)
+          appendLine(text)
+        }
+        ws.onerror = scheduleFallback
+        ws.onclose = scheduleFallback
+      } catch {
+        scheduleFallback()
       }
     }
 
     return () => {
+      cancelled = true
       if (fallbackTimer) clearTimeout(fallbackTimer)
-      ws?.close()
+      if (connectionTimer) clearTimeout(connectionTimer)
+      if (ws) {
+        ws.onopen = null
+        ws.onmessage = null
+        ws.onerror = null
+        ws.onclose = null
+        ws.close()
+      }
     }
   }, [
     resolved.wsPath,
@@ -793,7 +805,16 @@ export function useLogStream({
     isBuild,
     appendLine,
     flushPendingLines,
+    attempt,
   ])
 
-  return { lines, connected, error }
+  return {
+    lines,
+    connected: status === "live",
+    status,
+    snapshotLoadedAt,
+    lastLineAt,
+    retry,
+    error,
+  }
 }

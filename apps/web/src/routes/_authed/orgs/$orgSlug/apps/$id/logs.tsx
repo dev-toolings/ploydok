@@ -14,7 +14,7 @@ function AppLogsTab(): React.JSX.Element {
     <BuildLogViewer
       appId={appId}
       appName={app?.name}
-      className="flex-1 min-h-0 rounded-none border-0"
+      className="mt-4 max-h-[calc(100%-1rem)]"
     />
   )
 }
