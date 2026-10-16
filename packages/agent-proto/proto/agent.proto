@@ -543,6 +543,7 @@ message HostStatsResponse {
   uint64 gpu_mem_used_bytes = 20;
   uint64 gpu_mem_total_bytes = 21;
   string gpu_name = 22;              // first GPU's product name, empty if none
+  uint64 mem_configured_bytes = 23;  // online sysfs memory blocks, 0 if unknown
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
