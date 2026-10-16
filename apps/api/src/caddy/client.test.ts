@@ -35,7 +35,9 @@ function startServer(): string {
         } catch {
           body = text
         }
-        const result = handler({ method: req.method, path: url.pathname, body })
+        const result = req.method === "POST" && (url.pathname === "/config/logging" || url.pathname.endsWith("/logs"))
+          ? { status: 200, body: null }
+          : handler({ method: req.method, path: url.pathname, body })
         return new Response(
           result.body !== null ? JSON.stringify(result.body) : "",
           {
@@ -239,8 +241,8 @@ describe("CaddyClient", () => {
       handle?: Array<{ handler?: string; routes?: unknown[] }>
     }>
     const posted = routes[0]!
-    expect(posted.handle?.[0]?.handler).toBe("subroute")
-    expect(posted.handle?.[0]?.routes).toHaveLength(2)
+    expect(posted.handle?.[2]?.handler).toBe("subroute")
+    expect(posted.handle?.[2]?.routes).toHaveLength(2)
   })
 
   test("upsertStaticRoute can disable SPA fallback and expose a direct file_server", async () => {
@@ -278,7 +280,7 @@ describe("CaddyClient", () => {
       handle?: Array<{ handler?: string; root?: string }>
     }>
     const posted = routes[0]!
-    expect(posted.handle).toEqual([
+    expect(posted.handle?.slice(2)).toEqual([
       {
         handler: "file_server",
         root: "/var/lib/ploydok/static/app1/current",
@@ -336,7 +338,7 @@ describe("CaddyClient", () => {
       }>
     }>
     const posted = routes[0]!
-    const handlers = posted.handle ?? []
+    const handlers = posted.handle?.slice(2) ?? []
 
     expect(handlers.map((handler) => handler.handler)).toEqual([
       "subroute",

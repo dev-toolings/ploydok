@@ -615,6 +615,11 @@
     "webhooksHint": "Inbound provider deliveries and signing secret."
   },
   "logs": {
+    "source": "Source",
+    "sourceApp": "Application",
+    "sourceRequests": "HTTP requests",
+    "sourceAll": "Both",
+    "filterRequestId": "Filter by request ID {{id}}",
     "container": "Container",
     "returnToLive_zero": "Return to live",
     "returnToLive_one": "Return to live, {{count}} new line",

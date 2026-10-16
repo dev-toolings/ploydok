@@ -173,7 +173,7 @@ function app(
 
 function createFakeServiceCaddy(): {
   caddy: CaddyClient
-  upserts: Array<{ host: string; upstream: string; appId: string }>
+  upserts: Array<{ host: string; upstream: string; appId: string; accessLogs?: boolean }>
 } {
   const upserts: Array<{ host: string; upstream: string; appId: string }> = []
   const caddy = {
@@ -786,6 +786,7 @@ services:
     })
     expect(upserts).toEqual([
       {
+        accessLogs: false,
         host: "demo.example.com",
         upstream: "ploydok-app-svc-svc-1-demo-web:80",
         appId: "svc-1",
@@ -820,6 +821,7 @@ services:
 
     expect(upserts).toEqual([
       {
+        accessLogs: false,
         host: "docker.example.com",
         upstream: "ploydok-svc-svc-docker-web:80",
         appId: "svc-docker",
@@ -857,6 +859,7 @@ services:
 
     expect(upserts).toEqual([
       {
+        accessLogs: false,
         host: "declared.example.com",
         upstream: runtime === "swarm" ? "ploydok-app-svc-svc-declared-demo-web:8088" : "ploydok-svc-svc-declared-web:8088",
         appId: "svc-declared",
@@ -894,6 +897,7 @@ services:
     })
     expect(upserts).toEqual([
       {
+        accessLogs: false,
         host: "n8n.apps.example.test",
         upstream: "ploydok-svc-svc-installed-n8n:5678",
         appId: "svc-installed",

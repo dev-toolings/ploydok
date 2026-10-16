@@ -55,6 +55,7 @@ describe("upsertServiceRoute", () => {
     expect(client.upsertRoute).toHaveBeenCalledTimes(1)
     expect(client.upsertRoute).toHaveBeenCalledWith(
       expect.objectContaining({
+        accessLogs: false,
         host: "myservice-abc123.demo.localhost",
         upstream: "svc-app:8080",
         appId: "svc-123",
@@ -95,6 +96,7 @@ describe("upsertServiceRoute", () => {
 
     expect(client.upsertRoute).toHaveBeenCalledWith(
       expect.objectContaining({
+        accessLogs: false,
         host: "service-abc123.demo.localhost",
         upstream: "svc-app:8080",
       })

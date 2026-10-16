@@ -615,6 +615,11 @@
     "webhooksHint": "Livraisons entrantes du fournisseur et secret de signature."
   },
   "logs": {
+    "source": "Source",
+    "sourceApp": "Application",
+    "sourceRequests": "Requêtes HTTP",
+    "sourceAll": "Les deux",
+    "filterRequestId": "Filtrer par identifiant de requête {{id}}",
     "container": "Conteneur",
     "returnToLive_zero": "Revenir au direct",
     "returnToLive_one": "Revenir au direct, {{count}} nouvelle ligne",
