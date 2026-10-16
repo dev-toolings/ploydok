@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises"
 import { eq } from "drizzle-orm"
 import { secrets, storage_destinations } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
+import { env } from "../env"
 import { decryptSecret } from "../secrets/crypto"
 import {
   buildRemoteLocation,
@@ -68,15 +69,55 @@ class ByteCounter extends Transform {
 }
 
 /**
- * Location of a new artifact: an object URL for a remote destination, a path
- * under the local backup root otherwise.
+ * Folder of one local destination. Built from immutable ids so renaming the
+ * destination never moves files; it plays the role of a bucket.
  */
-export function buildBackupLocation(
-  config: Pick<BackupDestinationConfig, "destination_kind" | "s3_bucket">,
-  key: string,
-  localPath: () => string
+export function localDestinationDir(
+  orgId: string | null,
+  destinationId: string | null
 ): string {
-  if (config.destination_kind === "local") return localPath()
+  const root = path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR)
+  if (!orgId || !destinationId) return path.join(root, "unassigned")
+  return path.join(root, orgId, destinationId)
+}
+
+/** Local backup path: the remote object key, under the destination folder. */
+export function localBackupPath(destinationDir: string, key: string): string {
+  const base = path.join(destinationDir, "backups")
+  const location = path.resolve(base, key)
+  // The key carries the user-defined prefix: refuse anything that climbs out.
+  if (!location.startsWith(`${base}${path.sep}`)) {
+    throw new Error("Backup key escapes the local destination folder")
+  }
+  return location
+}
+
+/**
+ * Location of a new artifact: an object URL for a remote destination, a path
+ * in the local destination folder otherwise. Both use the same key.
+ */
+export async function buildBackupLocation(
+  db: Db,
+  config: Pick<
+    BackupDestinationConfig,
+    "destination_kind" | "destination_id" | "s3_bucket"
+  >,
+  key: string
+): Promise<string> {
+  if (config.destination_kind === "local") {
+    const rows = config.destination_id
+      ? await db
+          .select({ orgId: storage_destinations.org_id })
+          .from(storage_destinations)
+          .where(eq(storage_destinations.id, config.destination_id))
+          .limit(1)
+      : []
+    const orgId = rows[0]?.orgId ?? null
+    return localBackupPath(
+      localDestinationDir(orgId, orgId ? (config.destination_id ?? null) : null),
+      key
+    )
+  }
   if (!config.s3_bucket) {
     throw new Error("Remote backup config is missing its bucket")
   }

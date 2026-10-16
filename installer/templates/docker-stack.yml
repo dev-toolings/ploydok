@@ -36,7 +36,7 @@ services:
       - ${PLOYDOK_DATA_DIR}/logs:/var/log/ploydok
       - ${PLOYDOK_DATA_DIR}/builds:/var/lib/ploydok/builds
       - ${PLOYDOK_DATA_DIR}/static:/var/lib/ploydok/static
-      - ${PLOYDOK_DATA_DIR}/local-backups:/var/lib/ploydok/local-backups
+      - ${PLOYDOK_DATA_DIR}/storage:/var/lib/ploydok/storage
       - ${PLOYDOK_DATA_DIR}/backups/control-plane.configured:/var/lib/ploydok/backups/control-plane.configured:ro
       - ${PLOYDOK_DATA_DIR}/backups/control-plane.last-success:/var/lib/ploydok/backups/control-plane.last-success:ro
       - ${PLOYDOK_DATA_DIR}/backups/control-plane.last-failure:/var/lib/ploydok/backups/control-plane.last-failure:ro

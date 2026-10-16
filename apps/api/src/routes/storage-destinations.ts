@@ -24,13 +24,15 @@ import type { AuthUser } from "../auth/middleware"
 import { requireRole } from "../auth/require-role"
 import { requireScope } from "../auth/require-scope"
 import { encryptField } from "../github/app-credentials"
-import { parseDestinationCredentials } from "../backups/storage"
+import {
+  localDestinationDir,
+  parseDestinationCredentials,
+} from "../backups/storage"
 import {
   classifyStorageError,
   openObjectStore,
   type StorageFailureReason,
 } from "../storage/object-store"
-import { env } from "../env"
 
 type AppEnv = {
   Variables: {
@@ -170,10 +172,6 @@ function isUsedFieldChanged(
     (update.bucket !== undefined && update.bucket !== existing.s3_bucket) ||
     (update.region !== undefined && update.region !== existing.s3_region)
   )
-}
-
-function safePathSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_")
 }
 
 function destinationSnapshotWhere(
@@ -588,14 +586,13 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
           store.close()
         }
       } else {
+        // Same witness key as a remote destination, inside its own folder.
         const root = path.join(
-          env.PLOYDOK_LOCAL_BACKUP_DIR,
-          ".destination-tests"
+          localDestinationDir(orgId, destination.id),
+          ".ploydok",
+          "destination-tests"
         )
-        const witness = path.join(
-          root,
-          `${safePathSegment(orgId)}-${safePathSegment(destination.id)}-${nanoid()}.txt`
-        )
+        const witness = path.join(root, `${nanoid()}.txt`)
         const marker = `ploydok-storage-test:${destination.id}:${nanoid()}`
         await mkdir(root, { recursive: true })
         try {

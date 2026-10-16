@@ -11,7 +11,6 @@
  *  6. Delete backups older than retention_days.
  *  7. Update backup_configs.last_run_at + last_error.
  */
-import path from "node:path"
 import { Readable } from "node:stream"
 import { nanoid } from "nanoid"
 import { and, eq, lt, sql } from "drizzle-orm"
@@ -19,7 +18,6 @@ import { databases, backup_configs, backups } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
-import { env } from "../env"
 import { isRemoteLocation } from "../storage/object-store"
 import {
   buildBackupFilename,
@@ -99,15 +97,10 @@ async function prepareBackup(
   const startedAt = new Date()
   const ageEncrypted = Boolean(config.age_recipient_public_key)
   const filename = buildBackupFilename(scheduledAt ?? startedAt, "dump", ageEncrypted)
-  const location = buildBackupLocation(
+  const location = await buildBackupLocation(
+    db,
     config,
-    `${config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""}${databaseId}/${filename}`,
-    () =>
-      path.join(
-        env.PLOYDOK_LOCAL_BACKUP_DIR,
-        databaseId,
-        filename
-      )
+    `${config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""}${databaseId}/${filename}`
   )
 
   await db.insert(backups).values({

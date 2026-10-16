@@ -7,9 +7,12 @@ import { Readable } from "node:stream"
 import type { Db } from "@ploydok/db"
 import {
   inspectBackupArtifact,
+  localBackupPath,
+  localDestinationDir,
   type BackupStoreProbe,
   writeBackupStream,
 } from "./storage"
+import { env } from "../env"
 
 const tempDirs: string[] = []
 
@@ -99,5 +102,28 @@ describe("inspectBackupArtifact", () => {
       lastModifiedAt: new Date("2026-10-15T10:00:00.000Z"),
     })
     expect(head).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("local destination layout", () => {
+  it("files backups by org and destination id under backups/", () => {
+    const dir = localDestinationDir("org_1", "dst_1")
+    expect(dir).toBe(path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR, "org_1", "dst_1"))
+    expect(localBackupPath(dir, "nightly/db_1/a.dump")).toBe(
+      path.join(dir, "backups", "nightly", "db_1", "a.dump")
+    )
+  })
+
+  it("keeps a config without a destination apart", () => {
+    expect(localDestinationDir(null, null)).toBe(
+      path.resolve(env.PLOYDOK_LOCAL_STORAGE_DIR, "unassigned")
+    )
+  })
+
+  it("refuses a prefix that climbs out of the destination folder", () => {
+    const dir = localDestinationDir("org_1", "dst_1")
+    expect(() => localBackupPath(dir, "../../dst_2/backups/a.dump")).toThrow(
+      "escapes the local destination folder"
+    )
   })
 })

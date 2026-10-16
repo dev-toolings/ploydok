@@ -228,9 +228,9 @@ require_monitoring_assets() {
 
 require_local_backup_mount() {
   local descriptor="$1"
-  [[ -d "$(real_path "$DATA_DIR/local-backups")" ]] &&
-    grep -Fq '/local-backups:/var/lib/ploydok/local-backups' "$descriptor" || {
-      echo "local backup storage migration required; rerun the signed installer for this release before upgrade" >&2
+  [[ -d "$(real_path "$DATA_DIR/storage")" ]] &&
+    grep -Fq '/storage:/var/lib/ploydok/storage' "$descriptor" || {
+      echo "local storage migration required; rerun the signed installer for this release before upgrade" >&2
       exit 2
     }
 }
