@@ -18,7 +18,13 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@workspace/ui/components/input-group"
-import { NativeSelect } from "@workspace/ui/components/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -129,15 +135,16 @@ export function LogFilters({
   )
 
   const handleVolumeChange = React.useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      onChange({ volume: Number(e.target.value) as VolumeOption })
+    (value: string) => {
+      const volume = VOLUME_OPTIONS.find((option) => String(option) === value)
+      if (volume !== undefined) onChange({ volume })
     },
     [onChange]
   )
 
   const handleLevelChange = React.useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      onChange({ level: e.target.value as LogLevel })
+    (value: string) => {
+      onChange({ level: value as LogLevel })
     },
     [onChange]
   )
@@ -171,18 +178,24 @@ export function LogFilters({
           <label htmlFor={sourceId} className="text-xs text-muted-foreground">
             {t("logs.source")}
           </label>
-          <NativeSelect
-            id={sourceId}
+          <Select
             value={state.source}
-            onChange={(event) =>
-              onChange({ source: event.target.value as RuntimeLogSource })
+            onValueChange={(value) =>
+              onChange({ source: value as RuntimeLogSource })
             }
-            className="w-auto min-w-0 text-base md:text-sm"
           >
-            <option value="app">{t("logs.sourceApp")}</option>
-            <option value="requests">{t("logs.sourceRequests")}</option>
-            <option value="all">{t("logs.sourceAll")}</option>
-          </NativeSelect>
+            <SelectTrigger
+              id={sourceId}
+              className="h-9 w-auto min-w-0 text-base md:text-sm"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="app">{t("logs.sourceApp")}</SelectItem>
+              <SelectItem value="requests">{t("logs.sourceRequests")}</SelectItem>
+              <SelectItem value="all">{t("logs.sourceAll")}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       )}
       <InputGroup className="h-9 basis-full sm:grow sm:basis-56">
@@ -213,37 +226,43 @@ export function LogFilters({
         <label htmlFor={volumeId} className="text-xs text-muted-foreground">
           {t("logs.lines")}
         </label>
-        <NativeSelect
-          id={volumeId}
-          value={state.volume}
-          onChange={handleVolumeChange}
-          aria-label={t("logs.maxLines")}
-          className="w-auto text-base md:text-sm"
-        >
-          {VOLUME_OPTIONS.map((v) => (
-            <option key={v} value={v}>
-              {formatVolume(v)}
-            </option>
-          ))}
-        </NativeSelect>
+        <Select value={String(state.volume)} onValueChange={handleVolumeChange}>
+          <SelectTrigger
+            id={volumeId}
+            aria-label={t("logs.maxLines")}
+            className="h-9 w-auto text-base md:text-sm"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {VOLUME_OPTIONS.map((v) => (
+              <SelectItem key={v} value={String(v)}>
+                {formatVolume(v)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
         <label htmlFor={levelId} className="text-xs text-muted-foreground">
           {t("logs.level")}
         </label>
-        <NativeSelect
-          id={levelId}
-          value={state.level}
-          onChange={handleLevelChange}
-          aria-label={t("logs.levelFilter")}
-          className="w-auto text-base md:text-sm"
-        >
-          <option value="all">{t("logs.all")}</option>
-          <option value="debug">{t("logs.debug")}</option>
-          <option value="info">{t("logs.info")}</option>
-          <option value="warn">{t("logs.warn")}</option>
-          <option value="error">{t("logs.error")}</option>
-        </NativeSelect>
+        <Select value={state.level} onValueChange={handleLevelChange}>
+          <SelectTrigger
+            id={levelId}
+            aria-label={t("logs.levelFilter")}
+            className="h-9 w-auto text-base md:text-sm"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t("logs.all")}</SelectItem>
+            <SelectItem value="debug">{t("logs.debug")}</SelectItem>
+            <SelectItem value="info">{t("logs.info")}</SelectItem>
+            <SelectItem value="warn">{t("logs.warn")}</SelectItem>
+            <SelectItem value="error">{t("logs.error")}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       {onJumpError && errorCount > 0 && (
         <div className="flex items-center">
