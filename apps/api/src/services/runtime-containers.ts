@@ -122,7 +122,7 @@ function selectBestAppContainer(
 }
 
 export async function resolveRuntimeContainer(
-  agent: Agent,
+  agent: Pick<Agent, "listContainers">,
   opts: {
     appId: string
     preferredContainerRef?: string | null

@@ -98,7 +98,7 @@ import { encryptField, decryptField } from "../github/app-credentials"
 import { ghProvider } from "./github"
 import { getSharedAgent } from "../debug/singletons"
 import { isNotFound, toAgentError } from "../agent/errors"
-import { resolveRuntimeContainer } from "../services/runtime-containers"
+import { appLogSource } from "../services/log-provenance"
 import { runningBuildMatch } from "../services/runtime-build"
 import { resolveAppRuntimeContainerId } from "../services/runtime-target"
 import {
@@ -2614,13 +2614,13 @@ export function createAppsRouter(db: Db): Hono {
         appId,
         app.container_id
       )
-      const container = resolvedContainerId
-        ? await resolveRuntimeContainer(agent, {
-            appId,
-            preferredContainerRef: resolvedContainerId,
-          })
-        : null
-
+      const provenance = await appLogSource(
+        agent,
+        appId,
+        resolvedContainerId,
+        c.req.query("container")
+      )
+      const container = provenance?.containers[provenance.index]
       if (!container) {
         return c.json({ lines: [], containerFound: false })
       }
@@ -2647,7 +2647,11 @@ export function createAppsRouter(db: Db): Hono {
         lines.push(entry)
       }
 
-      return c.json({ lines, containerFound: true })
+      return c.json({
+        lines,
+        containerFound: true,
+        ...provenance,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: "RUNTIME_LOGS_ERROR", message } }, 500)

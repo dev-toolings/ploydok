@@ -2,6 +2,7 @@
 import * as React from "react"
 import { RiArrowDownLine } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
+import { NativeSelect } from "@workspace/ui/components/native-select"
 import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 import {
@@ -14,6 +15,7 @@ import { LogFilters, useLogFilters } from "./LogFilters"
 import { LogLine } from "./LogLine"
 import type {
   LogLine as LogLineData,
+  LogProvenance,
   LogSource,
   LogStreamStatus,
 } from "../../lib/hooks/use-log-stream"
@@ -47,7 +49,11 @@ function TitleBar({
   errorCount,
   warnCount,
   error,
+  provenance,
+  onContainerChange,
 }: {
+  provenance: LogProvenance | null
+  onContainerChange?: (index: number, id: string) => void
   title: string
   status: LogStreamStatus
   snapshotLoadedAt: number | null
@@ -114,6 +120,42 @@ function TitleBar({
             warnings: t("logs.warningsCount", { count: warnCount }),
           })}
         </p>
+        {provenance &&
+          provenance.containers.some(
+            (container) => container.index === provenance.index
+          ) && (
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-muted-foreground">
+              <span>{t("logs.container")}</span>
+              {onContainerChange && provenance.containers.length > 1 ? (
+                <NativeSelect
+                  aria-label={t("logs.container")}
+                  value={provenance.index}
+                  onChange={(event) => {
+                    const container = provenance.containers.find(
+                      (item) => item.index === Number(event.target.value)
+                    )
+                    if (container)
+                      onContainerChange(container.index, container.id)
+                  }}
+                  className="w-full min-w-0 sm:w-auto sm:max-w-sm"
+                >
+                  {provenance.containers.map((container) => (
+                    <option key={container.index} value={container.index}>
+                      {container.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              ) : (
+                <span className="font-mono break-all">
+                  {
+                    provenance.containers.find(
+                      (container) => container.index === provenance.index
+                    )?.name
+                  }
+                </span>
+              )}
+            </div>
+          )}
         {error && (
           <p className="break-words text-destructive" role="alert">
             {error}
@@ -150,16 +192,11 @@ function FollowButton({
     <button
       type="button"
       onClick={onClick}
-      className="absolute right-4 bottom-4 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
-      title={t("logs.resumeTail")}
+      className="absolute right-4 bottom-4 left-4 mx-auto flex min-h-11 w-fit max-w-[calc(100%-2rem)] items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
+      title={t("logs.returnToLive", { count: newCount })}
     >
       <RiArrowDownLine className="size-3.5" aria-hidden="true" />
-      {t("logs.followLatest")}
-      {newCount > 0 && (
-        <span className="rounded-full bg-primary-foreground/20 px-1.5 py-0.5 text-xs">
-          {newCount}
-        </span>
-      )}
+      {t("logs.returnToLive", { count: newCount })}
     </button>
   )
 }
@@ -217,48 +254,52 @@ function EmptyState({
   return <></>
 }
 
-export function LogViewer({
+function LogViewerContent({
   source,
   resourceName,
   className,
-}: LogViewerProps): React.JSX.Element {
+  onContainerChange,
+}: LogViewerProps & {
+  onContainerChange?: (index: number, id: string) => void
+}): React.JSX.Element {
   const { t } = useTranslation("apps")
   const [filters, setFilters] = useLogFilters()
 
-  const { lines, status, snapshotLoadedAt, lastLineAt, retry, error } =
-    useLogStream({
-      source,
-      maxLines: filters.volume,
-    })
+  const {
+    lines,
+    status,
+    snapshotLoadedAt,
+    lastLineAt,
+    retry,
+    error,
+    provenance,
+  } = useLogStream({
+    source,
+    maxLines: filters.volume,
+  })
 
   // ---------------------------------------------------------------------------
   // Pause / resume buffer
   // ---------------------------------------------------------------------------
   const [displayLines, setDisplayLines] =
     React.useState<Array<LogLineData>>(lines)
-  const pauseBufferRef = React.useRef<Array<LogLineData>>([])
+  const [selecting, setSelecting] = React.useState(false)
+  const latestLineId = lines.at(-1)?.id ?? 0
 
   React.useEffect(() => {
-    if (filters.paused) {
-      const incoming = lines.slice(displayLines.length)
-      const merged = [...pauseBufferRef.current, ...incoming]
-      pauseBufferRef.current =
-        merged.length > 1000 ? merged.slice(merged.length - 1000) : merged
-    } else {
-      setDisplayLines(lines)
-      pauseBufferRef.current = []
-    }
-  }, [lines, filters.paused, displayLines.length])
+    if (!filters.paused && !selecting) setDisplayLines(lines)
+  }, [lines, filters.paused, selecting])
 
   const handleFiltersChange = React.useCallback(
     (next: Partial<LogFiltersState>) => {
-      if ("paused" in next && next.paused === false) {
-        setDisplayLines(lines)
-        pauseBufferRef.current = []
+      if (next.paused && followRef.current) {
+        followRef.current = false
+        setShowFollowBtn(true)
+        detachLineCountRef.current = latestLineId
       }
       setFilters(next)
     },
-    [lines, setFilters]
+    [latestLineId, setFilters]
   )
 
   // ---------------------------------------------------------------------------
@@ -294,28 +335,81 @@ export function LogViewer({
   const [showFollowBtn, setShowFollowBtn] = React.useState(false)
   const detachLineCountRef = React.useRef(0)
 
+  const hasSelection = React.useCallback(() => {
+    const selection = window.getSelection()
+    return Boolean(
+      selection &&
+      !selection.isCollapsed &&
+      scrollRef.current &&
+      selection.rangeCount > 0 &&
+      selection.getRangeAt(0).intersectsNode(scrollRef.current)
+    )
+  }, [])
+  const pointerSelectingRef = React.useRef(false)
+  const pointerStartLineIdRef = React.useRef(0)
+  const selectionActive = React.useCallback(
+    () => pointerSelectingRef.current || hasSelection(),
+    [hasSelection]
+  )
+
+  React.useEffect(() => {
+    const updateSelection = () => {
+      const active = selectionActive()
+      setSelecting(active)
+      if (active && followRef.current) {
+        followRef.current = false
+        setShowFollowBtn(true)
+        detachLineCountRef.current = latestLineId
+      }
+    }
+    const endPointer = () => {
+      pointerSelectingRef.current = false
+      const el = scrollRef.current
+      if (
+        el &&
+        el.scrollHeight - el.scrollTop - el.clientHeight > 50 &&
+        followRef.current
+      ) {
+        followRef.current = false
+        setShowFollowBtn(true)
+        detachLineCountRef.current = pointerStartLineIdRef.current
+      }
+      updateSelection()
+    }
+    document.addEventListener("selectionchange", updateSelection)
+    window.addEventListener("pointerup", endPointer)
+    window.addEventListener("pointercancel", endPointer)
+    return () => {
+      document.removeEventListener("selectionchange", updateSelection)
+      window.removeEventListener("pointerup", endPointer)
+      window.removeEventListener("pointercancel", endPointer)
+    }
+  }, [latestLineId, selectionActive])
+
   const scrollToBottom = React.useCallback(() => {
+    if (selectionActive()) return
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [])
+  }, [selectionActive])
 
   const scrollToTop = React.useCallback(() => {
+    if (selectionActive()) return
     const el = scrollRef.current
     if (el) {
       el.scrollTop = 0
+      if (followRef.current) detachLineCountRef.current = latestLineId
       followRef.current = false
       setShowFollowBtn(true)
-      detachLineCountRef.current = filtered.length
     }
-  }, [filtered.length])
+  }, [latestLineId, selectionActive])
 
   const handleScroll = React.useCallback(() => {
     const el = scrollRef.current
-    if (!el) return
+    if (!el || selectionActive() || filters.paused) return
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     if (distFromBottom > 50) {
       if (followRef.current) {
-        detachLineCountRef.current = filtered.length
+        detachLineCountRef.current = latestLineId
         followRef.current = false
         setShowFollowBtn(true)
       }
@@ -323,27 +417,32 @@ export function LogViewer({
       followRef.current = true
       setShowFollowBtn(false)
     }
-  }, [filtered.length])
+  }, [latestLineId, selectionActive, filters.paused])
 
   const handleFollowLatest = React.useCallback(() => {
+    if (selectionActive()) return
+    setFilters({ paused: false })
+    setDisplayLines(lines)
     followRef.current = true
     setShowFollowBtn(false)
     scrollToBottom()
-  }, [scrollToBottom])
+  }, [scrollToBottom, selectionActive, lines, setFilters])
 
   React.useEffect(() => {
     const logBody = logBodyRef.current
     if (!logBody) return
     const observer = new MutationObserver(() => {
-      if (followRef.current) {
+      if (followRef.current && !selectionActive()) {
         scrollToBottom()
       }
     })
     observer.observe(logBody, { childList: true, subtree: false })
     return () => observer.disconnect()
-  }, [scrollToBottom])
+  }, [scrollToBottom, selectionActive])
 
-  const newLineCount = Math.max(0, filtered.length - detachLineCountRef.current)
+  const newLineCount = showFollowBtn
+    ? Math.max(0, latestLineId - detachLineCountRef.current)
+    : 0
 
   // ---------------------------------------------------------------------------
   // Jump to error (n / Shift+N)
@@ -352,6 +451,7 @@ export function LogViewer({
 
   const jumpToError = React.useCallback(
     (direction: "next" | "prev") => {
+      if (selectionActive()) return
       const errorIndices: Array<number> = []
       for (let i = 0; i < filtered.length; i++) {
         if (detectLevel(filtered[i].text) === "error") errorIndices.push(i)
@@ -370,20 +470,20 @@ export function LogViewer({
       }
       jumpCursorRef.current = target
 
-      // Detach from follow + scroll the target row into view
+      // Keep the unread baseline until the user returns to live.
+      if (followRef.current) detachLineCountRef.current = latestLineId
       followRef.current = false
       setShowFollowBtn(true)
-      detachLineCountRef.current = filtered.length
 
       const targetLine = filtered[target]
       requestAnimationFrame(() => {
         const body = logBodyRef.current
-        if (!body) return
+        if (!body || selectionActive()) return
         const node = body.querySelector<HTMLDivElement>(
           `[data-line-id="${targetLine.id}"]`
         )
         if (node) {
-          node.scrollIntoView({ block: "center", behavior: "smooth" })
+          node.scrollIntoView({ block: "center", behavior: "instant" })
           node.animate(
             [
               { backgroundColor: "rgba(239, 68, 68, 0.35)" },
@@ -394,7 +494,7 @@ export function LogViewer({
         }
       })
     },
-    [filtered]
+    [filtered, latestLineId, selectionActive]
   )
 
   // ---------------------------------------------------------------------------
@@ -568,6 +668,8 @@ export function LogViewer({
         lineCount={filtered.length}
         errorCount={errorCount}
         warnCount={warnCount}
+        provenance={provenance}
+        onContainerChange={onContainerChange}
       />
 
       <LogFilters
@@ -576,7 +678,7 @@ export function LogViewer({
         onDownload={handleDownload}
         onCopy={handleCopy}
         onJumpError={jumpToError}
-        bufferedCount={pauseBufferRef.current.length}
+        bufferedCount={newLineCount}
         errorCount={errorCount}
         searchInputRef={searchInputRef}
       />
@@ -585,13 +687,19 @@ export function LogViewer({
         <div
           ref={scrollRef}
           onScroll={handleScroll}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            pointerStartLineIdRef.current = latestLineId
+            pointerSelectingRef.current = true
+            setSelecting(true)
+          }}
           className={cn(
             "min-h-0 overflow-auto text-xs",
             filtered.length > 0
               ? "bg-[#0d0d0d] font-mono"
               : "bg-panel font-sans"
           )}
-          style={{ maxHeight: maxBodyHeight }}
+          style={{ maxHeight: maxBodyHeight, overflowAnchor: "none" }}
           role="log"
           aria-live="polite"
           aria-label={t("logs.output", { title })}
@@ -631,6 +739,45 @@ export function LogViewer({
         />
       </div>
     </div>
+  )
+}
+
+export function LogViewer(props: LogViewerProps): React.JSX.Element {
+  const { source } = props
+  const sourceKey = `${source.kind}:${source.resourceId}:${source.kind === "app" ? `${source.buildId ?? ""}:${source.archiveOnly ?? false}:${source.containerId ?? ""}` : source.kind === "service" ? (source.containerIndex ?? 0) : ""}`
+  return <LogViewerSession key={sourceKey} {...props} />
+}
+
+function LogViewerSession(props: LogViewerProps): React.JSX.Element {
+  const [containerIndex, setContainerIndex] = React.useState(
+    props.source.kind === "service" ? (props.source.containerIndex ?? 0) : 0
+  )
+  const [containerId, setContainerId] = React.useState(
+    props.source.kind === "app" ? props.source.containerId : undefined
+  )
+  const source =
+    props.source.kind === "service"
+      ? { ...props.source, containerIndex }
+      : props.source.kind === "app"
+        ? { ...props.source, containerId }
+        : props.source
+  const isRuntime =
+    source.kind === "service" ||
+    (source.kind === "app" && (!source.buildId || source.buildId === "latest"))
+  return (
+    <LogViewerContent
+      key={containerId ?? containerIndex}
+      {...props}
+      source={source}
+      onContainerChange={
+        isRuntime
+          ? (index, id) => {
+              if (source.kind === "service") setContainerIndex(index)
+              else setContainerId(id)
+            }
+          : undefined
+      }
+    />
   )
 }
 

@@ -33,7 +33,8 @@ import { logBus } from "../worker/log-bus"
 import { env } from "../env"
 import type { LogEntry } from "../worker/log-bus"
 import { getSharedAgent } from "../debug/singletons"
-import { resolveRuntimeContainer } from "../services/runtime-containers"
+import { appLogSource, logContainers } from "../services/log-provenance"
+import type { LogContainer } from "../services/log-provenance"
 
 // ---------------------------------------------------------------------------
 // BunWebSocket adapter — the `websocket` object must be forwarded to Bun.serve.
@@ -196,7 +197,12 @@ function createLogStreamHandler(
 type ContainerLogResolve =
   | { status: "unauthorized" }
   | { status: "missing" }
-  | { status: "ok"; containerId: string }
+  | {
+      status: "ok"
+      containerId: string
+      containers: Array<LogContainer>
+      index: number
+    }
 
 type WsContext = Parameters<typeof upgradeWebSocket>[0]
 
@@ -228,6 +234,14 @@ function createContainerLogStreamHandler(
           ws.close(1000, "no runtime container")
           return
         }
+
+        ws.send(
+          JSON.stringify({
+            type: "runtime.source",
+            containers: resolved.containers,
+            index: resolved.index,
+          })
+        )
 
         pingTimer = setInterval(() => {
           missedPings++
@@ -323,12 +337,15 @@ async function resolveAppRuntimeContainer(
   const ownsApp = await userOwnsApp(appId, userId)
   if (!app || !ownsApp) return { status: "unauthorized" }
 
-  const container = await resolveRuntimeContainer(getSharedAgent(), {
+  const provenance = await appLogSource(
+    getSharedAgent(),
     appId,
-    preferredContainerRef: app.container_id,
-  })
-  if (!container) return { status: "missing" }
-  return { status: "ok", containerId: container.id }
+    app.container_id,
+    c.req.query("container")
+  )
+  const container = provenance?.containers[provenance.index]
+  if (!container || !provenance) return { status: "missing" }
+  return { status: "ok", containerId: container.id, ...provenance }
 }
 
 async function resolveDatabaseContainer(
@@ -359,7 +376,12 @@ async function resolveDatabaseContainer(
   const row = rows[0]
   if (!row) return { status: "unauthorized" }
   if (!row.container_id) return { status: "missing" }
-  return { status: "ok", containerId: row.container_id }
+  return {
+    status: "ok",
+    containerId: row.container_id,
+    containers: await logContainers(getSharedAgent(), [row.container_id]),
+    index: 0,
+  }
 }
 
 async function resolveServiceContainer(
@@ -376,7 +398,12 @@ async function resolveServiceContainer(
   const idx = Number.isFinite(idxRaw) ? Math.max(0, Math.floor(idxRaw)) : 0
   const containerId = svc.container_ids?.[idx]
   if (!containerId) return { status: "missing" }
-  return { status: "ok", containerId }
+  return {
+    status: "ok",
+    containerId,
+    containers: await logContainers(getSharedAgent(), svc.container_ids ?? []),
+    index: idx,
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -41,6 +41,9 @@ mock.module("../debug/singletons", () => ({
   getSharedAgent: () => ({
     containerStop: mock(async () => ({})),
     containerRemove: mock(async () => ({})),
+    listContainers: async () => ({
+      containers: [{ id: "ctr-db", name: "observed-postgres" }],
+    }),
     containerLogs: mock(async function* () {}),
     containerStats: mock(async function* () {}),
   }),
@@ -765,6 +768,19 @@ describe("POST /databases/:id lifecycle", () => {
 })
 
 describe("GET /databases/:id/logs", () => {
+  it("returns the observed database container name with the snapshot", async () => {
+    const app = wrapRouter(
+      buildDb({ dbRow: { id: "db-1", container_id: "ctr-db" } })
+    )
+    const res = await app.fetch(req("GET", "/db-1/logs"))
+    expect(res.status).toBe(200)
+    const data = await res.json() as { containers: unknown[]; index: number }
+    expect(data.containers).toEqual([
+      { id: "ctr-db", name: "observed-postgres", index: 0 },
+    ])
+    expect(data.index).toBe(0)
+  })
+
   it("returns 404 when the database is missing", async () => {
     const app = wrapRouter(buildDb({ dbRow: null }))
     const res = await app.fetch(req("GET", "/db-missing/logs"))

@@ -464,6 +464,7 @@ export type LogSource =
       resourceId: string
       buildId?: string
       archiveOnly?: boolean
+      containerId?: string
     }
   | { kind: "database"; resourceId: string }
   | { kind: "service"; resourceId: string; containerIndex?: number }
@@ -522,16 +523,26 @@ export function resolveLogSource(source: LogSource): ResolvedLogSource {
     }
   }
 
+  const query = source.containerId
+    ? `?container=${encodeURIComponent(source.containerId)}`
+    : ""
   return {
-    wsPath: `/ws/apps/${source.resourceId}/logs`,
+    wsPath: `/ws/apps/${source.resourceId}/logs${query}`,
     snapshot: {
       type: "runtime",
-      path: `/apps/${source.resourceId}/runtime-logs`,
+      path: `/apps/${source.resourceId}/runtime-logs${query}`,
     },
   }
 }
 
+export interface LogProvenance {
+  containers: Array<{ id: string; name: string; index: number }>
+  index: number
+}
+
 export interface RuntimeLogSnapshot {
+  containers?: LogProvenance["containers"]
+  index?: number
   lines: Array<{
     t: number
     line: string
@@ -541,7 +552,8 @@ export interface RuntimeLogSnapshot {
 }
 
 export type RuntimeSnapshotFallback =
-  { kind: "empty-runtime" } | { kind: "lines"; lines: Array<string> }
+  | { kind: "empty-runtime" }
+  | { kind: "lines"; lines: Array<string>; provenance?: LogProvenance }
 
 /**
  * Turns a runtime-log HTTP payload (app, database, or service) into the same
@@ -572,6 +584,7 @@ export interface UseLogStreamOptions {
 export type LogStreamStatus = "connecting" | "live" | "snapshot" | "error"
 
 export interface UseLogStreamResult {
+  provenance: LogProvenance | null
   lines: Array<LogLine>
   connected: boolean
   status: LogStreamStatus
@@ -602,7 +615,11 @@ async function loadRuntimeSnapshot(
   path: string
 ): Promise<RuntimeSnapshotFallback> {
   const data = await apiFetch<RuntimeLogSnapshot>(path)
-  return runtimeSnapshotToFallback(data)
+  const result = runtimeSnapshotToFallback(data)
+  if (result.kind === "lines" && data.containers && data.index !== undefined) {
+    result.provenance = { containers: data.containers, index: data.index }
+  }
+  return result
 }
 
 function controlMessageKind(text: string): "missing" | "ignore" | null {
@@ -635,6 +652,7 @@ export function useLogStream({
   const archiveOnly = source.kind === "app" && Boolean(source.archiveOnly)
   const isBuild = isAppBuildSource(source)
 
+  const [provenance, setProvenance] = React.useState<LogProvenance | null>(null)
   const [lines, setLines] = React.useState<Array<LogLine>>([])
   const [status, setStatus] = React.useState<LogStreamStatus>("connecting")
   const [snapshotLoadedAt, setSnapshotLoadedAt] = React.useState<number | null>(
@@ -648,6 +666,7 @@ export function useLogStream({
     setAttempt((value) => value + 1)
   }, [])
   const [error, setError] = React.useState<string | null>(null)
+  // Monotonic IDs keep unread counts valid across retention trims and retries.
   const counterRef = React.useRef(0)
   const normalizerRef = React.useRef(createLogEntryNormalizer())
 
@@ -693,11 +712,11 @@ export function useLogStream({
 
   React.useEffect(() => {
     setLines([])
+    setProvenance(null)
     setError(null)
     setStatus("connecting")
     setSnapshotLoadedAt(null)
     setLastLineAt(null)
-    counterRef.current = 0
     normalizerRef.current = createLogEntryNormalizer()
 
     let cancelled = false
@@ -717,8 +736,8 @@ export function useLogStream({
           setStatus("error")
           return
         }
+        setProvenance(result.provenance ?? null)
         setLines([])
-        counterRef.current = 0
         normalizerRef.current = createLogEntryNormalizer()
         for (const raw of result.lines) appendLine(raw)
         flushPendingLines()
@@ -767,6 +786,29 @@ export function useLogStream({
         ws.onmessage = (ev: MessageEvent<string>) => {
           if (cancelled) return
           const text = typeof ev.data === "string" ? ev.data : String(ev.data)
+          if (text.startsWith("{")) {
+            try {
+              const message = JSON.parse(text) as Partial<LogProvenance> & {
+                type?: string
+              }
+              if (
+                message.type === "runtime.source" &&
+                Array.isArray(message.containers) &&
+                typeof message.index === "number"
+              ) {
+                const containers = message.containers.filter(
+                  (container) =>
+                    typeof container.id === "string" &&
+                    typeof container.name === "string" &&
+                    Number.isInteger(container.index)
+                )
+                setProvenance({ containers, index: message.index })
+                return
+              }
+            } catch {
+              /* A non-JSON log line is handled by the normalizer. */
+            }
+          }
           const control = controlMessageKind(text)
           if (control === "missing") {
             setError(i18n.t("apps:logs.noRuntimeContainer"))
@@ -809,6 +851,7 @@ export function useLogStream({
   ])
 
   return {
+    provenance,
     lines,
     connected: status === "live",
     status,

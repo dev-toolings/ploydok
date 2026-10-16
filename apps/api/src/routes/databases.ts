@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
+import { logContainers } from "../services/log-provenance"
 import type { MiddlewareHandler } from "hono"
 import { z } from "zod"
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm"
@@ -1021,7 +1022,12 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
           entry.stream = line.stream
         lines.push(entry)
       }
-      return c.json({ lines, containerFound: true })
+      return c.json({
+        lines,
+        containerFound: true,
+        containers: await logContainers(agent, [row.container_id]),
+        index: 0,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: "RUNTIME_LOGS_ERROR", message } }, 500)
