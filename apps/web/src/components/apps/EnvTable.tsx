@@ -2,6 +2,7 @@
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import i18n from "../../lib/i18n"
 import { MonacoEnvEditorDialog } from "./MonacoEnvEditorDialog"
 import { EnvImportDialog } from "./EnvImportDialog"
@@ -453,7 +454,7 @@ export function EnvTable({
                   >
                     {/* Key */}
                     <div className="pr-3">
-                      <input
+                      <Input
                         type="text"
                         value={row.key}
                         onChange={(e) =>
@@ -461,13 +462,8 @@ export function EnvTable({
                         }
                         placeholder="MY_VAR"
                         aria-label={t("env.variableKey")}
-                        className={[
-                          "w-full rounded-md border px-2.5 py-1.5 font-mono text-xs",
-                          "bg-background outline-none focus:ring-1",
-                          row.keyError
-                            ? "border-destructive focus:ring-destructive"
-                            : "border-border focus:border-ring focus:ring-ring",
-                        ].join(" ")}
+                        aria-invalid={Boolean(row.keyError)}
+                        className="h-auto py-1.5 font-mono text-xs md:text-xs"
                       />
                       {row.keyError && (
                         <p className="mt-1 text-[10px] text-destructive">
@@ -478,7 +474,7 @@ export function EnvTable({
 
                     {/* Value */}
                     <div className="flex items-start gap-1.5 pr-3">
-                      <input
+                      <Input
                         type={isSecret && !isRevealed ? "password" : "text"}
                         value={row.value}
                         onChange={(e) =>
@@ -486,7 +482,7 @@ export function EnvTable({
                         }
                         placeholder={isSecret ? SECRET_MASK : t("env.valuePlaceholder")}
                         aria-label={t("env.variableValue")}
-                        className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                        className="h-auto py-1.5 font-mono text-xs md:text-xs"
                       />
                       {isSecret && (
                         <button

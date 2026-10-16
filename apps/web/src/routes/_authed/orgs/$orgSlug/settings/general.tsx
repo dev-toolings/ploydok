@@ -86,7 +86,6 @@ function GeneralSettingsPage(): React.JSX.Element {
               id="ws-name"
               readOnly
               value={organization?.name ?? ""}
-              className="bg-muted/40"
             />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -95,7 +94,7 @@ function GeneralSettingsPage(): React.JSX.Element {
               id="ws-slug"
               readOnly
               value={organization?.slug ?? ""}
-              className="bg-muted/40 font-mono text-sm"
+              className="font-mono text-sm"
             />
           </div>
         </CardContent>

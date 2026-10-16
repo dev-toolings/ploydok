@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
+import { NativeSelect } from "@workspace/ui/components/native-select"
 import {
   Dialog,
   DialogContent,
@@ -143,9 +144,8 @@ export function AddDomainDialog({ onAdd, isAdding, lockReason }: AddDomainDialog
           {tlsMode === "dns01" && (
             <div className="space-y-1.5">
               <Label htmlFor="provider">{t("domains.dnsProvider")}</Label>
-              <select
+              <NativeSelect
                 id="provider"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
                 value={dns01Provider}
                 onChange={(e) => setDns01Provider(e.target.value as Dns01Provider)}
               >
@@ -154,7 +154,7 @@ export function AddDomainDialog({ onAdd, isAdding, lockReason }: AddDomainDialog
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
 
               <label className="flex items-center gap-2 text-sm">
                 <input

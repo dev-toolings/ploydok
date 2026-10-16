@@ -13,6 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@workspace/ui/components/alert-dialog"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import type { Domain } from "../../lib/apps-domains"
 
 // ---------------------------------------------------------------------------
@@ -118,13 +119,12 @@ function AddDomainRow({ isAdding, onAdd, lockReason }: AddDomainRowProps): React
       <td colSpan={3} className="px-4 py-3">
         <form onSubmit={handleSubmit} className="flex flex-col gap-1.5 sm:flex-row sm:items-start">
           <div className="flex flex-1 flex-col gap-1">
-            <input
+            <Input
               type="text"
               value={value}
               onChange={handleChange}
               placeholder={t("domains.placeholder")}
               aria-label={t("domains.newHostname")}
-              className="h-8 w-full rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               disabled={isAdding || Boolean(lockReason)}
               title={lockReason}
             />

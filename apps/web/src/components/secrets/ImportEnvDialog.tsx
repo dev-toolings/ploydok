@@ -2,6 +2,7 @@
 import * as React from "react"
 import { toast } from "sonner"
 import { Button } from "@workspace/ui/components/button"
+import { NativeSelect } from "@workspace/ui/components/native-select"
 import {
   Field,
   FieldContent,
@@ -97,36 +98,34 @@ export function ImportEnvDialog({
           <Field>
             <FieldLabel htmlFor="import-scope">Default scope</FieldLabel>
             <FieldContent>
-              <select
+              <NativeSelect
                 id="import-scope"
                 value={scope}
                 onChange={(e) => setScope(e.target.value as SecretScope)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
               >
                 {SCOPES.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </FieldContent>
           </Field>
 
           <Field>
             <FieldLabel htmlFor="import-phase">Default phase</FieldLabel>
             <FieldContent>
-              <select
+              <NativeSelect
                 id="import-phase"
                 value={phase}
                 onChange={(e) => setPhase(e.target.value as SecretPhase)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
               >
                 {PHASES.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </FieldContent>
           </Field>
 

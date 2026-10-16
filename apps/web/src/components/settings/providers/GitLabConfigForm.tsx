@@ -3,6 +3,7 @@ import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { RiExternalLinkLine, RiGitlabFill } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import type { SaveGitLabConfigPayload } from "../../../lib/gitlab"
 
 /**
@@ -167,13 +168,12 @@ function FieldInput({
   return (
     <label className="flex flex-col gap-1 text-xs">
       <span className="font-medium">{label}</span>
-      <input
+      <Input
         type={type}
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
         placeholder={placeholder}
         required={required}
-        className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
       />
       {hint ? (
         <span className="text-[11px] text-muted-foreground">{hint}</span>
