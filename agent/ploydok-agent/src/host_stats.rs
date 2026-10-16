@@ -8,23 +8,97 @@
 use ploydok_proto::HostStatsResponse;
 use std::ffi::CString;
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
-use tokio::time::sleep;
+use tokio::sync::watch;
+use tokio::time::{interval, timeout, Instant, MissedTickBehavior};
 
-/// Lit le snapshot complet host stats. Best-effort : si une lecture échoue,
-/// le champ correspondant reste à 0 et `error` accumule les messages.
-pub async fn read_host_stats() -> HostStatsResponse {
-    let mut errs: Vec<String> = Vec::new();
+type CpuJiffies = (u64, u64);
+type GpuStats = (u32, f64, u64, u64, String);
 
-    // CPU % : delta sur 100 ms.
-    let cpu_percent = match sample_cpu().await {
-        Ok(v) => v,
-        Err(e) => {
-            errs.push(format!("cpu:{e}"));
-            0.0
+/// One host sampler shared by every RPC service instance.
+pub struct HostSampler {
+    cpu_count: u32,
+    latest: watch::Sender<Option<HostStatsResponse>>,
+    gpu: watch::Sender<GpuStats>,
+}
+
+impl HostSampler {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            cpu_count: num_cpus_from_proc().unwrap_or(0),
+            latest: watch::channel(None).0,
+            gpu: watch::channel(GpuStats::default()).0,
+        })
+    }
+
+    /// Start once at agent startup. GPU work never delays the host sampling loop.
+    pub fn spawn_poll_task(self: Arc<Self>) {
+        let gpu_sampler = Arc::clone(&self);
+        tokio::spawn(async move {
+            let mut gpu = GpuSampler::new(std::env::var_os("PATH").unwrap_or_default());
+            let mut ticks = interval(Duration::from_secs(20));
+            ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                ticks.tick().await;
+                gpu_sampler.gpu.send_replace(gpu.refresh().await);
+            }
+        });
+        tokio::spawn(async move {
+            let mut previous = None;
+            let mut ticks = interval(Duration::from_secs(2));
+            ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                ticks.tick().await;
+                let cpu_count = self.cpu_count;
+                match tokio::task::spawn_blocking(move || read_host_stats(cpu_count, previous))
+                    .await
+                {
+                    Ok((mut snapshot, current)) => {
+                        previous = current;
+                        merge_gpu(&mut snapshot, self.gpu.borrow().clone());
+                        self.latest.send_replace(Some(snapshot));
+                    }
+                    Err(error) => tracing::warn!(%error, "host sampler failed"),
+                }
+            }
+        });
+    }
+
+    pub async fn snapshot(&self) -> HostStatsResponse {
+        if let Some(snapshot) = self.latest.borrow().clone() {
+            return snapshot;
         }
-    };
+        // Startup only: do not wait for a CPU interval or a GPU subprocess.
+        let cpu_count = self.cpu_count;
+        let mut snapshot =
+            match tokio::task::spawn_blocking(move || read_host_stats(cpu_count, None)).await {
+                Ok((snapshot, _)) => snapshot,
+                Err(error) => HostStatsResponse {
+                    cpu_count,
+                    error: format!("host:{error}"),
+                    ..Default::default()
+                },
+            };
+        merge_gpu(&mut snapshot, self.gpu.borrow().clone());
+        snapshot
+    }
+}
+
+/// Best-effort host read. The first observation seeds the CPU delta.
+fn read_host_stats(
+    cpu_count: u32,
+    previous: Option<CpuJiffies>,
+) -> (HostStatsResponse, Option<CpuJiffies>) {
+    let mut errs: Vec<String> = Vec::new();
+    let current = read_cpu_jiffies()
+        .map_err(|e| errs.push(format!("cpu:{e}")))
+        .ok();
+    let cpu_percent = previous.zip(current).map_or(0.0, |(previous, current)| {
+        cpu_delta_percent(previous, current)
+    });
 
     let (mem_total, mem_avail, swap_total, swap_used) = match read_meminfo() {
         Ok(v) => v,
@@ -50,15 +124,9 @@ pub async fn read_host_stats() -> HostStatsResponse {
             }
         };
 
-    let cpu_count = num_cpus_from_proc().unwrap_or(0);
     let uptime_seconds = read_uptime().unwrap_or(0);
 
-    // GPU is best-effort: no nvidia-smi / no GPU just yields zeroed fields,
-    // it must never fail the overall host-stats read.
-    let (gpu_count, gpu_utilization_pct, gpu_mem_used_bytes, gpu_mem_total_bytes, gpu_name) =
-        read_gpu_stats().await.unwrap_or_default();
-
-    HostStatsResponse {
+    let snapshot = HostStatsResponse {
         cpu_percent,
         mem_total_bytes: mem_total,
         mem_used_bytes: mem_used,
@@ -76,28 +144,22 @@ pub async fn read_host_stats() -> HostStatsResponse {
         cpu_count,
         uptime_seconds,
         error: errs.join(";"),
-        gpu_count,
-        gpu_utilization_pct,
-        gpu_mem_used_bytes,
-        gpu_mem_total_bytes,
-        gpu_name,
-    }
+        ..Default::default()
+    };
+    (snapshot, current)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // CPU sampling (/proc/stat delta)
 // ────────────────────────────────────────────────────────────────────────────
 
-async fn sample_cpu() -> Result<f64, String> {
-    let (idle1, total1) = read_cpu_jiffies()?;
-    sleep(Duration::from_millis(100)).await;
-    let (idle2, total2) = read_cpu_jiffies()?;
-    let didle = idle2.saturating_sub(idle1) as f64;
-    let dtotal = total2.saturating_sub(total1) as f64;
-    if dtotal <= 0.0 {
-        return Ok(0.0);
+fn cpu_delta_percent(previous: CpuJiffies, current: CpuJiffies) -> f64 {
+    let idle = current.0.saturating_sub(previous.0);
+    let total = current.1.saturating_sub(previous.1);
+    if total == 0 {
+        return 0.0;
     }
-    Ok(((dtotal - didle) / dtotal) * 100.0)
+    (total.saturating_sub(idle) as f64 / total as f64) * 100.0
 }
 
 fn read_cpu_jiffies() -> Result<(u64, u64), String> {
@@ -113,8 +175,9 @@ fn read_cpu_jiffies() -> Result<(u64, u64), String> {
     if vals.len() < 4 {
         return Err("/proc/stat malformed".to_string());
     }
-    let idle = vals[3] + vals.get(4).copied().unwrap_or(0); // idle + iowait
-    let total: u64 = vals.iter().sum();
+    // Idle includes iowait. Guest time is already included in user/nice.
+    let idle = vals[3] + vals.get(4).copied().unwrap_or(0);
+    let total: u64 = vals.iter().take(8).sum();
     Ok((idle, total))
 }
 
@@ -208,21 +271,70 @@ fn read_uptime() -> Result<u64, String> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GPU (host aggregate, via nvidia-smi — best-effort, no GPU is a normal case)
+// GPU (host aggregate, via nvidia-smi, best-effort, no GPU is a normal case)
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Returns (gpu_count, avg_utilization_pct, mem_used_bytes, mem_total_bytes, first_gpu_name).
-/// `None` when nvidia-smi is missing, fails to spawn, exits non-zero, or reports no GPU —
-/// callers should fall back to zeroed fields rather than failing the whole host-stats read.
-async fn read_gpu_stats() -> Option<(u32, f64, u64, u64, String)> {
-    let output = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=utilization.gpu,memory.used,memory.total,name",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .await
-        .ok()?;
+fn merge_gpu(snapshot: &mut HostStatsResponse, gpu: GpuStats) {
+    snapshot.gpu_count = gpu.0;
+    snapshot.gpu_utilization_pct = gpu.1;
+    snapshot.gpu_mem_used_bytes = gpu.2;
+    snapshot.gpu_mem_total_bytes = gpu.3;
+    snapshot.gpu_name = gpu.4;
+}
+
+fn find_nvidia_smi(search_path: &std::ffi::OsStr) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(search_path)
+        .map(|dir| dir.join("nvidia-smi"))
+        .find(|path| {
+            fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+}
+
+struct GpuSampler {
+    search_path: std::ffi::OsString,
+    executable: Option<PathBuf>,
+    next_probe: Instant,
+}
+
+impl GpuSampler {
+    fn new(search_path: std::ffi::OsString) -> Self {
+        Self {
+            executable: find_nvidia_smi(&search_path),
+            search_path,
+            next_probe: Instant::now() + Duration::from_secs(300),
+        }
+    }
+
+    async fn refresh(&mut self) -> GpuStats {
+        if Instant::now() >= self.next_probe {
+            self.executable = find_nvidia_smi(&self.search_path);
+            self.next_probe = Instant::now() + Duration::from_secs(300);
+        }
+        match self.executable.as_deref() {
+            Some(executable) => read_gpu_stats(executable).await.unwrap_or_default(),
+            None => GpuStats::default(),
+        }
+    }
+}
+
+/// A missing, failed or timed-out GPU query yields zeroed fields.
+async fn read_gpu_stats(executable: &Path) -> Option<GpuStats> {
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new(executable)
+            .kill_on_drop(true)
+            .args([
+                "--query-gpu=utilization.gpu,memory.used,memory.total,name",
+                "--format=csv,noheader,nounits",
+            ])
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
 
     if !output.status.success() {
         return None;
@@ -263,4 +375,39 @@ async fn read_gpu_stats() -> Option<(u32, f64, u64, u64, String)> {
         mem_total_bytes,
         name,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_delta_uses_elapsed_jiffies() {
+        assert_eq!(cpu_delta_percent((100, 200), (130, 300)), 70.0);
+        assert_eq!(cpu_delta_percent((100, 200), (200, 300)), 0.0);
+        assert_eq!(cpu_delta_percent((100, 200), (100, 300)), 100.0);
+    }
+
+    #[test]
+    fn cpu_delta_handles_unchanged_and_reset_counters() {
+        assert_eq!(cpu_delta_percent((100, 200), (100, 200)), 0.0);
+        assert_eq!(cpu_delta_percent((100, 200), (10, 20)), 0.0);
+        assert_eq!(cpu_delta_percent((100, 200), (250, 300)), 0.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missing_gpu_skips_queries_and_reprobes_after_five_minutes() {
+        let directory = tempfile::tempdir().expect("temporary PATH directory");
+        let mut sampler = GpuSampler::new(directory.path().as_os_str().to_owned());
+        assert!(sampler.executable.is_none());
+        let next_probe = sampler.next_probe;
+        assert_eq!(sampler.refresh().await, GpuStats::default());
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert_eq!(sampler.refresh().await, GpuStats::default());
+        assert_eq!(sampler.next_probe, next_probe);
+        tokio::time::advance(Duration::from_secs(280)).await;
+        assert_eq!(sampler.refresh().await, GpuStats::default());
+        assert!(sampler.next_probe > next_probe);
+        assert!(sampler.executable.is_none());
+    }
 }
