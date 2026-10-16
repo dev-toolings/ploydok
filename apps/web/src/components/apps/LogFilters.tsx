@@ -22,6 +22,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../i18n/dialog"
 import type { LogLevel } from "../../lib/hooks/use-log-stream"
 
 export type VolumeOption = 100 | 500 | 1000 | 5000
@@ -256,6 +264,41 @@ export function LogFilters({
         )}
         {state.paused ? t("logs.resume") : t("logs.pause")}
       </Button>
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button type="button" variant="ghost" size="sm">
+            {t("logs.shortcuts")}
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-h-[80dvh] overflow-auto font-sans">
+          <DialogHeader>
+            <DialogTitle>{t("logs.shortcuts")}</DialogTitle>
+            <DialogDescription>{t("logs.shortcutsScope")}</DialogDescription>
+          </DialogHeader>
+          <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-5 gap-y-3 text-sm">
+            {(
+              [
+                ["/", "shortcutSearch"],
+                [t("logs.escapeKey"), "shortcutEscape"],
+                ["P", "shortcutPause"],
+                ["W", "shortcutWrap"],
+                ["T", "shortcutTimestamps"],
+                ["g / G", "shortcutEdges"],
+                ["n / N", "shortcutErrors"],
+              ] as const
+            ).map(([keys, label]) => (
+              <React.Fragment key={label}>
+                <dt>
+                  <kbd className="rounded border border-panel-border bg-panel-inset px-2 py-1 font-sans">
+                    {keys}
+                  </kbd>
+                </dt>
+                <dd>{t(`logs.${label}`)}</dd>
+              </React.Fragment>
+            ))}
+          </dl>
+        </DialogContent>
+      </Dialog>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button

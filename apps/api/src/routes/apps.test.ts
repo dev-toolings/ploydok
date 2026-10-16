@@ -1963,6 +1963,7 @@ describe.skipIf(skip)("GET /apps/:id/runtime-logs", () => {
       })
       .where(eq(apps.id, appId))
 
+    let streamedContainerId = ""
     using _agentSpy = spyOn(singletons, "getSharedAgent").mockReturnValue({
       listContainers: async () => ({
         containers: [
@@ -1983,9 +1984,18 @@ describe.skipIf(skip)("GET /apps/:id/runtime-logs", () => {
             lastPingOk: false,
             lastSeenMs: Date.now(),
           },
+          {
+            id: "ctr-replica", name: "app.web.2", appId,
+            kind: "app", status: "running", lastSeenMs: 1,
+          },
+          {
+            id: "ctr-foreign", name: "other.web.1", appId: "other-app",
+            kind: "app", status: "running", lastSeenMs: 1,
+          },
         ],
       }),
-      containerLogs: async function* () {
+      containerLogs: async function* (options: { containerId: string }) {
+        streamedContainerId = options.containerId
         yield {
           stream: "stdout",
           line: "hello runtime",
@@ -2005,9 +2015,16 @@ describe.skipIf(skip)("GET /apps/:id/runtime-logs", () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       containerFound: boolean
+      containers: Array<{ id: string; name: string; index: number }>
+      index: number
       lines: Array<{ t: number; line: string; stream?: string }>
     }
     expect(body.containerFound).toBe(true)
+    expect(body.containers).toEqual([
+      { id: "ctr-runtime", name: "ploydok-app-runtime-app-blue", index: 0 },
+      { id: "ctr-replica", name: "app.web.2", index: 1 },
+    ])
+    expect(body.index).toBe(0)
     expect(body.lines).toHaveLength(2)
     expect(body.lines[0]).toEqual({
       t: Date.parse("2026-04-18T20:00:00.000Z"),
@@ -2015,6 +2032,18 @@ describe.skipIf(skip)("GET /apps/:id/runtime-logs", () => {
       stream: "stdout",
     })
     expect(body.lines[1]?.stream).toBe("stderr")
+    expect(streamedContainerId).toBe("ctr-runtime")
+    const selected = await app.request(
+      `/apps/${appId}/runtime-logs?container=ctr-replica`
+    )
+    expect(selected.status).toBe(200)
+    expect((await selected.json() as { index: number }).index).toBe(1)
+    expect(streamedContainerId).toBe("ctr-replica")
+    const denied = await app.request(
+      `/apps/${appId}/runtime-logs?container=ctr-foreign`
+    )
+    expect((await denied.json() as { containerFound: boolean }).containerFound).toBe(false)
+    expect(streamedContainerId).toBe("ctr-replica")
   })
 })
 

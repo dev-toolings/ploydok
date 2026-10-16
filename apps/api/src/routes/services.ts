@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
+import { logContainers } from "../services/log-provenance"
 import type { MiddlewareHandler } from "hono"
 import { audit_log } from "@ploydok/db"
 import { maskServiceSecrets, revealServiceSecrets } from "../services/service-secrets"
@@ -326,7 +327,12 @@ export function createServicesRouter(db: Db): Hono<any, any, any> {
           item.stream = entry.stream
         lines.push(item)
       }
-      return c.json({ lines, containerFound: true })
+      return c.json({
+        lines,
+        containerFound: true,
+        containers: await logContainers(agent, ids),
+        index: idx,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: "LOGS_ERROR", message } }, 500)

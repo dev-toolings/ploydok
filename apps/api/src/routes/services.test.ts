@@ -45,7 +45,20 @@ mock.module("../debug/singletons", () => ({
     containerStart: async () => ({}),
     containerStop: async () => ({}),
     containerRemove: async () => ({}),
-    containerLogs: async function* () {},
+    listContainers: async () => ({
+      containers: [
+        { id: "ctr-web", name: "service-web" },
+        { id: "ctr-worker", name: "service-worker" },
+        { id: "unrelated", name: "another-service" },
+      ],
+    }),
+    containerLogs: async function* (options: { containerId: string }) {
+      yield {
+        timestamp: "2026-10-16T12:00:00.000Z",
+        line: options.containerId,
+        stream: "stdout",
+      }
+    },
   }),
   getSharedCaddy: () => ({}),
 }))
@@ -177,6 +190,22 @@ describe("GET /services", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /services/:id/logs", () => {
+  it("returns the selected container's logs and observed source names in stored index order", async () => {
+    mockGetServiceForUser.mockResolvedValueOnce({
+      id: "svc-1",
+      container_ids: ["ctr-worker", "ctr-web"],
+    })
+    const res = await makeApp(makeDb()).request("/services/svc-1/logs?container=1")
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.index).toBe(1)
+    expect(body.containers).toEqual([
+      { id: "ctr-worker", name: "service-worker", index: 0 },
+      { id: "ctr-web", name: "service-web", index: 1 },
+    ])
+    expect(body.lines[0].line).toBe("ctr-web")
+  })
+
   it("returns 404 when the service is missing", async () => {
     mockGetServiceForUser.mockResolvedValueOnce(null)
     const app = makeApp(makeDb())
