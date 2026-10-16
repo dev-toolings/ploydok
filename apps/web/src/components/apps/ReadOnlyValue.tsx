@@ -24,7 +24,8 @@ export function ReadOnlyValue({
         value ? "text-foreground" : "text-muted-foreground"
       )}
     >
-      <span className="block truncate">{value || placeholder}</span>
+      {/* min-h keeps one line when there is neither a value nor a placeholder. */}
+      <span className="block min-h-5 truncate">{value || placeholder}</span>
     </div>
   )
 }
