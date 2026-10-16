@@ -12,7 +12,12 @@ import {
 } from "@remixicon/react"
 import { cn } from "@workspace/ui/lib/utils"
 import { Button } from "@workspace/ui/components/button"
-import { Input } from "@workspace/ui/components/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@workspace/ui/components/input-group"
 import { NativeSelect } from "@workspace/ui/components/native-select"
 import {
   DropdownMenu,
@@ -157,33 +162,30 @@ export function LogFilters({
       role="toolbar"
       aria-label={t("logs.filters")}
     >
-      <div className="relative flex min-w-0 basis-full items-center sm:grow sm:basis-56">
-        <RiSearchLine
-          className="pointer-events-none absolute left-2 size-4 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <Input
+      <InputGroup className="h-9 basis-full sm:grow sm:basis-56">
+        <InputGroupAddon>
+          <RiSearchLine aria-hidden="true" />
+        </InputGroupAddon>
+        <InputGroupInput
           ref={searchInputRef}
           type="search"
           value={searchDraft}
           onChange={handleSearchChange}
           placeholder={t("logs.searchPlaceholder")}
-          className="pr-9 pl-8"
           aria-label={t("logs.search")}
         />
         {searchDraft && (
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            onClick={handleClearSearch}
-            aria-label={t("logs.clearSearch")}
-            className="absolute right-0 size-9"
-          >
-            <RiCloseLine aria-hidden="true" />
-          </Button>
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              size="icon-sm"
+              onClick={handleClearSearch}
+              aria-label={t("logs.clearSearch")}
+            >
+              <RiCloseLine aria-hidden="true" />
+            </InputGroupButton>
+          </InputGroupAddon>
         )}
-      </div>
+      </InputGroup>
       <div className="flex min-w-0 items-center gap-1.5">
         <label htmlFor={volumeId} className="text-xs text-muted-foreground">
           {t("logs.lines")}

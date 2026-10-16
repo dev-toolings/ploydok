@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { cn } from "@workspace/ui/lib/utils"
 import {
   Outlet,
   createFileRoute,
@@ -26,23 +27,24 @@ function AppDetailLayout(): React.JSX.Element {
   const currentApp = app
   const isLogsRoute =
     pathname === `/apps/${appId}/logs` ||
+    pathname === `/orgs/${currentOrgSlug}/apps/${appId}/logs`
+  const isShellRoute =
     pathname === `/apps/${appId}/shell` ||
-    pathname === `/orgs/${currentOrgSlug}/apps/${appId}/logs` ||
     pathname === `/orgs/${currentOrgSlug}/apps/${appId}/shell`
 
   return (
     <div
-      className={
-        isLogsRoute
-          ? "flex min-h-0 w-full flex-1 flex-col bg-background pb-[calc(6rem+env(safe-area-inset-bottom))]"
-          : "mx-auto flex w-full max-w-[1348px] flex-1 flex-col bg-background pb-[calc(6rem+env(safe-area-inset-bottom))]"
-      }
+      className={cn(
+        "flex w-full flex-1 flex-col bg-background pb-[calc(6rem+env(safe-area-inset-bottom))]",
+        !isShellRoute && "mx-auto max-w-[1348px]",
+        (isLogsRoute || isShellRoute) && "min-h-0"
+      )}
     >
       {currentApp ? <AppBar app={currentApp} /> : null}
 
       <main
         className={
-          isLogsRoute
+          isLogsRoute || isShellRoute
             ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             : "min-w-0 flex-1"
         }
