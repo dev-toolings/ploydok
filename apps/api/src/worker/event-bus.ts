@@ -20,6 +20,7 @@ import { nanoid } from "nanoid"
 // ---------------------------------------------------------------------------
 
 export type NotificationType =
+  | "host.stats"
   | "build.started"
   | "build.succeeded"
   | "build.failed"
@@ -109,6 +110,24 @@ export class EventBus {
     event: Omit<NotificationEvent, "id" | "t"> &
       Partial<Pick<NotificationEvent, "id" | "t">>
   ): void {
+    this.deliver(channel, event, true)
+  }
+
+  /** Deliver live data without storing it in notification replay history. */
+  publishEphemeral(
+    channel: string,
+    event: Omit<NotificationEvent, "id" | "t"> &
+      Partial<Pick<NotificationEvent, "id" | "t">>
+  ): void {
+    this.deliver(channel, event, false)
+  }
+
+  private deliver(
+    channel: string,
+    event: Omit<NotificationEvent, "id" | "t"> &
+      Partial<Pick<NotificationEvent, "id" | "t">>,
+    persist: boolean
+  ): void {
     const full: NotificationEvent = {
       id: event.id ?? nanoid(),
       t: event.t ?? Date.now(),
@@ -119,13 +138,14 @@ export class EventBus {
       ...(event.data !== undefined && { data: event.data }),
     }
 
-    // Store in ring-buffer (create if missing).
-    let ring = this.rings.get(channel)
-    if (!ring) {
-      ring = new RingBuffer(RING_CAPACITY)
-      this.rings.set(channel, ring)
+    if (persist) {
+      let ring = this.rings.get(channel)
+      if (!ring) {
+        ring = new RingBuffer(RING_CAPACITY)
+        this.rings.set(channel, ring)
+      }
+      ring.push(full)
     }
-    ring.push(full)
 
     // Notify all current subscribers.
     const set = this.subs.get(channel)

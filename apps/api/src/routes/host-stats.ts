@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
+import { z } from "zod"
+import { buildHostStatsBody } from "../observability/host-stats-body"
+import {
+  hostStatsLive,
+  type HostStatsLive,
+} from "../observability/host-stats-live"
 import { eq, inArray, and } from "drizzle-orm"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
@@ -10,44 +16,6 @@ import { memberships } from "@ploydok/db"
 const log = childLogger("host-stats.routes")
 
 type AppEnv = { Variables: { user?: AuthUser } }
-
-interface HostStatsBody {
-  cpu_percent: number
-  cpu_count: number
-  mem_total_bytes: number
-  mem_used_bytes: number
-  mem_available_bytes: number
-  swap_total_bytes: number
-  swap_used_bytes: number
-  load_1: number
-  load_5: number
-  load_15: number
-  disk_total_bytes: number
-  disk_used_bytes: number
-  disk_free_bytes: number
-  inodes_total: number
-  inodes_used: number
-  uptime_seconds: number
-  gpu_count: number
-  gpu_utilization_pct: number
-  gpu_mem_used_bytes: number
-  gpu_mem_total_bytes: number
-  gpu_name: string
-  thresholds: {
-    disk_warn_pct: number
-    mem_warn_pct: number
-    load_warn_per_cpu: number
-  }
-  alerts: string[]
-  error: string
-  fetched_at: number
-}
-
-const DEFAULT_THRESHOLDS = {
-  disk_warn_pct: 85,
-  mem_warn_pct: 90,
-  load_warn_per_cpu: 1.5,
-}
 
 async function isUserAdmin(db: Db, userId: string): Promise<boolean> {
   const rows = await db
@@ -61,7 +29,10 @@ async function isUserAdmin(db: Db, userId: string): Promise<boolean> {
   return rows.length > 0
 }
 
-export function createHostStatsRouter(db: Db): Hono<AppEnv> {
+export function createHostStatsRouter(
+  db: Db,
+  live: HostStatsLive = hostStatsLive
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>()
 
   router.get("/", async (c) => {
@@ -74,60 +45,10 @@ export function createHostStatsRouter(db: Db): Hono<AppEnv> {
     }
 
     try {
-      const agent = getSharedAgent()
-      const r = await agent.hostStats({}, 5000)
-
-      const memPct =
-        r.memTotalBytes > 0
-          ? ((r.memTotalBytes - r.memAvailableBytes) /
-              Number(r.memTotalBytes)) *
-            100
-          : 0
-      const diskPct =
-        r.diskTotalBytes > 0
-          ? (Number(r.diskUsedBytes) / Number(r.diskTotalBytes)) * 100
-          : 0
-      const loadPerCpu = r.cpuCount > 0 ? r.load1 / r.cpuCount : r.load1
-
-      const alerts: string[] = []
-      if (diskPct > DEFAULT_THRESHOLDS.disk_warn_pct) {
-        alerts.push(`disk_high:${diskPct.toFixed(1)}%`)
-      }
-      if (memPct > DEFAULT_THRESHOLDS.mem_warn_pct) {
-        alerts.push(`mem_high:${memPct.toFixed(1)}%`)
-      }
-      if (loadPerCpu > DEFAULT_THRESHOLDS.load_warn_per_cpu) {
-        alerts.push(`load_high:${loadPerCpu.toFixed(2)}/cpu`)
-      }
-
-      const body: HostStatsBody = {
-        cpu_percent: r.cpuPercent,
-        cpu_count: r.cpuCount,
-        mem_total_bytes: Number(r.memTotalBytes),
-        mem_used_bytes: Number(r.memTotalBytes) - Number(r.memAvailableBytes),
-        mem_available_bytes: Number(r.memAvailableBytes),
-        swap_total_bytes: Number(r.swapTotalBytes),
-        swap_used_bytes: Number(r.swapUsedBytes),
-        load_1: r.load1,
-        load_5: r.load5,
-        load_15: r.load15,
-        disk_total_bytes: Number(r.diskTotalBytes),
-        disk_used_bytes: Number(r.diskUsedBytes),
-        disk_free_bytes: Number(r.diskFreeBytes),
-        inodes_total: Number(r.inodesTotal),
-        inodes_used: Number(r.inodesUsed),
-        uptime_seconds: Number(r.uptimeSeconds),
-        gpu_count: r.gpuCount,
-        gpu_utilization_pct: r.gpuUtilizationPct,
-        gpu_mem_used_bytes: Number(r.gpuMemUsedBytes),
-        gpu_mem_total_bytes: Number(r.gpuMemTotalBytes),
-        gpu_name: r.gpuName,
-        thresholds: DEFAULT_THRESHOLDS,
-        alerts,
-        error: r.error ?? "",
-        fetched_at: Date.now(),
-      }
-
+      const cached = live.freshSnapshot()
+      if (cached) return c.json(cached)
+      const r = await getSharedAgent().hostStats({}, 5000)
+      const body = buildHostStatsBody(r, Date.now())
       return c.json(body)
     } catch (err) {
       const msg = err instanceof Error ? err.message : "agent error"
@@ -139,6 +60,23 @@ export function createHostStatsRouter(db: Db): Hono<AppEnv> {
         503
       )
     }
+  })
+
+  const watchBody = z.object({ clientId: z.string().min(8).max(64) })
+  router.on(["POST", "DELETE"], "/watch", async (c) => {
+    const user = c.get("user")
+    if (!user) return c.json({ error: "Unauthorized" }, 401)
+    if (!(await isUserAdmin(db, user.id))) {
+      return c.json({ error: "admin_required" }, 403)
+    }
+    const parsed = watchBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid_client_id" }, 400)
+    if (c.req.method === "DELETE") {
+      live.release(user.id, parsed.data.clientId)
+      return c.body(null, 204)
+    }
+    live.renew(user.id, parsed.data.clientId)
+    return c.json({ intervalMs: 2000, leaseMs: 45000 })
   })
 
   return router

@@ -111,11 +111,15 @@ async fn main() -> anyhow::Result<()> {
     // accident of pushing `PLOYDOK_AGENT_INSECURE=1` to a prod compose file.
     assert_insecure_safe_from_process_env(insecure)?;
 
+    let host_sampler = host_stats::HostSampler::new();
+    Arc::clone(&host_sampler).spawn_poll_task();
+
     let make_svc = || {
         AgentServer::new(AgentService::new(
             docker.clone(),
             Arc::clone(&validator),
             Arc::clone(&audit_signer),
+            Arc::clone(&host_sampler),
         ))
     };
 
