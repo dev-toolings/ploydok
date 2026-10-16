@@ -557,6 +557,7 @@ pub struct AgentService {
     validator: Arc<dyn Validator>,
     /// Monitoring — background cache of container snapshots + ad-hoc ping.
     monitor: Arc<Monitor>,
+    host_sampler: Arc<crate::host_stats::HostSampler>,
     /// Audit log signer (Ed25519, persistent key).
     audit_signer: Arc<AuditSigner>,
 }
@@ -568,6 +569,7 @@ impl AgentService {
         docker: bollard::Docker,
         validator: Arc<dyn Validator>,
         audit_signer: Arc<AuditSigner>,
+        host_sampler: Arc<crate::host_stats::HostSampler>,
     ) -> Self {
         let monitor = Monitor::new(docker.clone());
         // Spawn the poll loop immediately — cache will be warm within 2s.
@@ -577,6 +579,7 @@ impl AgentService {
             validator,
             monitor,
             audit_signer,
+            host_sampler,
         }
     }
 
@@ -2280,7 +2283,7 @@ impl Agent for AgentService {
         &self,
         _request: Request<HostStatsRequest>,
     ) -> Result<Response<HostStatsResponse>, Status> {
-        let resp = crate::host_stats::read_host_stats().await;
+        let resp = self.host_sampler.snapshot().await;
         Ok(Response::new(resp))
     }
 
@@ -2581,8 +2584,7 @@ impl Agent for AgentService {
             let replace = latest_by_slot
                 .get(&key)
                 .map(|current: &bollard::models::ContainerSummary| {
-                    container.created.unwrap_or(i64::MIN)
-                        > current.created.unwrap_or(i64::MIN)
+                    container.created.unwrap_or(i64::MIN) > current.created.unwrap_or(i64::MIN)
                 })
                 .unwrap_or(true);
             if replace {
