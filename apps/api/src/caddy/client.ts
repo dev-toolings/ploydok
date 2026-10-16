@@ -312,7 +312,7 @@ export class CaddyClient {
         ...config.logging,
         logs: { ...logs, [REQUEST_LOGGER]: requestLogOutput },
       }
-      await this.putOrFail("/config/logging", next, "request logging")
+      await this.setRequestLogConfig("/config/logging", next)
     }
     for (const [name, server] of Object.entries(
       config.apps?.http?.servers ?? {}
@@ -327,10 +327,9 @@ export class CaddyClient {
         : [...new Set([...currentHosts, ...hosts])]
       const nextLogs = requestServerLogs(server, selected)
       if (JSON.stringify(server.logs) !== JSON.stringify(nextLogs)) {
-        await this.putOrFail(
+        await this.setRequestLogConfig(
           `/config/apps/http/servers/${name}/logs`,
-          nextLogs,
-          "server request logging"
+          nextLogs
         )
       }
       const nextRoutes = (server.routes ?? []).map((route) =>
@@ -356,6 +355,20 @@ export class CaddyClient {
           )
       }
     }
+  }
+
+  private async setRequestLogConfig(
+    path: string,
+    body: unknown
+  ): Promise<void> {
+    // Caddy PUT strictly creates object keys. POST also replaces existing keys.
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok)
+      throw new Error(`Caddy request logging update failed: ${res.status}`)
   }
 
   /**

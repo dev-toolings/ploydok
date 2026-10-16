@@ -35,7 +35,7 @@ function startServer(): string {
         } catch {
           body = text
         }
-        const result = req.method === "PUT" && (url.pathname === "/config/logging" || url.pathname.endsWith("/logs"))
+        const result = req.method === "POST" && (url.pathname === "/config/logging" || url.pathname.endsWith("/logs"))
           ? { status: 200, body: null }
           : handler({ method: req.method, path: url.pathname, body })
         return new Response(

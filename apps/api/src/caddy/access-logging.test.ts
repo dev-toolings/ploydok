@@ -80,6 +80,11 @@ it("reinstalls logging on all HTTP servers after a base-config restart, preservi
   globalThis.fetch = (async (input, options) => {
     const path = new URL(String(input)).pathname
     if (!options?.method) return Response.json(config)
+    if (
+      (path === "/config/logging" || path.endsWith("/logs")) &&
+      options.method !== "POST"
+    )
+      return new Response(null, { status: 409 })
     writes.push({ path, body: JSON.parse(String(options.body)) })
     return new Response(null, { status: 200 })
   }) as typeof fetch
@@ -117,6 +122,11 @@ it("serializes app-route writes so concurrent apps retain both logger mappings",
     const server = config.apps!.http!.servers!.srv0!
     if (!options?.method)
       return Response.json(path.endsWith("/routes") ? server.routes : config)
+    if (
+      (path === "/config/logging" || path.endsWith("/logs")) &&
+      options.method !== "POST"
+    )
+      return new Response(null, { status: 409 })
     const body = JSON.parse(String(options.body))
     if (path === "/config/logging") config.logging = body
     if (path.endsWith("/logs")) server.logs = body
