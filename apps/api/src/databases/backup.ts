@@ -104,9 +104,7 @@ async function prepareBackup(
     `${config.s3_prefix ? `${config.s3_prefix.replace(/\/$/, "")}/` : ""}${databaseId}/${filename}`,
     () =>
       path.join(
-        env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
-        "..",
-        "backups",
+        env.PLOYDOK_LOCAL_BACKUP_DIR,
         databaseId,
         filename
       )

@@ -226,6 +226,15 @@ require_monitoring_assets() {
     }
 }
 
+require_local_backup_mount() {
+  local descriptor="$1"
+  [[ -d "$(real_path "$DATA_DIR/local-backups")" ]] &&
+    grep -Fq '/local-backups:/var/lib/ploydok/local-backups' "$descriptor" || {
+      echo "local backup storage migration required; rerun the signed installer for this release before upgrade" >&2
+      exit 2
+    }
+}
+
 test_alert_receiver() {
   local receiver_file payload api_payload runtime descriptor env_file compose alertmanager_id prometheus_id
   receiver_file="$(real_path "$DATA_DIR/secrets/alert-webhook-url")"
@@ -520,6 +529,7 @@ EOF
       : "${PLOYDOK_PG_PASSWORD:?missing PostgreSQL password}" "${PLOYDOK_REDIS_PASSWORD:?missing Redis password}"
     fi
     require_monitoring_assets "$descriptor"
+    require_local_backup_mount "$descriptor"
     run chmod 0400 \
       "$(real_path "$DATA_DIR/secrets/metrics-token")" \
       "$(real_path "$DATA_DIR/secrets/alert-webhook-url")"
