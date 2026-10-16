@@ -43,16 +43,6 @@ export function extractAppName(
   return data?.app?.name ?? null
 }
 
-export function extractAppStatus(
-  matches: ReadonlyArray<MatchWithLoader>
-): string | null {
-  const appMatch = findAppMatch(matches)
-  if (!appMatch) return null
-  const data = appMatch.loaderData as
-    { app?: { status?: string | null } } | undefined
-  return data?.app?.status ?? null
-}
-
 function normalizePathname(pathname: string): string {
   if (!pathname || pathname === "/") return "/"
   return pathname.endsWith("/") ? pathname.slice(0, -1) || "/" : pathname

@@ -79,7 +79,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../i18n/dialog"
-import { resolveDisplayedAppState } from "../../lib/app-runtime"
 import { useApp } from "../../lib/apps"
 import { useLogout, useSessionMe } from "../../lib/auth"
 import {
@@ -88,7 +87,6 @@ import {
 } from "../../lib/hooks/command-palette-context"
 import { usePendingAction } from "../../lib/hooks/use-pending-action"
 import { useUnseenRelease } from "../../lib/hooks/use-unseen-release"
-import { useMonitoring } from "../../lib/monitoring"
 import {
   organizationDashboardPath,
   organizationPath,
@@ -98,7 +96,6 @@ import {
   useCurrentOrganizationSlug,
   useOrganizations,
 } from "../../lib/organizations"
-import { AppStatusBadge } from "../apps/AppStatusBadge"
 import { useTheme } from "../theme/ThemeToggle"
 import { CommandBar, detectMac } from "./CommandBar"
 import { CommandPaletteRoot } from "./CommandPalette"
@@ -106,10 +103,9 @@ import { NotificationBell } from "./NotificationBell"
 import {
   extractAppId,
   extractAppName,
-  extractAppStatus,
   resolveTopbarBreadcrumb,
 } from "./topbar-breadcrumb"
-import type { AppStatus, OrganizationSummary } from "@ploydok/shared"
+import type { OrganizationSummary } from "@ploydok/shared"
 
 interface AppShellProps {
   children: React.ReactNode
@@ -1403,12 +1399,7 @@ function TopbarBreadcrumb(): React.JSX.Element | null {
 
   const appId = extractAppId(matches)
   const { data: liveApp } = useApp(appId ?? "", { subscribeToEvents: false })
-  const { data: monitoring } = useMonitoring({
-    enabled: Boolean(appId && liveApp),
-  })
   const appName = liveApp?.name ?? extractAppName(matches)
-  const appRuntime = resolveDisplayedAppState(liveApp, monitoring?.containers)
-  const appStatus = appRuntime.status ?? extractAppStatus(matches)
   const items = resolveTopbarBreadcrumb(pathname, appName, orgSlug)
   if (items.length === 0) return null
 
@@ -1440,13 +1431,6 @@ function TopbarBreadcrumb(): React.JSX.Element | null {
           </React.Fragment>
         )
       })}
-      {appStatus ? (
-        <AppStatusBadge
-          status={appStatus as AppStatus}
-          health={appRuntime.health}
-          className="ml-1.5"
-        />
-      ) : null}
     </nav>
   )
 }

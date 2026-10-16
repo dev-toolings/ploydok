@@ -4,7 +4,6 @@ import {
 
   extractAppId,
   extractAppName,
-  extractAppStatus,
   resolveTopbarBreadcrumb
 } from "../../../components/layout/topbar-breadcrumb"
 import type {MatchWithLoader} from "../../../components/layout/topbar-breadcrumb";
@@ -64,19 +63,6 @@ describe("extractAppName", () => {
 
   it("returns null when there is no app loader match", () => {
     expect(extractAppName([])).toBeNull()
-  })
-})
-
-describe("extractAppStatus", () => {
-  it("reads the app status from the app layout loader data", () => {
-    const matches: Array<MatchWithLoader> = [
-      {
-        routeId: "/_authed/orgs/$orgSlug/apps/$id",
-        loaderData: { app: { status: "building" } },
-      },
-    ]
-
-    expect(extractAppStatus(matches)).toBe("building")
   })
 })
 
