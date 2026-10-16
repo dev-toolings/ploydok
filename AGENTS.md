@@ -310,7 +310,9 @@ Live terminal procedure:
 
 1. Find the target: `orca terminal list` (the preview shows the Codex, Claude
    or Grok TUI and its cwd).
-2. Write the order to a file, then send it:
+2. Once the target is idle, send `/clear` (Codex and Grok both support it;
+   check that the context counter drops) so every order starts from a fresh
+   context. Write the order to a file, then send it:
    `orca terminal send --terminal <handle> --enter --wait-submit 10 --text "$(cat /tmp/order.txt)"`.
    The order states who sends it and on whose behalf, the ordered tasks, the
    rules (Git Workflow above, validations, no push), the report format, and
