@@ -457,7 +457,7 @@ export function BuildLogDrawer({
               buildId={buildId}
               archiveOnly={isTerminalBuild}
               appName={appName}
-              className="h-full min-h-[500px]"
+              className="max-h-full"
             />
           )}
         </div>
