@@ -5,6 +5,7 @@ import postgres from "postgres"
 import { drizzle } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import { app } from "./app"
+import { createApiFetch } from "./bun-fetch"
 import { env } from "./env"
 import { wsHandler } from "./routes/ws"
 import { getSharedCaddy, getSharedAgent } from "./debug/singletons.js"
@@ -266,10 +267,7 @@ if (import.meta.main) {
   // heartbeat. Per-request sockets are still closed on client abort.
   const server = Bun.serve({
     port: env.PORT,
-    fetch: (request, server) =>
-      app.fetch(request, {
-        remoteAddress: server.requestIP(request)?.address,
-      } as never),
+    fetch: createApiFetch(app),
     websocket: wsHandler,
     idleTimeout: 0,
   })

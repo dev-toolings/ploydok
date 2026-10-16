@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
+import type { ApiBindings } from "./bun-fetch"
 import { HTTPException } from "hono/http-exception"
 import { cors } from "hono/cors"
 import { nanoid } from "nanoid"
@@ -129,7 +130,7 @@ const db = createDb(env.DATABASE_URL)
 // ---------------------------------------------------------------------------
 
 type AppVariables = { reqId: string; user?: AuthUser }
-export const app = new Hono<{ Variables: AppVariables }>()
+export const app = new Hono<{ Bindings: ApiBindings; Variables: AppVariables }>()
 
 // 1. Logger middleware global — loggue toutes les requêtes, même en cas de throw.
 //    Injecte un req_id pour corréler logs + réponse (header `x-request-id`).

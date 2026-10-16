@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { app } from "./app";
+import { createApiFetch } from "./bun-fetch";
+import { wsHandler } from "./routes/ws";
 
 // e2e: démarre un vrai Bun.serve sur un port aléatoire et envoie des requêtes HTTP.
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl = "";
 
 beforeAll(() => {
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = Bun.serve({
+    port: 0,
+    fetch: createApiFetch(app),
+    websocket: wsHandler,
+  });
   baseUrl = `http://127.0.0.1:${server.port}`;
 });
 
