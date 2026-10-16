@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { Trans, useTranslation } from "react-i18next"
 import {
   RiArrowDownLine,
   RiArrowUpLine,
@@ -8,6 +8,7 @@ import {
   RiMoreLine,
   RiPauseLine,
   RiPlayLine,
+  RiQuestionLine,
   RiSearchLine,
 } from "@remixicon/react"
 import { cn } from "@workspace/ui/lib/utils"
@@ -192,10 +193,54 @@ export function LogFilters({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="app">{t("logs.sourceApp")}</SelectItem>
-              <SelectItem value="requests">{t("logs.sourceRequests")}</SelectItem>
+              <SelectItem value="requests">
+                {t("logs.sourceRequests")}
+              </SelectItem>
               <SelectItem value="all">{t("logs.sourceAll")}</SelectItem>
             </SelectContent>
           </Select>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("logs.sourceHelp")}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <RiQuestionLine aria-hidden="true" />
+              </Button>
+            </DialogTrigger>
+            <DialogContent
+              className="max-h-[80dvh] overflow-auto font-sans sm:max-w-lg"
+              aria-describedby={undefined}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <DialogHeader>
+                <DialogTitle>{t("logs.sourceHelpTitle")}</DialogTitle>
+              </DialogHeader>
+              <dl className="space-y-4 text-sm leading-relaxed">
+                {(
+                  [
+                    ["sourceApp", "sourceHelpApp"],
+                    ["sourceRequests", "sourceHelpRequests"],
+                    ["sourceAll", "sourceHelpAll"],
+                  ] as const
+                ).map(([label, description]) => (
+                  <div key={label}>
+                    <dt className="font-medium">{t(`logs.${label}`)}</dt>
+                    <dd className="mt-1 text-muted-foreground">
+                      <Trans
+                        t={t}
+                        i18nKey={`logs.${description}`}
+                        components={{ code: <code className="font-mono" /> }}
+                      />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
       <InputGroup className="h-9 basis-full sm:grow sm:basis-56">
