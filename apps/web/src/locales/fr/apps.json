@@ -657,8 +657,6 @@
     "downloadLogs": "Télécharger les journaux",
     "live": "En direct",
     "disconnected": "Déconnecté",
-    "err": "err",
-    "warnShort": "warn",
     "linesCount_zero": "Aucune ligne",
     "linesCount_one": "{{count}} ligne",
     "linesCount_other": "{{count}} lignes",
@@ -688,8 +686,6 @@
     "buildLogs": "Journaux de build",
     "buildNamed": "Build {{id}} · {{name}}",
     "buildOnly": "Build {{id}}",
-    "wsUnavailableArchive": "WebSocket indisponible: chargement des journaux archivés…",
-    "wsUnavailableRuntime": "WebSocket indisponible: chargement des journaux runtime récents…",
     "noRuntimeContainer": "Aucun conteneur runtime trouvé",
     "loadFailed": "Impossible de charger les journaux",
     "loadFailedStatus": "Impossible de charger les journaux ({{status}})"

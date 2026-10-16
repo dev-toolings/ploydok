@@ -657,8 +657,6 @@
     "downloadLogs": "Download logs",
     "live": "Live",
     "disconnected": "Disconnected",
-    "err": "err",
-    "warnShort": "warn",
     "linesCount_zero": "No lines",
     "linesCount_one": "{{count}} line",
     "linesCount_other": "{{count}} lines",
@@ -688,8 +686,6 @@
     "buildLogs": "Build logs",
     "buildNamed": "Build {{id}} · {{name}}",
     "buildOnly": "Build {{id}}",
-    "wsUnavailableArchive": "WebSocket unavailable: loading archived logs…",
-    "wsUnavailableRuntime": "WebSocket unavailable: loading recent runtime logs…",
     "noRuntimeContainer": "No runtime container found",
     "loadFailed": "Failed to load logs",
     "loadFailedStatus": "Failed to load logs ({{status}})"
