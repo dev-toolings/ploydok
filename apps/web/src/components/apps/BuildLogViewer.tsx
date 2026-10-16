@@ -291,11 +291,19 @@ function LogViewerContent({
   const [displayLines, setDisplayLines] =
     React.useState<Array<LogLineData>>(lines)
   const [selecting, setSelecting] = React.useState(false)
+  const selectingRef = React.useRef(false)
+  const updateSelecting = React.useCallback((next: boolean) => {
+    if (selectingRef.current === next) return
+    selectingRef.current = next
+    setSelecting(next)
+  }, [])
   const latestLineId = lines.at(-1)?.id ?? 0
 
   React.useEffect(() => {
-    if (!filters.paused && !selecting) setDisplayLines(lines)
-  }, [lines, filters.paused, selecting])
+    if (!filters.paused && !selecting && displayLines !== lines) {
+      setDisplayLines(lines)
+    }
+  }, [lines, displayLines, filters.paused, selecting])
 
   const handleFiltersChange = React.useCallback(
     (next: Partial<LogFiltersState>) => {
@@ -338,9 +346,24 @@ function LogViewerContent({
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const logBodyRef = React.useRef<HTMLDivElement>(null)
   const followRef = React.useRef(true)
-  const [awayFromBottom, setAwayFromBottom] = React.useState(false)
-  const [hasOverflow, setHasOverflow] = React.useState(false)
+  const [scrollState, setScrollState] = React.useState({
+    awayFromBottom: false,
+    hasOverflow: false,
+  })
+  const { awayFromBottom, hasOverflow } = scrollState
+  const scrollStateRef = React.useRef(scrollState)
   const detachLineCountRef = React.useRef(0)
+  const followInputsRef = React.useRef({
+    paused: filters.paused,
+    displayedLineId: displayLines.at(-1)?.id ?? 0,
+  })
+  // Observers read committed inputs without being reinstalled for each line.
+  React.useLayoutEffect(() => {
+    followInputsRef.current = {
+      paused: filters.paused,
+      displayedLineId: displayLines.at(-1)?.id ?? 0,
+    }
+  }, [displayLines, filters.paused])
 
   const hasSelection = React.useCallback(() => {
     const selection = window.getSelection()
@@ -363,34 +386,40 @@ function LogViewerContent({
     (catchUp = false) => {
       const el = scrollRef.current
       if (!el) return
+      const { paused, displayedLineId } = followInputsRef.current
       if (
         catchUp &&
         followRef.current &&
-        !filters.paused &&
+        !paused &&
         !selectionActive()
       ) {
-        el.scrollTop = el.scrollHeight
+        const bottom = Math.max(0, el.scrollHeight - el.clientHeight)
+        if (el.scrollTop !== bottom) el.scrollTop = bottom
       }
       const overflow = el.scrollHeight > el.clientHeight
       const away =
         overflow && el.scrollHeight - el.scrollTop - el.clientHeight > 50
-      setHasOverflow(overflow)
-      setAwayFromBottom(away)
-      if (away || filters.paused) {
+      const previous = scrollStateRef.current
+      if (previous.hasOverflow !== overflow || previous.awayFromBottom !== away) {
+        const next = { hasOverflow: overflow, awayFromBottom: away }
+        scrollStateRef.current = next
+        setScrollState(next)
+      }
+      if (away || paused) {
         if (followRef.current) {
-          detachLineCountRef.current = displayLines.at(-1)?.id ?? 0
+          detachLineCountRef.current = displayedLineId
         }
         followRef.current = false
       } else {
         followRef.current = true
       }
     },
-    [displayLines, filters.paused, selectionActive]
+    [selectionActive]
   )
 
   React.useEffect(() => {
     const updateSelection = () => {
-      setSelecting(selectionActive())
+      updateSelecting(selectionActive())
       syncFollowState()
     }
     const endPointer = () => {
@@ -407,12 +436,15 @@ function LogViewerContent({
       window.removeEventListener("pointerup", endPointer)
       window.removeEventListener("pointercancel", endPointer)
     }
-  }, [selectionActive, syncFollowState])
+  }, [selectionActive, syncFollowState, updateSelecting])
 
   const scrollToBottom = React.useCallback(() => {
     if (selectionActive()) return
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el) {
+      const bottom = Math.max(0, el.scrollHeight - el.clientHeight)
+      if (el.scrollTop !== bottom) el.scrollTop = bottom
+    }
   }, [selectionActive])
 
   const scrollToTop = React.useCallback(() => {
@@ -430,16 +462,16 @@ function LogViewerContent({
 
   React.useLayoutEffect(() => {
     syncFollowState(true)
-  }, [syncFollowState])
+  }, [filtered, filters.paused, selecting, syncFollowState])
 
   const handleFollowLatest = React.useCallback(() => {
     if (selectionActive()) return
     setFilters({ paused: false })
-    setDisplayLines(lines)
+    if (displayLines !== lines) setDisplayLines(lines)
     followRef.current = true
-    setAwayFromBottom(false)
     scrollToBottom()
-  }, [scrollToBottom, selectionActive, lines, setFilters])
+    // Measure after the resumed buffer and paused flag have committed.
+  }, [displayLines, scrollToBottom, selectionActive, lines, setFilters])
 
   React.useEffect(() => {
     const logBody = logBodyRef.current
@@ -717,7 +749,7 @@ function LogViewerContent({
           onPointerDown={(event) => {
             if (event.button !== 0) return
             pointerSelectingRef.current = true
-            setSelecting(true)
+            updateSelecting(true)
           }}
           className={cn(
             "min-h-0 overflow-auto text-xs",
