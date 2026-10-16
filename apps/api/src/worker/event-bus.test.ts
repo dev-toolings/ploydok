@@ -171,3 +171,18 @@ describe("EventBus — auto-generated fields", () => {
     expect(event!.t).toBe(1000)
   })
 })
+
+test("ephemeral events reach subscribers but never displace notification replay", () => {
+  const bus = new EventBus()
+  const received: string[] = []
+  bus.subscribe("user:u1", () => { throw new Error("subscriber failure") })
+  bus.subscribe("user:u1", (event) => { received.push(event.id) })
+  bus.publish("user:u1", makeEvent({ id: "saved" }))
+  for (let i = 0; i < 60; i++) {
+    bus.publishEphemeral("user:u1", { type: "host.stats", message: "", id: `live-${i}`, t: 1000, data: { cpu_count: 4 } })
+  }
+  expect(received).toHaveLength(61)
+  expect(bus.replay("user:u1").map((e) => e.id)).toEqual(["saved"])
+  bus.publishEphemeral("user:u2", { type: "host.stats", message: "" })
+  expect(bus.replay("user:u2")).toEqual([])
+})
