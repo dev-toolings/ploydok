@@ -11,11 +11,14 @@ function AppLogsTab(): React.JSX.Element {
   const { data: app } = useApp(appId)
 
   return (
-    <BuildLogViewer
-      appId={appId}
-      appName={app?.name}
-      className="mt-4 max-h-[calc(100%-1rem)]"
-    />
+    <div className="flex min-h-0 flex-1 flex-col px-4 pt-4 md:px-8">
+      <BuildLogViewer
+        appId={appId}
+        appName={app?.name}
+        fillHeight
+        className="min-h-[min(420px,100%)] flex-1"
+      />
+    </div>
   )
 }
 

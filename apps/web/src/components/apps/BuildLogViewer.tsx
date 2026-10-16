@@ -26,6 +26,8 @@ export interface LogViewerProps {
   /** Optional resource name for the download filename and title bar */
   resourceName?: string
   className?: string
+  /** Fill the parent height only for the full-page runtime tab. */
+  fillHeight?: boolean
 }
 
 interface BuildLogViewerProps {
@@ -37,6 +39,8 @@ interface BuildLogViewerProps {
   /** Optional app name for the download filename and title bar */
   appName?: string
   className?: string
+  /** Fill the parent height only for the full-page runtime tab. */
+  fillHeight?: boolean
 }
 
 function TitleBar({
@@ -189,15 +193,17 @@ function FollowButton({
   const { t } = useTranslation("apps")
   if (!visible) return null
   return (
-    <button
+    <Button
       type="button"
+      variant="default"
+      size="lg"
       onClick={onClick}
-      className="absolute right-4 bottom-4 left-4 mx-auto flex min-h-11 w-fit max-w-[calc(100%-2rem)] items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
+      className="absolute right-4 bottom-4 left-4 mx-auto w-fit max-w-[calc(100%-2rem)] rounded-full text-xs whitespace-normal shadow-lg"
       title={t("logs.returnToLive", { count: newCount })}
     >
-      <RiArrowDownLine className="size-3.5" aria-hidden="true" />
+      <RiArrowDownLine aria-hidden="true" />
       {t("logs.returnToLive", { count: newCount })}
-    </button>
+    </Button>
   )
 }
 
@@ -258,6 +264,7 @@ function LogViewerContent({
   source,
   resourceName,
   className,
+  fillHeight = false,
   onContainerChange,
 }: LogViewerProps & {
   onContainerChange?: (index: number, id: string) => void
@@ -673,6 +680,7 @@ function LogViewerContent({
       />
 
       <LogFilters
+        className={fillHeight ? "shrink-0" : undefined}
         state={filters}
         onChange={handleFiltersChange}
         onDownload={handleDownload}
@@ -683,7 +691,12 @@ function LogViewerContent({
         searchInputRef={searchInputRef}
       />
 
-      <div className="relative flex min-h-0 flex-col overflow-hidden">
+      <div
+        className={cn(
+          "relative flex min-h-0 flex-col overflow-hidden",
+          fillHeight && "flex-1"
+        )}
+      >
         <div
           ref={scrollRef}
           onScroll={handleScroll}
@@ -695,11 +708,15 @@ function LogViewerContent({
           }}
           className={cn(
             "min-h-0 overflow-auto text-xs",
+            fillHeight && "flex-1 overscroll-contain",
             filtered.length > 0
               ? "bg-[#0d0d0d] font-mono"
               : "bg-panel font-sans"
           )}
-          style={{ maxHeight: maxBodyHeight, overflowAnchor: "none" }}
+          style={{
+            maxHeight: fillHeight ? undefined : maxBodyHeight,
+            overflowAnchor: "none",
+          }}
           role="log"
           aria-live="polite"
           aria-label={t("logs.output", { title })}
@@ -787,11 +804,13 @@ export function BuildLogViewer({
   archiveOnly,
   appName,
   className,
+  fillHeight,
 }: BuildLogViewerProps): React.JSX.Element {
   return (
     <LogViewer
       source={{ kind: "app", resourceId: appId, buildId, archiveOnly }}
       resourceName={appName}
+      fillHeight={fillHeight}
       className={className}
     />
   )
