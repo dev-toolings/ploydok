@@ -2,7 +2,13 @@
 import * as React from "react"
 import { RiArrowDownLine } from "@remixicon/react"
 import { useTranslation } from "react-i18next"
-import { NativeSelect } from "@workspace/ui/components/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 import {
@@ -131,24 +137,33 @@ function TitleBar({
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-muted-foreground">
               <span>{t("logs.container")}</span>
               {onContainerChange && provenance.containers.length > 1 ? (
-                <NativeSelect
-                  aria-label={t("logs.container")}
-                  value={provenance.index}
-                  onChange={(event) => {
+                <Select
+                  value={String(provenance.index)}
+                  onValueChange={(value) => {
                     const container = provenance.containers.find(
-                      (item) => item.index === Number(event.target.value)
+                      (item) => item.index === Number(value)
                     )
                     if (container)
                       onContainerChange(container.index, container.id)
                   }}
-                  className="w-full min-w-0 sm:w-auto sm:max-w-sm"
                 >
-                  {provenance.containers.map((container) => (
-                    <option key={container.index} value={container.index}>
-                      {container.name}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  <SelectTrigger
+                    aria-label={t("logs.container")}
+                    className="h-9 w-full min-w-0 sm:w-auto sm:max-w-sm"
+                  >
+                    <SelectValue className="truncate" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {provenance.containers.map((container) => (
+                      <SelectItem
+                        key={container.index}
+                        value={String(container.index)}
+                      >
+                        {container.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               ) : (
                 <span className="font-mono break-all">
                   {
@@ -588,9 +603,17 @@ function LogViewerContent({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
+      // Select typeahead and Escape belong to Radix, including its portal.
       if (
         !target ||
+        e.defaultPrevented ||
         !containerRef.current?.contains(target) ||
+        target.closest(
+          '[data-slot="select-trigger"], [data-slot="select-content"]'
+        ) ||
+        containerRef.current.querySelector(
+          '[data-slot="select-trigger"][data-state="open"]'
+        ) ||
         e.ctrlKey ||
         e.metaKey ||
         e.altKey
