@@ -94,6 +94,9 @@ export function notificationsReducer(
     }
 
     case "push": {
+      // host.stats is a 2s telemetry frame. It shares the user channel with
+      // notifications but must not enter the bell or bump the unread count.
+      if ((action.payload.type as string) === "host.stats") return state
       // Dedup by event id — SSE replay on reconnect can re-deliver the same
       // event, and a future at-least-once bus would too.
       if (state.items.some((it) => it.id === action.payload.id)) return state
@@ -197,6 +200,8 @@ export function useNotifications(): {
   useEventsSubscription<NotificationEvent>("container.health", push, true, {
     replay: true,
   })
+  // host.stats is continuous telemetry for the host cards. Do not subscribe:
+  // the reducer also drops it, so a generic fan-out cannot count it.
   // provider.sync.progress is intentionally NOT subscribed: it fires once per
   // page (potentially dozens per sync) and would flood the bell. The dialog
   // consumes it directly.

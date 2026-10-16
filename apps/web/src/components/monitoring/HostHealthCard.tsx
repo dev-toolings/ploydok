@@ -37,6 +37,12 @@ function pctClass(pct: number): string {
   return "text-foreground"
 }
 
+function fillClass(pct: number): string {
+  if (pct >= PCT_CRIT) return "bg-destructive"
+  if (pct >= PCT_WARN) return "bg-amber-500"
+  return "bg-emerald-500"
+}
+
 export function HostHealthCard(): React.JSX.Element {
   const { t } = useTranslation("monitoring")
   const { data, isLoading, error } = useHostStats()
@@ -124,6 +130,8 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
           label={t("host.cpu")}
           value={`${data.cpu_percent.toFixed(1)}%`}
           sub={t("cores", { count: data.cpu_count })}
+          fill={data.cpu_percent}
+          fillClassName={fillClass(data.cpu_percent)}
         />
         <Cell
           icon={RiServerLine}
@@ -131,6 +139,8 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
           value={`${memPct.toFixed(0)}%`}
           sub={`${formatBytes(data.mem_used_bytes)} / ${formatBytes(data.mem_total_bytes)}`}
           accent={pctClass(memPct)}
+          fill={memPct}
+          fillClassName={fillClass(memPct)}
         />
         <Cell
           icon={RiHardDriveLine}
@@ -138,6 +148,8 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
           value={`${diskPct.toFixed(0)}%`}
           sub={`${formatBytes(data.disk_used_bytes)} / ${formatBytes(data.disk_total_bytes)} · ${t("host.inodes", { pct: inodesPct.toFixed(0) })}`}
           accent={pctClass(diskPct)}
+          fill={diskPct}
+          fillClassName={fillClass(diskPct)}
         />
         <Cell
           icon={RiPulseLine}
@@ -151,6 +163,18 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
                 ? "text-amber-600 dark:text-amber-400"
                 : undefined
           }
+          fill={
+            thresholds.load_warn_per_cpu > 0
+              ? (loadPerCpu / thresholds.load_warn_per_cpu) * 100
+              : 0
+          }
+          fillClassName={
+            loadPerCpu > thresholds.load_warn_per_cpu
+              ? "bg-destructive"
+              : loadPerCpu > thresholds.load_warn_per_cpu * 0.66
+                ? "bg-amber-500"
+                : "bg-emerald-500"
+          }
         />
         {data.gpu_count > 0 ? (
           <Cell
@@ -158,6 +182,8 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
             label={t("host.gpu")}
             value={`${data.gpu_utilization_pct.toFixed(0)}%`}
             sub={`${formatBytes(data.gpu_mem_used_bytes)} / ${formatBytes(data.gpu_mem_total_bytes)}${data.gpu_name ? ` · ${data.gpu_name}` : ""}${data.gpu_count > 1 ? ` · ${data.gpu_count} GPUs` : ""}`}
+            fill={data.gpu_utilization_pct}
+            fillClassName={fillClass(data.gpu_utilization_pct)}
           />
         ) : null}
       </dl>
@@ -183,13 +209,19 @@ function Cell({
   value,
   sub,
   accent,
+  fill,
+  fillClassName,
 }: {
   icon: React.ComponentType<{ className?: string }>
   label: string
   value: string
   sub?: string
   accent?: string
+  fill?: number
+  fillClassName?: string
 }): React.JSX.Element {
+  const clamped =
+    fill === undefined ? undefined : Math.min(100, Math.max(0, fill))
   return (
     <div className="flex flex-col gap-1 px-4 py-3">
       <dt className="flex items-center gap-1.5 font-sans text-xs text-muted-foreground">
@@ -201,6 +233,17 @@ function Cell({
       </dd>
       {sub ? (
         <p className="font-sans text-[10px] text-muted-foreground">{sub}</p>
+      ) : null}
+      {clamped !== undefined ? (
+        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
+              fillClassName
+            )}
+            style={{ width: `${clamped}%` }}
+          />
+        </div>
       ) : null}
     </div>
   )
