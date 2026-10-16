@@ -69,6 +69,11 @@ Un deploy statique écrit dans `PLOYDOK_STATIC_ROOT` et publie
   sinon. En prod `HOME` vaut `/` (uid numérique) sur un rootfs `read_only` —
   un default dérivé du home y serait non inscriptible, d'où le pin explicite
   dans le `.env` généré par `installer/install.sh`.
+- Les sauvegardes vers la destination « Disque de ce serveur » vont dans
+  `PLOYDOK_LOCAL_BACKUP_DIR` (`/var/lib/ploydok/local-backups` en prod, monté
+  en écriture dans l'API ; `~/.ploydok-dev/local-backups` en dev). Ne pas monter
+  tout `backups/` dans l'API : il contient les dumps pré-upgrade et les marqueurs
+  d'alerte du control-plane, montés en lecture seule.
 - Un défaut de permission sur ces racines est **fatal**, pas transient
   (`apps/api/src/worker/errors.ts`) : rejouer le build ne répare pas un mount.
 

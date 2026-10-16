@@ -589,9 +589,7 @@ export function createStorageDestinationsRouter(db: Db): Hono<AppEnv> {
         }
       } else {
         const root = path.join(
-          env.PLOYDOK_BUILD_DIR,
-          "..",
-          "backups",
+          env.PLOYDOK_LOCAL_BACKUP_DIR,
           ".destination-tests"
         )
         const witness = path.join(

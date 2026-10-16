@@ -119,9 +119,7 @@ async function prepareVolumeBackup(
     buildVolumeS3Key(config.s3_prefix, appId, volumeId, filename),
     () =>
       path.join(
-        env.PLOYDOK_BUILD_DIR ?? "/tmp/ploydok-dev/builds",
-        "..",
-        "backups",
+        env.PLOYDOK_LOCAL_BACKUP_DIR,
         "apps",
         appId,
         volumeId,

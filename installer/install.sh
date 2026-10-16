@@ -489,7 +489,7 @@ create_system_user() {
 create_directories() {
   local dir stamp stamp_path
   install -d -m 0750 "$(real_path "$INSTALL_DIR")"
-  for dir in data builds backups volumes app-volumes certs pki keys logs agent config secrets static caddy-ip-cert; do
+  for dir in data builds backups local-backups volumes app-volumes certs pki keys logs agent config secrets static caddy-ip-cert; do
     install -d -m 0750 "$(real_path "$DATA_DIR/$dir")"
   done
   for stamp in control-plane.configured control-plane.last-success control-plane.last-failure; do
@@ -550,6 +550,7 @@ generate_secrets() {
     append_env_if_missing "$env_path" PLOYDOK_BUILDKIT_ADDR "tcp://buildkitd:1234"
     append_env_if_missing "$env_path" PLOYDOK_BUILD_DIR "/var/lib/ploydok/builds"
     append_env_if_missing "$env_path" PLOYDOK_STATIC_ROOT "/var/lib/ploydok/static"
+    append_env_if_missing "$env_path" PLOYDOK_LOCAL_BACKUP_DIR "/var/lib/ploydok/local-backups"
     if [[ "$RUNTIME" == "swarm" ]]; then
       append_env_if_missing "$env_path" CADDY_ADMIN_URL "http://caddy-admin:2019"
       replace_env_if_equals "$env_path" CADDY_ADMIN_URL "http://caddy:2019" "http://caddy-admin:2019"
@@ -613,6 +614,7 @@ PLOYDOK_ENABLE_AUTO_UPDATES=${PLOYDOK_ENABLE_AUTO_UPDATES:-0}
 PLOYDOK_BUILDKIT_ADDR=tcp://buildkitd:1234
 PLOYDOK_BUILD_DIR=/var/lib/ploydok/builds
 PLOYDOK_STATIC_ROOT=/var/lib/ploydok/static
+PLOYDOK_LOCAL_BACKUP_DIR=/var/lib/ploydok/local-backups
 CADDY_ADMIN_URL=$([[ "$RUNTIME" == "swarm" ]] && printf 'http://caddy-admin:2019' || printf 'http://caddy:2019')
 PLOYDOK_AGENT_ADDR=agent:50051
 PLOYDOK_AGENT_CA=/var/lib/ploydok/pki/ca.pem
