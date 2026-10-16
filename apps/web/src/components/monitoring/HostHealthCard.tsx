@@ -78,6 +78,20 @@ export function HostHealthCard(): React.JSX.Element {
 
 function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
   const { t } = useTranslation("monitoring")
+  const reclaimed = data.mem_reclaimed_bytes ?? 0
+  const balloonNote =
+    reclaimed > 0
+      ? t("host.usableOfConfigured", {
+          total: formatBytes(data.mem_total_bytes),
+          configured: formatBytes(data.mem_configured_bytes ?? 0),
+        })
+      : undefined
+  const balloonTitle =
+    reclaimed > 0
+      ? t("host.reclaimedBalloon", {
+          reclaimed: formatBytes(reclaimed),
+        })
+      : undefined
   const memPct =
     data.mem_total_bytes > 0
       ? (data.mem_used_bytes / data.mem_total_bytes) * 100
@@ -138,6 +152,8 @@ function HostHealthBody({ data }: { data: HostStats }): React.JSX.Element {
           label={t("host.memory")}
           value={`${memPct.toFixed(0)}%`}
           sub={`${formatBytes(data.mem_used_bytes)} / ${formatBytes(data.mem_total_bytes)}`}
+          note={balloonNote}
+          title={balloonTitle}
           accent={pctClass(memPct)}
           fill={memPct}
           fillClassName={fillClass(memPct)}
@@ -208,6 +224,8 @@ function Cell({
   label,
   value,
   sub,
+  note,
+  title,
   accent,
   fill,
   fillClassName,
@@ -216,6 +234,8 @@ function Cell({
   label: string
   value: string
   sub?: string
+  note?: string
+  title?: string
   accent?: string
   fill?: number
   fillClassName?: string
@@ -223,7 +243,7 @@ function Cell({
   const clamped =
     fill === undefined ? undefined : Math.min(100, Math.max(0, fill))
   return (
-    <div className="flex flex-col gap-1 px-4 py-3">
+    <div title={title} className="flex flex-col gap-1 px-4 py-3">
       <dt className="flex items-center gap-1.5 font-sans text-xs text-muted-foreground">
         <Icon className="size-3" />
         {label}
@@ -233,6 +253,14 @@ function Cell({
       </dd>
       {sub ? (
         <p className="font-sans text-[10px] text-muted-foreground">{sub}</p>
+      ) : null}
+      {note ? (
+        <p
+          title={title}
+          className="font-sans text-[10px] text-muted-foreground"
+        >
+          {note}
+        </p>
       ) : null}
       {clamped !== undefined ? (
         <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">

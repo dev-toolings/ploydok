@@ -158,3 +158,29 @@ test("overlapping ticks share the in-flight collection and released leases get n
   expect(f.scheduled()).toBeUndefined()
   unsub()
 })
+
+test("reclaimed memory requires a gap above both 256 MiB and five percent", () => {
+  const MiB = 1024 * 1024
+  for (const [configured, gap, expected] of [
+    [0, 0, 0],
+    [4096 * MiB, 256 * MiB, 0],
+    [4096 * MiB, 256 * MiB + 1, 256 * MiB + 1],
+    [10240 * MiB, 512 * MiB, 0],
+    [10240 * MiB, 512 * MiB + 1, 512 * MiB + 1],
+    [6144 * MiB, 3276 * MiB, 3276 * MiB],
+    [4096 * MiB, -MiB, 0],
+  ] as const) {
+    const usable = configured === 0 ? 4096 * MiB : configured - gap
+    const body = buildHostStatsBody(
+      HostStatsResponse.create({
+        memConfiguredBytes: configured,
+        memTotalBytes: usable,
+        memAvailableBytes: usable * 0.05,
+      }),
+      1000
+    )
+    expect(body.mem_configured_bytes).toBe(configured)
+    expect(body.mem_reclaimed_bytes).toBe(expected)
+    expect(body.alerts).toContain("mem_high:95.0%")
+  }
+})

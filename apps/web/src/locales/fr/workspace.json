@@ -79,6 +79,8 @@
       "cpu": "CPU",
       "memory": "Mémoire",
       "disk": "Disque",
+      "usableOfConfigured": "{{total}} utilisables sur {{configured}} configurés",
+      "reclaimedBalloon": "L'hyperviseur a repris {{reclaimed}} par ballooning mémoire.",
       "cores_one": "{{count}} cœur",
       "cores_other": "{{count}} cœurs"
     },

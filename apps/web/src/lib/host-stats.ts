@@ -10,6 +10,9 @@ export interface HostStats {
   mem_total_bytes: number
   mem_used_bytes: number
   mem_available_bytes: number
+  // Older APIs omit these. Missing means unknown: readers treat it as 0.
+  mem_configured_bytes?: number
+  mem_reclaimed_bytes?: number
   swap_total_bytes: number
   swap_used_bytes: number
   load_1: number

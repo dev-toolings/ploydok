@@ -9,6 +9,7 @@ use ploydok_proto::HostStatsResponse;
 use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
@@ -21,6 +22,7 @@ type GpuStats = (u32, f64, u64, u64, String);
 /// One host sampler shared by every RPC service instance.
 pub struct HostSampler {
     cpu_count: u32,
+    mem_configured_bytes: AtomicU64,
     latest: watch::Sender<Option<HostStatsResponse>>,
     gpu: watch::Sender<GpuStats>,
 }
@@ -29,6 +31,9 @@ impl HostSampler {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             cpu_count: num_cpus_from_proc().unwrap_or(0),
+            mem_configured_bytes: AtomicU64::new(read_configured_memory(Path::new(
+                "/sys/devices/system/memory",
+            ))),
             latest: watch::channel(None).0,
             gpu: watch::channel(GpuStats::default()).0,
         })
@@ -48,15 +53,32 @@ impl HostSampler {
         });
         tokio::spawn(async move {
             let mut previous = None;
+            let mut next_memory_probe = Instant::now() + Duration::from_secs(300);
             let mut ticks = interval(Duration::from_secs(2));
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
                 ticks.tick().await;
                 let cpu_count = self.cpu_count;
-                match tokio::task::spawn_blocking(move || read_host_stats(cpu_count, previous))
-                    .await
+                let configured = self.mem_configured_bytes.load(Ordering::Relaxed);
+                let refresh_memory = Instant::now() >= next_memory_probe;
+                match tokio::task::spawn_blocking(move || {
+                    let configured = if refresh_memory {
+                        read_configured_memory(Path::new("/sys/devices/system/memory"))
+                    } else {
+                        configured
+                    };
+                    let (mut snapshot, current) = read_host_stats(cpu_count, previous);
+                    snapshot.mem_configured_bytes = configured;
+                    (snapshot, current)
+                })
+                .await
                 {
                     Ok((mut snapshot, current)) => {
+                        if refresh_memory {
+                            self.mem_configured_bytes
+                                .store(snapshot.mem_configured_bytes, Ordering::Relaxed);
+                            next_memory_probe = Instant::now() + Duration::from_secs(300);
+                        }
                         previous = current;
                         merge_gpu(&mut snapshot, self.gpu.borrow().clone());
                         self.latest.send_replace(Some(snapshot));
@@ -82,6 +104,7 @@ impl HostSampler {
                     ..Default::default()
                 },
             };
+        snapshot.mem_configured_bytes = self.mem_configured_bytes.load(Ordering::Relaxed);
         merge_gpu(&mut snapshot, self.gpu.borrow().clone());
         snapshot
     }
@@ -184,6 +207,33 @@ fn read_cpu_jiffies() -> Result<(u64, u64), String> {
 // ────────────────────────────────────────────────────────────────────────────
 // Memory (/proc/meminfo)
 // ────────────────────────────────────────────────────────────────────────────
+
+/// Count online memory blocks. Any read/parse failure makes the value unknown.
+fn read_configured_memory(root: &Path) -> u64 {
+    let read = || -> Option<u64> {
+        let block_size = fs::read_to_string(root.join("block_size_bytes")).ok()?;
+        let block_size = block_size.trim();
+        let block_size =
+            u64::from_str_radix(block_size.strip_prefix("0x").unwrap_or(block_size), 16).ok()?;
+        let mut online = 0u64;
+        for entry in fs::read_dir(root).ok()? {
+            let entry = entry.ok()?;
+            let name = entry.file_name();
+            let Some(index) = name.to_str()?.strip_prefix("memory") else {
+                continue;
+            };
+            if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            let state = fs::read_to_string(entry.path().join("state")).ok()?;
+            if state.trim() == "online" {
+                online = online.checked_add(1)?;
+            }
+        }
+        block_size.checked_mul(online)
+    };
+    read().unwrap_or(0)
+}
 
 fn read_meminfo() -> Result<(u64, u64, u64, u64), String> {
     let s = fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
@@ -380,6 +430,32 @@ async fn read_gpu_stats(executable: &Path) -> Option<GpuStats> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_memory_counts_only_online_blocks_and_fails_closed() {
+        let directory = tempfile::tempdir().expect("temporary sysfs directory");
+        let root = directory.path();
+        fs::write(root.join("block_size_bytes"), "8000000\n").expect("block size");
+        for index in 0..49 {
+            let block = root.join(format!("memory{index}"));
+            fs::create_dir(&block).expect("memory block");
+            fs::write(
+                block.join("state"),
+                if index < 48 { "online\n" } else { "offline\n" },
+            )
+            .expect("block state");
+        }
+        fs::create_dir(root.join("memory_aux")).expect("unrelated directory");
+        assert_eq!(read_configured_memory(root), 6144 * 1024 * 1024);
+        fs::write(root.join("block_size_bytes"), "0x8000000\n").expect("prefixed size");
+        assert_eq!(read_configured_memory(root), 6144 * 1024 * 1024);
+        fs::remove_file(root.join("memory0/state")).expect("remove block state");
+        assert_eq!(read_configured_memory(root), 0);
+        fs::write(root.join("memory0/state"), "online").expect("restore block state");
+        fs::write(root.join("block_size_bytes"), "invalid").expect("malformed size");
+        assert_eq!(read_configured_memory(root), 0);
+        assert_eq!(read_configured_memory(&root.join("missing")), 0);
+    }
 
     #[test]
     fn cpu_delta_uses_elapsed_jiffies() {

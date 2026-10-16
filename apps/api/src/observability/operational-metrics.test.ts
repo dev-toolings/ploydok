@@ -24,6 +24,7 @@ import {
 
 const hostStats: HostStatsResponse = {
   cpuPercent: 10,
+  memConfiguredBytes: 0,
   memTotalBytes: 1_000,
   memUsedBytes: 400,
   memAvailableBytes: 600,
