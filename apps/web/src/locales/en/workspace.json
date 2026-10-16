@@ -79,6 +79,8 @@
       "cpu": "CPU",
       "memory": "Memory",
       "disk": "Disk",
+      "usableOfConfigured": "{{total}} usable of {{configured}} configured",
+      "reclaimedBalloon": "The hypervisor reclaimed {{reclaimed}} through memory ballooning.",
       "cores_one": "{{count}} core",
       "cores_other": "{{count}} cores"
     },

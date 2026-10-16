@@ -489,11 +489,15 @@ function Gauge({
   percent,
   hint,
   warnAt,
+  note,
+  title,
 }: {
   label: string
   percent: number
   hint: string
   warnAt: number
+  note?: string
+  title?: string
 }) {
   const radius = 34
   const circumference = 2 * Math.PI * radius
@@ -505,7 +509,10 @@ function Gauge({
         ? "stroke-warn-600"
         : "stroke-viz-400"
   return (
-    <div className="flex min-w-0 flex-col items-center gap-2 rounded-[10px] bg-panel-inset p-3 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]">
+    <div
+      title={title}
+      className="flex min-w-0 flex-col items-center gap-2 rounded-[10px] bg-panel-inset p-3 shadow-[0_1px_1px_0_#0000000d] dark:shadow-[0_1px_1px_0_#00000024]"
+    >
       <div className="relative size-24">
         <svg viewBox="0 0 80 80" className="size-full -rotate-90">
           <circle
@@ -537,6 +544,14 @@ function Gauge({
       <span className="truncate text-[13px] leading-[18px] font-medium text-muted-foreground">
         {hint}
       </span>
+      {note ? (
+        <span
+          title={title}
+          className="w-full text-center text-[11px] leading-4 font-normal text-muted-foreground"
+        >
+          {note}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -548,6 +563,20 @@ function gib(bytes: number): string {
 export function HostResourcesCard() {
   const { t } = useTranslation("workspace")
   const { data, isLoading } = useHostStats()
+  const reclaimed = data?.mem_reclaimed_bytes ?? 0
+  const balloonNote =
+    data && reclaimed > 0
+      ? t("dashboard.host.usableOfConfigured", {
+          total: gib(data.mem_total_bytes),
+          configured: gib(data.mem_configured_bytes ?? 0),
+        })
+      : undefined
+  const balloonTitle =
+    data && reclaimed > 0
+      ? t("dashboard.host.reclaimedBalloon", {
+          reclaimed: gib(reclaimed),
+        })
+      : undefined
 
   return (
     <section className={cn(CARD, "gap-3")}>
@@ -574,6 +603,8 @@ export function HostResourcesCard() {
                 : 0
             }
             hint={`${gib(data.mem_used_bytes)} / ${gib(data.mem_total_bytes)}`}
+            note={balloonNote}
+            title={balloonTitle}
             warnAt={data.thresholds.mem_warn_pct}
           />
           <Gauge

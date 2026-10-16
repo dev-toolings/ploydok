@@ -92,6 +92,8 @@
     "alerts_other": "{{count}} alertes",
     "cpu": "CPU",
     "memory": "Mémoire",
+    "usableOfConfigured": "{{total}} utilisables sur {{configured}} configurés",
+    "reclaimedBalloon": "L'hyperviseur a repris {{reclaimed}} par ballooning mémoire.",
     "diskRoot": "Disque /",
     "inodes": "inodes {{pct}} %",
     "loadAvg": "Charge moy.",

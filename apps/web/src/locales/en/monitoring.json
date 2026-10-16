@@ -92,6 +92,8 @@
     "alerts_other": "{{count}} alerts",
     "cpu": "CPU",
     "memory": "Memory",
+    "usableOfConfigured": "{{total}} usable of {{configured}} configured",
+    "reclaimedBalloon": "The hypervisor reclaimed {{reclaimed}} through memory ballooning.",
     "diskRoot": "Disk /",
     "inodes": "inodes {{pct}}%",
     "loadAvg": "Load avg",
