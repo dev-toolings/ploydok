@@ -347,6 +347,8 @@
     "phase": "Phase",
     "value": "Value",
     "newValue": "New value",
+    "show": "Show",
+    "hide": "Hide",
     "placeholder": "Secret value",
     "save": "Save secret",
     "saving": "Saving…",

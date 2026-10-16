@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@workspace/ui/components/button"
 import { NativeSelect } from "@workspace/ui/components/native-select"
@@ -36,6 +37,7 @@ export function ImportEnvDialog({
   defaultScope = "shared",
   onOpenChange,
 }: ImportEnvDialogProps): React.JSX.Element {
+  const { t } = useTranslation("workspace")
   const [file, setFile] = React.useState<File | null>(null)
   const [scope, setScope] = React.useState<SecretScope>(defaultScope)
   const [phase, setPhase] = React.useState<SecretPhase>("runtime")
@@ -51,9 +53,7 @@ export function ImportEnvDialog({
       { file, scope, phase },
       {
         onSuccess: ({ imported }) => {
-          toast.success(
-            `Imported ${imported} secret${imported !== 1 ? "s" : ""}`
-          )
+          toast.success(t("secrets.imported", { count: imported }))
           setFile(null)
           if (fileInputRef.current) fileInputRef.current.value = ""
           onOpenChange(false)
@@ -69,16 +69,12 @@ export function ImportEnvDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Import .env file</DialogTitle>
-          <DialogDescription>
-            Upload a .env file. Scope prefixes like{" "}
-            <code className="text-xs">@prod MY_KEY=value</code> override the
-            default scope.
-          </DialogDescription>
+          <DialogTitle>{t("secrets.importTitle")}</DialogTitle>
+          <DialogDescription>{t("secrets.importHint")}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <Field>
-            <FieldLabel htmlFor="import-file">.env file</FieldLabel>
+            <FieldLabel htmlFor="import-file">{t("secrets.file")}</FieldLabel>
             <FieldContent>
               <input
                 ref={fileInputRef}
@@ -90,13 +86,13 @@ export function ImportEnvDialog({
                 required
               />
             </FieldContent>
-            <FieldDescription>
-              Standard .env format with optional @scope prefixes
-            </FieldDescription>
+            <FieldDescription>{t("secrets.fileHint")}</FieldDescription>
           </Field>
 
           <Field>
-            <FieldLabel htmlFor="import-scope">Default scope</FieldLabel>
+            <FieldLabel htmlFor="import-scope">
+              {t("secrets.defaultScope")}
+            </FieldLabel>
             <FieldContent>
               <NativeSelect
                 id="import-scope"
@@ -113,7 +109,9 @@ export function ImportEnvDialog({
           </Field>
 
           <Field>
-            <FieldLabel htmlFor="import-phase">Default phase</FieldLabel>
+            <FieldLabel htmlFor="import-phase">
+              {t("secrets.defaultPhase")}
+            </FieldLabel>
             <FieldContent>
               <NativeSelect
                 id="import-phase"
@@ -135,10 +133,10 @@ export function ImportEnvDialog({
               variant="ghost"
               onClick={() => onOpenChange(false)}
             >
-              Cancel
+              {t("cancel", { ns: "common" })}
             </Button>
             <Button type="submit" loading={isPending} disabled={!file}>
-              {isPending ? "Importing…" : "Import"}
+              {isPending ? t("secrets.importing") : t("secrets.import")}
             </Button>
           </DialogFooter>
         </form>
