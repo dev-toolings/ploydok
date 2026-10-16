@@ -48,7 +48,7 @@ export async function probeStateDir(
 
 const STATE_DIR_ENV: Record<string, string> = {
   static: "PLOYDOK_STATIC_ROOT",
-  "local-backups": "PLOYDOK_LOCAL_BACKUP_DIR",
+  storage: "PLOYDOK_LOCAL_STORAGE_DIR",
 }
 
 export function stateDirRemediation(probe: StateDirProbe): string {
@@ -63,7 +63,7 @@ export async function ensureStateDirs(): Promise<StateDirProbe[]> {
   const probes = await Promise.all([
     probeStateDir("builds", env.PLOYDOK_BUILD_DIR),
     probeStateDir("static", env.PLOYDOK_STATIC_ROOT),
-    probeStateDir("local-backups", env.PLOYDOK_LOCAL_BACKUP_DIR),
+    probeStateDir("storage", env.PLOYDOK_LOCAL_STORAGE_DIR),
   ])
   for (const probe of probes) {
     if (probe.writable) {

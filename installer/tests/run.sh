@@ -72,8 +72,8 @@ assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "registry-data:/var/l
 assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "moby/buildkit:v0.29.0-rootless"
 assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "buildkit-cache:/home/user/.local/share/buildkit"
 assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "/var/run/docker.sock:/var/run/docker.sock"
-assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "/local-backups:/var/lib/ploydok/local-backups"
-[[ -d "$TMP/root/var/lib/ploydok/local-backups" ]] || { echo "missing local-backups dir" >&2; exit 1; }
+assert_contains "$TMP/root/opt/ploydok/docker-compose.yml" "/storage:/var/lib/ploydok/storage"
+[[ -d "$TMP/root/var/lib/ploydok/storage" ]] || { echo "missing storage dir" >&2; exit 1; }
 compose_api_block="$(sed -n '/^  api:/,/^  web:/p' "$TMP/root/opt/ploydok/docker-compose.yml")"
 compose_agent_block="$(sed -n '/^  agent:/,/^  caddy:/p' "$TMP/root/opt/ploydok/docker-compose.yml")"
 assert_text_not_contains "$compose_api_block" "/var/run/docker.sock"

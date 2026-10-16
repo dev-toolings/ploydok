@@ -114,17 +114,10 @@ async function prepareVolumeBackup(
     "tar",
     ageEncrypted
   )
-  const location = buildBackupLocation(
+  const location = await buildBackupLocation(
+    db,
     config,
-    buildVolumeS3Key(config.s3_prefix, appId, volumeId, filename),
-    () =>
-      path.join(
-        env.PLOYDOK_LOCAL_BACKUP_DIR,
-        "apps",
-        appId,
-        volumeId,
-        filename
-      )
+    buildVolumeS3Key(config.s3_prefix, appId, volumeId, filename)
   )
 
   await db.insert(volume_backups).values({
