@@ -38,6 +38,7 @@ import {
 import { useUpdateAppSettings } from "../../lib/apps-mutations"
 import { getBuildPresets } from "../../lib/build-presets"
 import { blankToNull } from "../../lib/apps/transforms"
+import { ReadOnlyValue } from "./ReadOnlyValue"
 import type { Stack } from "@ploydok/shared"
 import type { AppDetail, AppSettingsPatch } from "../../lib/apps"
 
@@ -775,24 +776,3 @@ function BooleanField({
   )
 }
 
-function ReadOnlyValue({
-  value,
-  placeholder,
-  mono = false,
-}: {
-  value: string
-  placeholder: string
-  mono?: boolean
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        "min-w-0 rounded-md border bg-muted/40 px-3 py-2 text-sm",
-        mono && "font-mono",
-        value ? "text-foreground" : "text-muted-foreground"
-      )}
-    >
-      <span className="block truncate">{value || placeholder}</span>
-    </div>
-  )
-}
