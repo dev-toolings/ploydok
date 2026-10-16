@@ -2,7 +2,6 @@
 import * as React from "react"
 import { createFileRoute } from "@tanstack/react-router"
 import { useTranslation } from "react-i18next"
-import type { TFunction } from "i18next"
 import { RiGithubLine } from "@remixicon/react"
 import { Button } from "@workspace/ui/components/button"
 import {
@@ -30,6 +29,7 @@ import {
   useRevokeOrganizationGitHubInstallation,
 } from "../../../../../lib/github"
 import { usePendingAction } from "../../../../../lib/hooks/use-pending-action"
+import type { TFunction } from "i18next"
 import type { AppInstallation } from "../../../../../lib/github"
 
 export const Route = createFileRoute(
