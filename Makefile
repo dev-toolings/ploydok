@@ -69,13 +69,14 @@ dev: ## Demarre le web et l'API apres verification de l'infra
 	  exit 1; \
 	fi
 	@$(MAKE) --no-print-directory infra-up
+	@sh scripts/dev-workloads.sh restore
 	@printf '$(C_TARGET)[dev]$(C_RESET) waiting for postgres + redis to report healthy...\n'
 	@docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml up -d --no-recreate --wait --wait-timeout 120 postgres redis
 	@$(MAKE) --no-print-directory db-ensure-auth
 	@printf '$(C_OK)[dev]$(C_RESET) starting web:5173 + api:3335\n'
 	bunx turbo dev
 
-stop: infra-stop ## Arrete les containers Compose sans les supprimer
+stop: infra-stop ## Arrete l'infra locale, le builder et les workloads Swarm
 
 dev-agent: ## Lance l'agent Rust en mode natif pour le debug
 	@printf '$(C_TARGET)[dev-agent]$(C_RESET) Starting ploydok-agent in native mode (insecure, /tmp/ploydok/agent.sock)...\n'
@@ -203,6 +204,7 @@ infra-up: secrets-init ## Demarre les services infra du projet
 	@# The builder joins the compose network so the push URL registry:5000 resolves.
 	@# A builder created with another network (old network=host) is recreated.
 	@if docker buildx inspect $(BUILDX_BUILDER) 2>/dev/null | grep -q 'network="$(BUILDX_NETWORK)"'; then \
+	  docker buildx inspect --bootstrap $(BUILDX_BUILDER) >/dev/null; \
 	  printf '$(C_OK)[infra-up]$(C_RESET) buildx builder $(BUILDX_BUILDER) already on $(BUILDX_NETWORK)\n'; \
 	else \
 	  if docker buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1; then \
@@ -213,6 +215,9 @@ infra-up: secrets-init ## Demarre les services infra du projet
 	    --driver-opt network=$(BUILDX_NETWORK) --buildkitd-config infra/buildkit/buildkitd.toml \
 	    --bootstrap >/dev/null; \
 	fi
+	@# buildx create hardcodes unless-stopped. Pin restart=no so a dockerd
+	@# restart does not resurrect the builder while the stack is down.
+	@sh scripts/dev-workloads.sh buildx-pin
 	@printf '$(C_OK)[infra-up]$(C_RESET) Caddy admin   : http://127.0.0.1:2020/config/\n'
 	@printf '$(C_OK)[infra-up]$(C_RESET) Registry v2   : http://127.0.0.1:5000/v2/\n'
 	@printf '$(C_OK)[infra-up]$(C_RESET) BuildKit      : buildx://$(BUILDX_BUILDER)\n'
@@ -220,12 +225,16 @@ infra-up: secrets-init ## Demarre les services infra du projet
 	@printf '$(C_OK)[infra-up]$(C_RESET) Redis         : redis://:***@127.0.0.1:6381/0\n'
 
 infra-down: ## Arrete et supprime les containers et reseaux du projet
+	@sh scripts/dev-workloads.sh quiesce
+	-docker buildx stop $(BUILDX_BUILDER)
 	-docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml down --timeout 10
 	-docker network rm ploydok-public 2>/dev/null
 	-docker network rm ploydok-ingress 2>/dev/null
 
-infra-stop: ## Arrete les containers infra sans les supprimer
+infra-stop: ## Arrete l'infra, le builder buildx et les workloads Swarm locaux
+	@sh scripts/dev-workloads.sh quiesce
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml stop --timeout 15
+	-docker buildx stop $(BUILDX_BUILDER)
 
 infra-logs: ## Affiche les logs Caddy
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml logs -f caddy
