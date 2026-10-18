@@ -29,8 +29,6 @@ services:
     cap_drop: ["ALL"]
     security_opt:
       - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=256m
     env_file: ${PLOYDOK_DATA_DIR}/.env
     volumes:
       - ${PLOYDOK_DATA_DIR}/logs:/var/log/ploydok
@@ -44,6 +42,12 @@ services:
       - ${PLOYDOK_DATA_DIR}/pki/client.pem:/var/lib/ploydok/pki/client.pem:ro
       - ${PLOYDOK_DATA_DIR}/pki/client.key:/var/lib/ploydok/pki/client.key:ro
       - ${PLOYDOK_DATA_DIR}/agent:/run/ploydok
+      # `docker stack deploy` ignores the service-level `tmpfs:` key: only a
+      # long-syntax tmpfs mount gives the read-only rootfs a writable /tmp.
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 268435456
     networks:
       - ploydok
       - ploydok-management
@@ -90,8 +94,11 @@ services:
     cap_drop: ["ALL"]
     security_opt:
       - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 67108864
     environment:
       PLOYDOK_API_URL: http://api:3335
     networks:
