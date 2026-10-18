@@ -36,3 +36,32 @@ migrations, deploys the images, verifies health and restores the descriptor on
 failure. Existing database volumes, credentials and application state stay on
 the VM. Local unsigned images use the explicit controlled-staging cosign exception;
 official releases continue to require workflow signatures.
+
+## Post-deploy smoke test
+
+After a successful upgrade, `scripts/deploy-shuttle.sh` runs
+`scripts/deploy-shuttle/smoke.ts`. It redeploys a reference app through the
+public API, waits for its build and requires its public URL to answer
+`ploydok-smoke …`. The app in `scripts/deploy-shuttle/smoke-app/` reproduces the
+conditions that broke real deploys: a slim Node image without curl or wget, a
+Dockerfile `ARG` without default, and a non-root process writing to `/tmp`.
+A failed smoke test makes the wrapper exit non-zero; the upgrade itself is
+already applied, so read the reported build error before retrying.
+
+One-time setup on the staging instance:
+
+1. Create an app from the `dev-toolings/ploydok` repository, branch `develop`,
+   root directory `scripts/deploy-shuttle/smoke-app`, build method Dockerfile,
+   runtime port 8080. Turn off deploy on push.
+2. Add the variable `SMOKE_BUILD_TOKEN` (any value) with the phase `build`.
+3. Create an API token with the `apps:read` and `apps:deploy` scopes.
+4. On the operator machine, write `~/.config/ploydok/smoke.env` (mode 0600):
+
+   ```bash
+   PLOYDOK_SMOKE_URL=http://192-168-1-235.sslip.io
+   PLOYDOK_SMOKE_APP_ID=<id of the smoke app>
+   PLOYDOK_SMOKE_TOKEN=<API token>
+   ```
+
+Without this file the wrapper prints a warning and skips the smoke test.
+Environment variables with the same names override the file.
