@@ -3,6 +3,9 @@ import { describe, it, expect, mock, beforeEach } from "bun:test"
 import { runPreDeployHook, runPostDeployHook, HookFailedError } from "./hooks"
 import type { HookContext } from "./hooks"
 import type { Agent } from "../agent/index.js"
+import { AgentError, GrpcStatus } from "../agent/errors"
+import { Metadata } from "@grpc/grpc-js"
+import { classifyAgentError, FatalDeployError } from "./errors"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -91,6 +94,48 @@ beforeEach(() => {
 })
 
 describe("runPreDeployHook", () => {
+  it("creates policy-safe containers for both phases with uppercase and trailing separators", async () => {
+    for (const run of [runPreDeployHook, runPostDeployHook]) {
+      for (const appId of ["vAabMU-x0H0WQxlqV9J1-", "A_".repeat(100), "___"]) {
+        const names: string[] = []
+        const agent = makeAgent({})
+        agent.containerCreate = mock(async (req) => {
+          names.push(req.name)
+          expect(req.name).toMatch(/^ploydok-[a-z0-9][a-z0-9-]{0,62}$/)
+          expect(req.name).not.toContain("--")
+          return { containerId: "hook-ctr-1" }
+        })
+        const result = await run({
+          db: makeDb(), agent, appId, projectId: "proj-1",
+          imageRef: "registry/app:tag", env: {}, buildId: "bld-1",
+        }, "echo hello", 60)
+        if (run === runPostDeployHook) expect(result).toEqual({ ok: true })
+        expect(names).toHaveLength(1)
+      }
+    }
+  })
+
+  it("preserves agent policy refusals as fatal errors through the hook wrapper", async () => {
+    const refusal = new AgentError(Object.assign(new Error("policy refusal"), {
+      code: GrpcStatus.INVALID_ARGUMENT,
+      details: "container_name_prefix",
+      metadata: new Metadata(),
+    }))
+    const agent = makeAgent({})
+    agent.containerCreate = mock(async () => { throw refusal })
+    let caught: unknown
+    try {
+      await runPreDeployHook({
+        db: makeDb(), agent, appId: "app-1", projectId: "proj-1",
+        imageRef: "registry/app:tag", env: {}, buildId: "bld-1",
+      }, "echo hello", 60)
+    } catch (err) {
+      caught = err
+    }
+    expect((caught as Error).cause).toBe(refusal)
+    expect(classifyAgentError(caught)).toBeInstanceOf(FatalDeployError)
+  })
+
   it("resolves when hook exits 0", async () => {
     mock.module("../projects.js", () => ({
       ensureProjectNetwork: mock(() => Promise.resolve("ploydok-proj-1")),

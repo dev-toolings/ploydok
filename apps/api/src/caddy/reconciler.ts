@@ -26,7 +26,7 @@ import {
 import type { CaddyClient } from "./client.js"
 import type { Logger } from "pino"
 import { caddyStaticRootForApp } from "../worker/handlers/build-static.js"
-import { composeToContainers } from "../marketplace/compose-to-containers.js"
+import { composeContainerName, composeToContainers } from "../marketplace/compose-to-containers.js"
 import { upsertServiceRoute } from "./service-routes.js"
 import { runningBuildMatch } from "../services/runtime-build.js"
 import { ContainerHealthStatus } from "@ploydok/agent-proto"
@@ -498,7 +498,7 @@ export async function reconcileServiceRoutes(opts: {
       if (service.entrypoint_service_name != null && service.entrypoint_port != null) {
         const name = runtimeMode === "swarm"
           ? swarmComposeServiceName(`svc-${service.id}-${service.slug}`.slice(0, 40), service.entrypoint_service_name)
-          : `ploydok-svc-${service.id}-${service.entrypoint_service_name}`
+          : composeContainerName(`ploydok-svc-${service.id}`, service.entrypoint_service_name)
         if (runtimeMode === "swarm" && !swarmServiceNames.includes(name)) {
           throw new Error(`Service ${service.id} declared entrypoint is not running`)
         }

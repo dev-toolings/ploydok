@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "bun:test"
+import { Metadata } from "@grpc/grpc-js"
+import { AgentError, GrpcStatus } from "../agent/errors"
 import {
   TransientDeployError,
   FatalDeployError,
@@ -7,6 +9,39 @@ import {
 } from "./errors"
 
 describe("classifyAgentError", () => {
+  it("classifies agent invalid arguments and policy refusals as fatal through causes", () => {
+    for (const code of [GrpcStatus.INVALID_ARGUMENT, GrpcStatus.PERMISSION_DENIED, GrpcStatus.UNAUTHENTICATED]) {
+      const original = new AgentError(Object.assign(new Error("refused"), {
+        code, details: "policy refusal", metadata: new Metadata(),
+      }))
+      expect(classifyAgentError(original)).toBeInstanceOf(FatalDeployError)
+      const wrapped = new Error("Failed to create pre_deploy hook container", { cause: original })
+      expect(classifyAgentError(wrapped)).toBeInstanceOf(FatalDeployError)
+      expect(classifyAgentError(wrapped).cause).toBe(wrapped)
+    }
+  })
+
+  it("recognizes legacy string-wrapped invalid argument and policy errors", () => {
+    for (const message of [
+      "Failed to create pre_deploy hook container: [agent] code gRPC 3 : container_name_prefix",
+      "3 INVALID_ARGUMENT: invalid name",
+      "[agent] action refusée par allowlist",
+    ]) {
+      expect(classifyAgentError(new Error(message))).toBeInstanceOf(FatalDeployError)
+    }
+  })
+
+  it("keeps agent availability failures transient and handles circular causes", () => {
+    const original = new AgentError(Object.assign(new Error("offline"), {
+      code: GrpcStatus.UNAVAILABLE, details: "offline", metadata: new Metadata(),
+    }))
+    const wrapped = new Error("hook creation failed", { cause: original })
+    expect(classifyAgentError(wrapped)).toBeInstanceOf(TransientDeployError)
+    const circular = new Error("unknown")
+    circular.cause = circular
+    expect(classifyAgentError(circular)).toBeInstanceOf(TransientDeployError)
+  })
+
   // ── Transient ──────────────────────────────────────────────────────────────
 
   it("classifies ECONNREFUSED as transient", () => {

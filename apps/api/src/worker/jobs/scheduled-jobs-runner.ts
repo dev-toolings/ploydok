@@ -11,7 +11,6 @@
  * 4. Update the run record with status/output/error
  * 5. Persist last_run_* and next_run_at on the job row
  */
-import { nanoid } from "nanoid"
 import { and, eq, lt } from "drizzle-orm"
 import { CronExpressionParser } from "cron-parser"
 import { apps, projects, scheduled_job_runs, type Db } from "@ploydok/db"
@@ -24,7 +23,7 @@ import {
 } from "@ploydok/db/queries"
 import { childLogger } from "../../logger"
 import type { Agent as WrappedAgent } from "../../agent/wrapper"
-import { resolveRuntimeContainer } from "../../services/runtime-containers"
+import { ephemeralContainerName, resolveRuntimeContainer } from "../../services/runtime-containers"
 
 const log = childLogger("scheduled-jobs.cron")
 
@@ -103,15 +102,6 @@ function isConcurrentRunConstraint(err: unknown): boolean {
         "scheduled_job_runs_one_running_per_job_idx"
       ))
   )
-}
-
-function scheduledJobContainerName(jobId: string): string {
-  const safeJobId = jobId
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24)
-  return `ploydok-scheduled-job-${safeJobId || "job"}-${nanoid(6).toLowerCase()}`
 }
 
 async function execCommandInContainer(
@@ -264,7 +254,7 @@ async function executeContainerCommand(
   const networkName = projectRows[0]?.network_name ?? null
 
   const created = await agent.containerCreate({
-    name: scheduledJobContainerName(job.id),
+    name: ephemeralContainerName("scheduled-job", job.id),
     image,
     env: normalizeEnv(job.env),
     command: ["sleep", String(Math.ceil(timeoutMs / 1000) + 30)],

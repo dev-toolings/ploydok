@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test"
 import {
   imageRepoForApp,
+  ephemeralContainerName,
   inferContainerColor,
   legacyRuntimeContainerName,
   normalizeRuntimeContainerSlug,
@@ -11,6 +12,19 @@ import {
 } from "./runtime-containers"
 
 describe("runtime container naming", () => {
+  it("bounds ephemeral names and keeps a fresh policy-safe suffix for every run", () => {
+    for (const kind of ["hook-pre", "hook-post", "scheduled-job"] as const) {
+      for (const id of ["vAabMU-x0H0WQxlqV9J1-", "A_".repeat(100), "___", ""]) {
+        const first = ephemeralContainerName(kind, id)
+        const second = ephemeralContainerName(kind, id)
+        expect(first).toMatch(/^ploydok-[a-z0-9][a-z0-9-]{0,62}$/)
+        expect(first).toMatch(/-[a-z0-9]{12}$/)
+        expect(first).not.toContain("--")
+        expect(second).not.toBe(first)
+      }
+    }
+  })
+
   it("normalizes slug text for Docker-safe readable names", () => {
     expect(normalizeRuntimeContainerSlug("Hello / Runtime_App")).toBe(
       "hello-runtime-app"

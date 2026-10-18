@@ -867,6 +867,28 @@ services:
     ])
   })
 
+  test("reconstructs the sanitized Docker entrypoint for a raw Nano ID", async () => {
+    const { caddy, upserts } = createFakeServiceCaddy()
+    await reconcileServiceRoutes({
+      caddy,
+      logger: silentLogger,
+      services: [{
+        id: "vAabMU_x0H0WQxlqV9J1-",
+        slug: "demo",
+        domain: "declared.example.com",
+        compose_raw: "services: {}",
+        container_ids: ["ctr-web"],
+        swarm_service_names: [],
+        runtime_mode: "docker",
+        entrypoint_service_name: "Web_App",
+        entrypoint_port: 8088,
+      }],
+    })
+    expect(upserts[0]?.upstream).toBe(
+      "ploydok-svc-vaabmu-x0h0wqxlqv9j1-web-app-0399d8a8b2:8088"
+    )
+  })
+
   test("uses persisted service routing data without re-rendering an installed template", async () => {
     const { caddy, upserts } = createFakeServiceCaddy()
     const result = await reconcileServiceRoutes({

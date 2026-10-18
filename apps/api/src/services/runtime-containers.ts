@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Agent } from "../agent"
 import type { ContainerSnapshot } from "@ploydok/shared"
+import { customAlphabet } from "nanoid"
+
+const ephemeralSuffix = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 12)
 
 export type RuntimeContainerColor = "blue" | "green"
 
@@ -12,15 +15,24 @@ const STATUS_PRIORITY: Record<ContainerSnapshot["status"], number> = {
   unknown: 0,
 }
 
-export function normalizeRuntimeContainerSlug(slug: string): string {
+export function normalizeRuntimeContainerSlug(slug: string, maxLength = 32): string {
   const normalized = slug
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 32)
+    .slice(0, maxLength)
 
   return normalized || "app"
+}
+
+/** Keep the entire random suffix when bounding names to the agent's policy. */
+export function ephemeralContainerName(
+  kind: "hook-pre" | "hook-post" | "scheduled-job",
+  resourceId: string
+): string {
+  const token = normalizeRuntimeContainerSlug(resourceId).replace(/-+$/, "")
+  return `ploydok-${kind}-${token}-${ephemeralSuffix()}`
 }
 
 /**
