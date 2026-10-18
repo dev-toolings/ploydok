@@ -293,6 +293,12 @@ export function repoDerivedDefaults(): Partial<FormState> {
   }
 }
 
+// The build method radios use the legacy "docker" value; presets carry the
+// normalized "dockerfile", which no radio matches.
+function wizardBuildMethod(method: BuildMethod): BuildMethod {
+  return method === "dockerfile" ? "docker" : method
+}
+
 function applyBuildPreset(
   form: FormState,
   preset: BuildPreset,
@@ -307,7 +313,7 @@ function applyBuildPreset(
     ...form,
     buildMethod:
       resetBuildMethod || !form.buildMethodTouched
-        ? preset.defaults.buildMethod
+        ? wizardBuildMethod(preset.defaults.buildMethod)
         : form.buildMethod,
     buildMethodTouched,
     presetId: preset.id,
