@@ -363,6 +363,10 @@ assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "published: 80"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "published: 443"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "/var/lib/ploydok/keys:/var/lib/ploydok/keys"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "moby/buildkit:v0.29.0"
+# Swarm silently drops the service-level tmpfs key; /tmp must be a tmpfs mount.
+! grep -qE '^    tmpfs:' "$TMP/swarm-root/opt/ploydok/docker-stack.yml" || { echo "docker-stack.yml must not use the service-level tmpfs key" >&2; exit 1; }
+assert_text_contains "$(sed -n '/^  api:/,/^  web:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "type: tmpfs"
+assert_text_contains "$(sed -n '/^  web:/,/^  agent:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "type: tmpfs"
 assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "buildkit-cache:/var/lib/buildkit"
 assert_text_not_contains "$(sed -n '/^  buildkitd:/,/^networks:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "buildkit-cache:/home/user/.local/share/buildkit"
 assert_contains "$TMP/swarm-root/opt/ploydok/Caddyfile" "admin unix//run/caddy-admin/admin.sock|0660"
