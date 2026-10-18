@@ -352,8 +352,6 @@ export async function runSwarmDeploy(
       network,
       sharedAgent
     )
-    await fenceDeploySideEffect()
-    await ensureCaddyOnProjectNetwork(sharedAgent, network)
     const resourceLimits = resolveResourceLimits(app)
     const containerEnv = {
       ...opts.env,
@@ -436,6 +434,11 @@ export async function runSwarmDeploy(
       channel,
       hasHealthcheck: Boolean(spec.healthcheck),
     })
+
+    // A fresh overlay only exists locally once a workload task has joined it.
+    // Caddy is itself a Swarm task, so Docker cannot materialize it on connect.
+    await fenceDeploySideEffect()
+    await ensureCaddyOnProjectNetwork(sharedAgent, network)
 
     if (app.domain) {
       await fenceDeploySideEffect()

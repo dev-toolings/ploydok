@@ -69,8 +69,9 @@ mock.module("./projects.js", () => ({
   ensureProjectSwarmNetwork: mock(async () => "ploydok-swarm-proj-proj-1"),
 }))
 
+const mockEnsureCaddyOnProjectNetwork = mock(async () => {})
 mock.module("../caddy/attachment.js", () => ({
-  ensureCaddyOnProjectNetwork: mock(async () => {}),
+  ensureCaddyOnProjectNetwork: mockEnsureCaddyOnProjectNetwork,
 }))
 
 mock.module("../debug/singletons.js", () => ({
@@ -918,3 +919,30 @@ it("persists the template declared entrypoint instead of the first exposed servi
     domain: row.domain,
   })
 });
+
+it("waits for a public Swarm service to materialize its overlay before ingress joins", async () => {
+  const events: string[] = []
+  mockGetServiceForUser.mockResolvedValueOnce({
+    id: "svc-overlay", project_id: "proj-1", slug: "overlay", status: "stopped",
+    runtime_mode: "swarm", swarm_service_names: [], domain: "overlay.example.test",
+    compose_raw: 'services:\n  app:\n    image: nginx:alpine\n    expose: [80]\n',
+    generated_env: {}, secrets_encrypted: true,
+  } as never)
+  mockEnsureCaddyOnProjectNetwork.mockImplementationOnce(async () => {
+    expect(events).toEqual(["create", "running"])
+    events.push("attach")
+  })
+  const swarm = {
+    ...makeSwarm(),
+    serviceCreate: mock(async () => {
+      events.push("create")
+      return { serviceId: "svc-overlay" }
+    }),
+    listServiceTasks: mock(async () => {
+      events.push("running")
+      return { tasks: [{ status: "running", running: true }] }
+    }),
+  }
+  await startService({ agent: makeAgent(), swarm, db: makeDb() }, "user-1", "svc-overlay")
+  expect(events).toEqual(["create", "running", "attach"])
+})

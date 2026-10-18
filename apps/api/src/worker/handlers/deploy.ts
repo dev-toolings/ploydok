@@ -1293,8 +1293,6 @@ export async function handleDeploy(
       )
       onLog(`[deploy] using ${composeFile.filename}`)
       const network = await ensureProjectSwarmNetwork(db, app.project_id)
-      await fenceDeploySideEffect()
-      await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
       const kindToken = `${app.slug}-${app.id}`.replace(/[^a-z0-9-]+/gi, "-")
       const plan = planComposeSwarmDeploy({
         compose: composeFile.contents,
@@ -1325,6 +1323,11 @@ export async function handleDeploy(
           replicas: entrypoint.replicas, restartPolicy: entrypoint.restartPolicy,
           onPoll: fenceDeploySideEffect,
         })
+        // Let the entrypoint materialize the overlay before connecting Caddy.
+        if (entrypoint) {
+          await fenceDeploySideEffect()
+          await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+        }
       } catch (error) {
         await runOwnedDeployReconciliation(() => removeComposeSwarmServices(swarm, names))
         throw error
