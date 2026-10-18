@@ -17,7 +17,8 @@ RUN set -eux; \
     public_css="$(find apps/web/.output/public/assets -maxdepth 1 -type f -name 'globals-*.css' -printf '%f\n' | head -n 1)"; \
     test -n "$public_css"; \
     find apps/web/.output/server -type f -name '*.mjs' \
-      -exec sed -i -E "s#/assets/globals-[A-Za-z0-9_-]+\\.css#/assets/${public_css}#g" {} +
+      -exec sed -i -E "s#/assets/globals-[A-Za-z0-9_-]+\\.css#/assets/${public_css}#g" {} +; \
+    chmod -R a+rX apps/web/.output
 
 FROM oven/bun:1.3-debian AS runtime
 WORKDIR /app
