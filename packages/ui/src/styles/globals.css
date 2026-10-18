@@ -324,9 +324,17 @@
   }
 
   /* App pages float their runtime controls at the bottom center: lift bottom
-     toasts above that bar instead of covering it. Sonner sets the offsets
-     inline, hence !important. */
-  body:has([data-slot="runtime-action-bar"])
+     toasts above that bar instead of covering it. An open modal hides the bar
+     behind its overlay, so both rules step aside and toasts fall back to the
+     viewport defaults under the dialog. Sonner sets the offsets inline, hence
+     !important. */
+  body:has([data-slot="runtime-action-bar"]):not(
+      :has(
+        [data-slot="dialog-content"][data-state="open"],
+        [data-slot="alert-dialog-content"][data-state="open"],
+        [data-slot="sheet-content"][data-state="open"]
+      )
+    )
     [data-sonner-toaster][data-y-position="bottom"] {
     --offset-bottom: calc(5.75rem + env(safe-area-inset-bottom)) !important;
     --mobile-offset-bottom: calc(5.75rem + env(safe-area-inset-bottom)) !important;
@@ -336,7 +344,13 @@
      is centered on the content column, right of the sidebar. Sonner switches
      to full-width toasts below 600px, where this does not apply. */
   @media (min-width: 600px) {
-    body:has([data-slot="runtime-action-bar"])
+    body:has([data-slot="runtime-action-bar"]):not(
+        :has(
+          [data-slot="dialog-content"][data-state="open"],
+          [data-slot="alert-dialog-content"][data-state="open"],
+          [data-slot="sheet-content"][data-state="open"]
+        )
+      )
       [data-sonner-toaster][data-y-position="bottom"][data-x-position="center"] {
       left: var(--runtime-bar-center, 50%) !important;
     }
