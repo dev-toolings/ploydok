@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { and, eq, isNull, gt } from "drizzle-orm"
+import { and, eq, isNull, gt, or } from "drizzle-orm"
 import type { Db } from "../client"
 import { api_tokens, users } from "../schema"
 import type { ApiTokenRow, UserRow } from "../schema"
@@ -130,7 +130,7 @@ export async function getActiveToken(
       and(
         eq(api_tokens.token_hash, hash),
         isNull(api_tokens.revoked_at),
-        isNull(api_tokens.expires_at) || gt(api_tokens.expires_at, now)
+        or(isNull(api_tokens.expires_at), gt(api_tokens.expires_at, now))
       )
     )
 
