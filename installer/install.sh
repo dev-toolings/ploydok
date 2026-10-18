@@ -759,8 +759,8 @@ prepare_runtime_transition() {
 }
 
 # Initialise un Swarm single-node si la machine n'en fait pas déjà partie.
-# Idempotent: si Swarm est déjà actif, on ne touche à rien (un opérateur a
-# pu joindre la machine à un cluster multi-node existant).
+# Existing Swarms must have the supported single-node topology. Keep one
+# previous task alongside the current task for diagnosis with fewer pinned images.
 ensure_swarm() {
   [[ "$RUNTIME" == "swarm" ]] || return 0
   local state
@@ -771,21 +771,20 @@ ensure_swarm() {
     [[ "$node_count" -eq 1 ]] ||
       die "Ploydok currently supports exactly one Swarm node; detected ${node_count:-an unverifiable topology}" 3
     log "Docker Swarm already active with the supported single-node topology"
-    return 0
-  fi
-  if [[ "$DRY_RUN" == "1" ]]; then
+  elif [[ "$DRY_RUN" == "1" ]]; then
     log "dry-run: docker swarm init"
-    return 0
-  fi
-  local advertise
-  advertise="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-  if [[ -n "$advertise" ]]; then
-    log "Initialising Docker Swarm (single-node, advertise-addr=$advertise)"
-    run docker swarm init --advertise-addr "$advertise"
   else
-    log "Initialising Docker Swarm (single-node)"
-    run docker swarm init
+    local advertise
+    advertise="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+    if [[ -n "$advertise" ]]; then
+      log "Initialising Docker Swarm (single-node, advertise-addr=$advertise)"
+      run docker swarm init --advertise-addr "$advertise"
+    else
+      log "Initialising Docker Swarm (single-node)"
+      run docker swarm init
+    fi
   fi
+  run docker swarm update --task-history-limit 2
 }
 
 install_cli() {

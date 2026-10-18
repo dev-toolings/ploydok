@@ -10,6 +10,20 @@
 [worker.oci]
   enabled = true
   snapshotter = "overlayfs"
+  gc = true
+
+  # Reclaim unused cache older than seven days above a small warm cache.
+  [[worker.oci.gcpolicy]]
+    keepDuration = "168h"
+    maxUsedSpace = "512MB"
+
+  # Bound reclaimable cache on small VPS disks, including shared records.
+  # Active builds may temporarily exceed these GC targets.
+  [[worker.oci.gcpolicy]]
+    all = true
+    reservedSpace = "512MB"
+    maxUsedSpace = "3GB"
+    minFreeSpace = "2GB"
 
 [registry."registry:5000"]
   http = true
