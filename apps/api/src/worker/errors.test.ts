@@ -138,4 +138,19 @@ describe("classifyAgentError", () => {
     const classified = classifyAgentError(original)
     expect(classified.message).toBe(original.message)
   })
+  it("ignores application output quoted in a rollout failure", () => {
+    // Without classifyMessage the app's "permission denied" line would make
+    // the failure fatal; only the Ploydok summary decides.
+    const summary =
+      "Swarm service x did not reach 1 healthy task(s): task a state=exited exit=1"
+    const err = Object.assign(
+      new Error(
+        `${summary}\nLast container output:\nError: open /data/db: permission denied`
+      ),
+      { classifyMessage: summary }
+    )
+    const classified = classifyAgentError(err)
+    expect(classified).toBeInstanceOf(TransientDeployError)
+    expect(classified.message).toContain("open /data/db: permission denied")
+  })
 })
