@@ -57,9 +57,9 @@ export function isCaddyIngressContainer(
 
 function caddyStatusRank(status: string | undefined): number {
   const normalized = (status ?? "").toLowerCase()
+  if (normalized.includes("unhealthy")) return 1
   if (normalized === "running" || normalized.includes("healthy")) return 3
-  if (normalized === "starting") return 2
-  if (normalized === "unhealthy") return 1
+  if (normalized.includes("starting")) return 2
   return 0
 }
 

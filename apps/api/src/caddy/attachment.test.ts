@@ -204,3 +204,29 @@ it("reconciles ingress for public marketplace services in service-only projects"
   expect(result).toEqual({ attached: 1, skipped: 0, failed: 0 });
   resetCaddyIdCache();
 });
+
+it.each([
+  ["unhealthy", "healthy", "healthy"],
+  ["unhealthy", "starting", "starting"],
+  ["Up 10s (unhealthy)", "Up 10s (healthy)", "Up 10s (healthy)"],
+])(
+  "selects the highest-ranked Caddy health status: %s before %s selects %s",
+  (firstStatus, secondStatus, expectedStatus) => {
+    const picked = pickCaddyIngressContainer([
+      {
+        id: "first",
+        name: "ploydok-caddy-1",
+        status: firstStatus,
+        kind: "infra",
+      },
+      {
+        id: "second",
+        name: "ploydok_caddy.1.task",
+        status: secondStatus,
+        kind: "infra",
+      },
+    ])
+
+    expect(picked?.status).toBe(expectedStatus)
+  }
+)
