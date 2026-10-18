@@ -41,7 +41,7 @@ export function swarmAgentFromGrpc(client: AgentClient): ComposeSwarmAgent {
   return {
     swarmEnsureSingleNode: (req) =>
       grpcUnary(client.swarmEnsureSingleNode.bind(client), req),
-    serviceCreate: (req) => grpcUnary(client.serviceCreate.bind(client), req),
+    serviceCreate: (req) => grpcUnary(client.serviceCreate.bind(client), req, 330_000),
     serviceRemove: (req) => grpcUnary(client.serviceRemove.bind(client), req),
     listServiceTasks: (req, timeoutMs) =>
       grpcUnary(client.listServiceTasks.bind(client), req, timeoutMs),
