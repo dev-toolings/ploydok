@@ -190,7 +190,10 @@ export async function fillMissingGitHubAppOwners(
 export async function listAppInstallations(
   config?: GitHubAppRow,
 ): Promise<AppInstallation[]> {
-  const configs = config ? [config] : await listGitHubAppConfigs(db);
+  // Backfill legacy owners during live discovery, outside settings page reads.
+  const configs = await fillMissingGitHubAppOwners(
+    config ? [config] : await listGitHubAppConfigs(db),
+  );
   if (configs.length === 0) {
     throw new Error("GitHub App not configured");
   }
