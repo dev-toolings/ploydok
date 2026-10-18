@@ -4,6 +4,7 @@ import { runPreDeployHook, runPostDeployHook, HookFailedError } from "./hooks"
 import type { HookContext } from "./hooks"
 import type { Agent } from "../agent/index.js"
 import { AgentError, GrpcStatus } from "../agent/errors"
+import { logBus } from "./log-bus"
 import { Metadata } from "@grpc/grpc-js"
 import { classifyAgentError, FatalDeployError } from "./errors"
 
@@ -45,7 +46,7 @@ function makeAgent(opts: {
   return {
     containerCreate: createFail
       ? mock(() => Promise.reject(new Error("create failed")))
-      : mock(() => Promise.resolve({ containerId: "hook-ctr-1" })),
+      : mock(() => Promise.resolve({ containerId: "a".repeat(64) })),
     containerStart: startFail
       ? mock(() => Promise.reject(new Error("start failed")))
       : mock(() => Promise.resolve({})),
@@ -94,7 +95,7 @@ beforeEach(() => {
 })
 
 describe("runPreDeployHook", () => {
-  it("creates policy-safe containers for both phases with uppercase and trailing separators", async () => {
+  it("satisfies strict agent create and lifecycle rules for both hook phases", async () => {
     for (const run of [runPreDeployHook, runPostDeployHook]) {
       for (const appId of ["vAabMU-x0H0WQxlqV9J1-", "A_".repeat(100), "___"]) {
         const names: string[] = []
@@ -103,15 +104,67 @@ describe("runPreDeployHook", () => {
           names.push(req.name)
           expect(req.name).toMatch(/^ploydok-[a-z0-9][a-z0-9-]{0,62}$/)
           expect(req.name).not.toContain("--")
-          return { containerId: "hook-ctr-1" }
+          // Mirror StrictValidator create rules with the installer registry allowlist.
+          expect(req.image).toBe("127.0.0.1:5000/app:tag")
+          expect(req.labels).toMatchObject({
+            "ploydok.app_id": appId,
+            "ploydok.owner_id": "owner-1",
+            "ploydok.kind": "hook",
+          })
+          expect(req.volumes).toEqual([])
+          expect(req.ports).toEqual([])
+          expect(req.healthcheck).toBeUndefined()
+          expect(req.network).toBe("ploydok-proj-1")
+          expect(req.networks).toEqual([req.network])
+          expect(req.user).toBe("")
+          expect(req.resourceLimits).toEqual({ cpu: 0.5, memoryBytes: 268435456, pidsLimit: 100 })
+          expect(req.resourceLimits!.cpu).toBeLessThanOrEqual(4)
+          expect(req.resourceLimits!.memoryBytes).toBeLessThanOrEqual(8 * 1024 ** 3)
+          return { containerId: "a".repeat(64) }
         })
+        const send = mock(() => {})
+        agent.containerExec = mock(() => ({ send, events: makeExecEvents([
+          makeFrame({ stdout: "hook output\n", stderr: "hook warning\n" }), makeFrame({ exitCode: 0 }),
+        ]), close: mock(() => {}) }))
         const result = await run({
-          db: makeDb(), agent, appId, projectId: "proj-1",
-          imageRef: "registry/app:tag", env: {}, buildId: "bld-1",
+          db: makeDb(), agent, appId, ownerId: "owner-1", projectId: "proj-1",
+          imageRef: "127.0.0.1:5000/app:tag", env: {}, buildId: "bld-1",
         }, "echo hello", 60)
         if (run === runPostDeployHook) expect(result).toEqual({ ok: true })
         expect(names).toHaveLength(1)
+        const phase = run === runPreDeployHook ? "pre" : "post"
+        const lines = logBus.replay("build:bld-1").map((entry) => entry.line)
+        expect(lines).toContain(`[hook:${phase}] hook output`)
+        expect(lines).toContain(`[hook:${phase}] [stderr] hook warning`)
+        // Start/exec/stop/remove accept Docker hex ids, and exec requires a shell.
+        const containerId = "a".repeat(64)
+        expect(agent.containerStart).toHaveBeenCalledWith({ containerId })
+        expect(send).toHaveBeenCalledWith({ start: {
+          containerId, cmd: ["sh", "-c", "echo hello"], tty: false,
+          cols: 220, rows: 50, user: "",
+        } })
+        expect(agent.containerStop).toHaveBeenCalledWith({ containerId, timeoutSeconds: 2 })
+        expect(agent.containerRemove).toHaveBeenCalledWith({ containerId, force: true, removeVolumes: false })
       }
+    }
+  })
+
+  it("fails closed and cleans up when exec is refused or ends without an exit", async () => {
+    for (const refused of [true, false]) {
+      const agent = makeAgent({})
+      agent.containerExec = mock(() => ({
+        send: mock(() => {}), close: mock(() => {}),
+        events: (async function* () {
+          if (refused) throw new Error("exec_cmd_not_allowed")
+        })(),
+      }))
+      await expect(runPreDeployHook({
+        db: makeDb(), agent, appId: "app-1", ownerId: "owner-1", projectId: "proj-1",
+        imageRef: "127.0.0.1:5000/app:tag", env: {}, buildId: "bld-1",
+      }, "echo hello", 60)).rejects.toThrow(refused ? "exec_cmd_not_allowed" : "without exit code")
+      expect(agent.containerRemove).toHaveBeenCalledWith({
+        containerId: "a".repeat(64), force: true, removeVolumes: false,
+      })
     }
   })
 
@@ -126,8 +179,8 @@ describe("runPreDeployHook", () => {
     let caught: unknown
     try {
       await runPreDeployHook({
-        db: makeDb(), agent, appId: "app-1", projectId: "proj-1",
-        imageRef: "registry/app:tag", env: {}, buildId: "bld-1",
+        db: makeDb(), agent, appId: "app-1", ownerId: "owner-1", projectId: "proj-1",
+        imageRef: "127.0.0.1:5000/app:tag", env: {}, buildId: "bld-1",
       }, "echo hello", 60)
     } catch (err) {
       caught = err
@@ -146,6 +199,7 @@ describe("runPreDeployHook", () => {
       db: makeDb(),
       agent,
       appId: "app-1",
+      ownerId: "owner-1",
       projectId: "proj-1",
       imageRef: "127.0.0.1:5000/app-1:abc",
       env: { NODE_ENV: "production" },
@@ -165,6 +219,7 @@ describe("runPreDeployHook", () => {
       db: makeDb(),
       agent,
       appId: "app-1",
+      ownerId: "owner-1",
       projectId: "proj-1",
       imageRef: "127.0.0.1:5000/app-1:abc",
       env: {},
@@ -184,6 +239,7 @@ describe("runPreDeployHook", () => {
       db: makeDb(),
       agent,
       appId: "app-1",
+      ownerId: "owner-1",
       projectId: "proj-1",
       imageRef: "127.0.0.1:5000/app-1:abc",
       env: {},
@@ -205,6 +261,7 @@ describe("runPostDeployHook", () => {
       db: makeDb(),
       agent,
       appId: "app-1",
+      ownerId: "owner-1",
       projectId: "proj-1",
       imageRef: "127.0.0.1:5000/app-1:abc",
       env: {},
@@ -226,6 +283,7 @@ describe("runPostDeployHook", () => {
       db: makeDb(),
       agent,
       appId: "app-1",
+      ownerId: "owner-1",
       projectId: "proj-1",
       imageRef: "127.0.0.1:5000/app-1:abc",
       env: {},

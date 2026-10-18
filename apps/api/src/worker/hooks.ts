@@ -42,6 +42,7 @@ export interface RunHookOptions {
   db: Db
   agent: Agent
   appId: string
+  ownerId: string
   projectId: string
   imageRef: string
   /** Merged runtime env to inject into the hook container. */
@@ -64,7 +65,7 @@ export interface RunHookOptions {
  * Always removes the ephemeral container after completion.
  */
 export async function runHook(opts: RunHookOptions): Promise<void> {
-  const { db, agent, appId, projectId, imageRef, env, hookCmd, timeoutS, buildId, phase } = opts
+  const { db, agent, appId, ownerId, projectId, imageRef, env, hookCmd, timeoutS, buildId, phase } = opts
 
   const hookLog = log.child({ appId, buildId, phase })
   hookLog.info({ hookCmd, timeoutS }, "running deploy hook")
@@ -80,7 +81,7 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
 
   const containerName = ephemeralContainerName(`hook-${phase}`, appId)
 
-  // Create ephemeral container (it will be started via ContainerExec's ExecStart)
+  // Create an idle container, start it, then run the hook through exec.
   let containerId: string
   try {
     const res = await agent.containerCreate({
@@ -98,6 +99,7 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
       labels: {
         "ploydok.kind": "hook",
         "ploydok.app_id": appId,
+        "ploydok.owner_id": ownerId,
         "ploydok.hook_phase": phase,
       },
       user: "",
@@ -109,73 +111,69 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
     throw new Error(`Failed to create ${phase}_deploy hook container: ${msg}`, { cause: err })
   }
 
-  // Start the container
+  let exitCode: number | null = null
+  let timedOut = false
   try {
     await agent.containerStart({ containerId })
-  } catch (err) {
-    await safeRemove(agent, containerId, hookLog)
-    throw err
-  }
+    publish(`container started: ${containerId}`)
 
-  publish(`container started: ${containerId}`)
+    // Open a ContainerExec bidi-stream to run the hook command
+    const exec = agent.containerExec()
 
-  // Open a ContainerExec bidi-stream to run the hook command
-  const exec = agent.containerExec()
+    // Collect exit code and stream output
+    const timeoutHandle = setTimeout(() => {
+      // Force-close the exec stream on timeout
+      timedOut = true
+      exec.close()
+    }, timeoutS * 1000)
 
-  // Send the start frame
-  exec.send({
-    start: {
-      containerId,
-      cmd: ["sh", "-c", hookCmd],
-      tty: false,
-      cols: 220,
-      rows: 50,
-      user: "",
-    },
-  })
+    try {
+      // Send the start frame
+      exec.send({
+        start: {
+          containerId,
+          cmd: ["sh", "-c", hookCmd],
+          tty: false,
+          cols: 220,
+          rows: 50,
+          user: "",
+        },
+      })
 
-  // Collect exit code and stream output
-  let exitCode = 0
-  const timeoutHandle = setTimeout(() => {
-    // Force-close the exec stream on timeout
-    exec.close()
-  }, timeoutS * 1000)
-
-  try {
-    for await (const frame of exec.events) {
-      if (frame.stdout && frame.stdout.length > 0) {
-        const text = Buffer.from(frame.stdout).toString("utf-8")
-        for (const line of text.split("\n")) {
-          if (line) publish(line)
+      for await (const frame of exec.events) {
+        if (frame.stdout && frame.stdout.length > 0) {
+          const text = Buffer.from(frame.stdout).toString("utf-8")
+          for (const line of text.split("\n")) {
+            if (line) publish(line)
+          }
+        }
+        if (frame.stderr && frame.stderr.length > 0) {
+          const text = Buffer.from(frame.stderr).toString("utf-8")
+          for (const line of text.split("\n")) {
+            if (line) publish(`[stderr] ${line}`)
+          }
+        }
+        if (frame.exit !== undefined) {
+          exitCode = frame.exit.code
+          break
         }
       }
-      if (frame.stderr && frame.stderr.length > 0) {
-        const text = Buffer.from(frame.stderr).toString("utf-8")
-        for (const line of text.split("\n")) {
-          if (line) publish(`[stderr] ${line}`)
-        }
-      }
-      if (frame.exit !== undefined) {
-        exitCode = frame.exit.code
-        break
-      }
+    } finally {
+      clearTimeout(timeoutHandle)
+      exec.close()
     }
-  } catch (err) {
-    hookLog.warn({ err }, "exec stream ended unexpectedly")
+
+    if (timedOut) throw new Error(`${phase}_deploy hook timed out after ${timeoutS}s`)
+    if (exitCode === null) throw new Error("hook exec ended without exit code")
+    publish(`exited with code ${exitCode}`)
   } finally {
-    clearTimeout(timeoutHandle)
-    exec.close()
+    try {
+      await agent.containerStop({ containerId, timeoutSeconds: 2 })
+    } catch {
+      // Already stopped or start failed; still attempt removal.
+    }
+    await safeRemove(agent, containerId, hookLog)
   }
-
-  publish(`exited with code ${exitCode}`)
-
-  // Cleanup: stop + remove
-  try {
-    await agent.containerStop({ containerId, timeoutSeconds: 2 })
-  } catch {
-    // Already stopped — ignore
-  }
-  await safeRemove(agent, containerId, hookLog)
 
   if (exitCode !== 0) {
     hookLog.warn({ exitCode, phase }, "hook failed")
@@ -205,6 +203,7 @@ export interface HookContext {
   db: Db
   agent: Agent
   appId: string
+  ownerId: string
   projectId: string
   imageRef: string
   env: Record<string, string>

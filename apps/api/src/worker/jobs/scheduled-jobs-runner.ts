@@ -23,6 +23,7 @@ import {
 } from "@ploydok/db/queries"
 import { childLogger } from "../../logger"
 import type { Agent as WrappedAgent } from "../../agent/wrapper"
+import { ensureProjectNetwork } from "../../services/projects"
 import { ephemeralContainerName, resolveRuntimeContainer } from "../../services/runtime-containers"
 
 const log = childLogger("scheduled-jobs.cron")
@@ -119,23 +120,25 @@ async function execCommandInContainer(
   let stdout = ""
   let stderr = ""
 
-  exec.send({
-    start: {
-      containerId: opts.containerId,
-      cmd: opts.command,
-      tty: false,
-      cols: 220,
-      rows: 50,
-      user: "",
-    },
-  })
-
   const timeoutHandle = setTimeout(() => {
     timedOut = true
     exec.close()
   }, opts.timeoutMs)
 
   try {
+    exec.send({
+      start: {
+        containerId: opts.containerId,
+        // The strict agent accepts shell entrypoints only. Positional arguments
+        // preserve the configured argv without evaluating its contents as shell code.
+        cmd: ["sh", "-c", 'exec "$@"', "scheduled-job", ...opts.command],
+        tty: false,
+        cols: 220,
+        rows: 50,
+        user: "",
+      },
+    })
+
     for await (const frame of exec.events) {
       if (frame.stdout?.length) {
         stdout = appendLogTail(
@@ -247,19 +250,21 @@ async function executeContainerCommand(
   }
 
   const projectRows = await db
-    .select({ network_name: projects.network_name })
+    .select({ network_name: projects.network_name, owner_id: projects.owner_id })
     .from(projects)
     .where(eq(projects.id, job.org_id))
     .limit(1)
-  const networkName = projectRows[0]?.network_name ?? null
+  const project = projectRows[0]
+  if (!project) throw new Error(`Project not found: ${job.org_id}`)
+  const networkName = project.network_name ?? await ensureProjectNetwork(db, job.org_id, agent)
 
   const created = await agent.containerCreate({
     name: ephemeralContainerName("scheduled-job", job.id),
     image,
     env: normalizeEnv(job.env),
     command: ["sleep", String(Math.ceil(timeoutMs / 1000) + 30)],
-    networks: networkName ? [networkName] : [],
-    network: networkName ?? "",
+    networks: [networkName],
+    network: networkName,
     volumes: [],
     ports: [],
     restartPolicy: "no",
@@ -270,6 +275,9 @@ async function executeContainerCommand(
     },
     labels: {
       "ploydok.kind": "scheduled-job",
+      // Standalone jobs use their own id as the workload id.
+      "ploydok.app_id": job.app_id ?? job.id,
+      "ploydok.owner_id": project.owner_id,
       "ploydok.org_id": job.org_id,
       "ploydok.scheduled_job_id": job.id,
     },
