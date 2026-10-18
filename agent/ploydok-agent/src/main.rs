@@ -31,6 +31,7 @@ use ploydok_proto::agent::agent_server::AgentServer;
 mod audit;
 mod audit_signer;
 mod boot_guard;
+mod buildkit_profile;
 mod host_stats;
 mod pki;
 #[allow(clippy::result_large_err)]
@@ -74,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     let docker = bollard::Docker::connect_with_socket_defaults()?;
     docker.ping().await?;
     info!("connected to Docker daemon");
+    buildkit_profile::spawn_reconcile_task(docker.clone());
 
     // ── Validator ────────────────────────────────────────────────────────────
     let validator = StrictValidator::from_env()?;

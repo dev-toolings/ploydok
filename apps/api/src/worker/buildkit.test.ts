@@ -7,7 +7,7 @@
  * digest parsing, and error handling without actually running BuildKit.
  */
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -336,5 +336,33 @@ describe("buildImage", () => {
     expect(logs).toContain(
       "[build] WARNING: no value for build args SITE_URL; PUBLIC_KEY defined for the runtime phase only, set the phase to build or both; define them in the app environment variables",
     );
+  });
+
+  it("gives buildctl a writable docker config outside HOME", async () => {
+    const previous = process.env["DOCKER_CONFIG"];
+    delete process.env["DOCKER_CONFIG"];
+    spawnSpy = spyOn(Bun, "spawn").mockReturnValue(
+      fakeBunProcess({}) as ReturnType<typeof Bun.spawn>,
+    );
+
+    const { buildImage } = await import("./buildkit");
+
+    try {
+      await buildImage({
+        contextDir: tmpDir,
+        dockerfile: path.join(tmpDir, "Dockerfile"),
+        imageRef: "127.0.0.1:5000/app-docker-config:sha",
+        cacheDir: path.join(tmpDir, "cache"),
+      });
+    } finally {
+      if (previous !== undefined) process.env["DOCKER_CONFIG"] = previous;
+    }
+
+    const spawnMock = spawnSpy as unknown as {
+      mock: { calls: Array<[string[], { env?: Record<string, string> }]> };
+    };
+    const dockerConfig = spawnMock.mock.calls[0]![1].env?.["DOCKER_CONFIG"];
+    expect(dockerConfig).toStartWith(path.join(os.tmpdir(), "ploydok-docker-config-"));
+    expect(existsSync(dockerConfig!)).toBe(false);
   });
 });

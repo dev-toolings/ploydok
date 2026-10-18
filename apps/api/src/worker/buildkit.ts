@@ -153,6 +153,12 @@ export async function buildImage(
     ? await mkdtemp(path.join(os.tmpdir(), "ploydok-buildx-meta-"))
     : null;
   const metadataFile = metadataDir ? path.join(metadataDir, "meta.json") : null;
+  // buildctl creates $HOME/.docker for registry auth; in production HOME is a
+  // read-only root, so give it a throwaway config under the writable /tmp.
+  const dockerConfigDir =
+    !builder && !process.env["DOCKER_CONFIG"]
+      ? await mkdtemp(path.join(os.tmpdir(), "ploydok-docker-config-"))
+      : null;
 
   const args = builder
     ? [
@@ -224,6 +230,9 @@ export async function buildImage(
     const proc = Bun.spawn([builder ? "docker" : "buildctl", ...args], {
       stdout: "pipe",
       stderr: "pipe",
+      ...(dockerConfigDir
+        ? { env: { ...process.env, DOCKER_CONFIG: dockerConfigDir } }
+        : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
 
@@ -303,6 +312,9 @@ export async function buildImage(
     }
     if (metadataDir) {
       await rm(metadataDir, { recursive: true, force: true });
+    }
+    if (dockerConfigDir) {
+      await rm(dockerConfigDir, { recursive: true, force: true });
     }
   }
 }

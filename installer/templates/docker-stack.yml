@@ -310,20 +310,22 @@ services:
         ploydok.component: registry
 
   buildkitd:
-    # NOTE: Swarm silently ignores `security_opt`, so the rootless BuildKit
-    # image can't get its seccomp relaxations and crashes. The non-rootless
-    # image runs as root inside the container and works under Swarm without
-    # any extra security flags. Acceptable trade-off here since the entire
-    # BuildKit is isolated on a non-attachable API/Registry-only overlay below.
+    # Rootless BuildKit, like the Compose descriptor. Swarm ignores
+    # `security_opt` and `docker stack deploy` resets service privileges, so
+    # the agent reapplies the relaxed AppArmor/seccomp profile this worker
+    # needs (agent/ploydok-agent/src/buildkit_profile.rs). Root BuildKit cannot
+    # run here: Swarm has no privileged mode and cgroupfs stays read-only.
     # The overlay keeps egress enabled so BuildKit can pull public base images.
-    image: moby/buildkit:v0.29.0@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
+    image: moby/buildkit:v0.29.0-rootless@sha256:93efd7f1c17f16cea080c34f68e19863b9fe541db550bf607221ce425c0ab9ef
+    user: "1000:1000"
     command:
       - --addr
       - tcp://0.0.0.0:1234
+      - --oci-worker-no-process-sandbox
       - --config
       - /etc/buildkit/buildkitd.toml
     volumes:
-      - buildkit-cache:/var/lib/buildkit
+      - buildkit-rootless-cache:/home/user/.local/share/buildkit
       - ${PLOYDOK_DATA_DIR}/config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
     networks:
       - ploydok-build
@@ -430,6 +432,6 @@ volumes:
   postgres-data:
   redis-data:
   registry-data:
-  buildkit-cache:
+  buildkit-rootless-cache:
   prometheus-data:
   alertmanager-data:
