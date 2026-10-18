@@ -42,7 +42,7 @@ export type LogSeverity = Exclude<LogLevel, "all">
 // ---------------------------------------------------------------------------
 
 const EXPLICIT_LEVEL_RE =
-  /^(?:PHP\s+)?\[(debug|info|notice|warn|warning|error|critical|alert|emergency)\]/i
+  /^(?:PHP\s+)?(?:\[(debug|info|notice|warn|warning|error|critical|alert|emergency)\]|(debug|info|notice|warn|warning|error|critical|alert|emergency):\s)/i
 
 const ERROR_PATTERNS = [
   /\[ERROR\]/i,
@@ -66,7 +66,7 @@ const INFO_PATTERNS = [/\[INFO\]/i, /INFO:/i, /\binfo\b/i]
 
 function detectExplicitLevel(text: string): LogSeverity | null {
   const match = EXPLICIT_LEVEL_RE.exec(text.trim())
-  const marker = match?.[1]?.toLowerCase()
+  const marker = (match?.[1] ?? match?.[2])?.toLowerCase()
   switch (marker) {
     case "debug":
       return "debug"
