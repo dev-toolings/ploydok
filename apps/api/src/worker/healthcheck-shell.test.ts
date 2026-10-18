@@ -15,3 +15,15 @@ it("keeps spaces, quotes, and shell syntax literal in healthcheck paths", () => 
   )
   expect(script).not.toContain(`"http://$host:8080${path}"`)
 })
+
+it("falls back to the language runtime when curl and wget are missing", () => {
+  const script = healthcheckShell(8787, "/ready")
+
+  expect(script).toContain(`command -v node`)
+  expect(script).toContain(`command -v bun`)
+  expect(script).toContain(`command -v python3`)
+  expect(script).toContain(`"http://$host"':8787/ready' && exit 0`)
+  expect(script.indexOf("command -v wget")).toBeLessThan(
+    script.indexOf("command -v node")
+  )
+})
