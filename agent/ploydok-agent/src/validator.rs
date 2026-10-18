@@ -512,6 +512,19 @@ fn image_repository(image: &str) -> Option<(&str, &str)> {
     Some((registry, repository))
 }
 
+pub(crate) fn validate_image_repository_remove(image: &str) -> ValidatorResult {
+    validate_managed_image(image)?;
+    let repository = image.split_once('/').map(|(_, repository)| repository);
+    if repository.is_none_or(|repository| repository.contains([':', '@'])) {
+        return Err(deny(
+            tonic::Code::InvalidArgument,
+            "image_remove_repository_only",
+            serde_json::json!({ "image": image }),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_managed_image(image: &str) -> ValidatorResult {
     let Some((registry, repository)) = image_repository(image) else {
         return Err(deny(
@@ -947,6 +960,9 @@ impl Validator for StrictValidator {
     }
 
     fn validate_image_remove(&self, req: &ImageRemoveRequest) -> ValidatorResult {
+        if req.all_tags {
+            validate_image_repository_remove(&req.image)?;
+        }
         validate_managed_image(&req.image)
     }
 

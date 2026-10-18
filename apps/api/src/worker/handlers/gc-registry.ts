@@ -155,12 +155,12 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
     reposScanned++
 
     // Per-app override beats the global default, unless the caller explicitly
-    // forced keepPerRepo=0 (delete-app wipes everything regardless of config).
+    // requests zero retained images. Protected runtime/rollback tags still win.
     const effectiveKeep = keepPerRepo === 0 ? 0 : (keep_per_repo ?? keepPerRepo)
 
     // Compute protected tags: latest succeeded build tied to the running
     // container, plus any build flagged by container_id. Always keep at least
-    // these even if `effectiveKeep === 0` (delete-app uses 0 to wipe everything).
+    // these even if `effectiveKeep === 0`. Permanent deletion uses deleteRepository.
     const protectedTags = await loadProtectedTags(db, appId, app)
 
     if (effectiveKeep > 0 && tags.length <= effectiveKeep) continue
@@ -249,7 +249,9 @@ export async function runRegistryGc(opts: GcOptions): Promise<GcResult> {
   )
 
   let blobReclaim: GcResult["blobReclaim"]
-  if (!skipBlobReclaim && tagsDeleted > 0) {
+  // The daily global sweep must also reclaim blobs orphaned by app deletion,
+  // even when there are no apps or no additional manifests to prune today.
+  if (!skipBlobReclaim && (tagsDeleted > 0 || !appFilter)) {
     blobReclaim = await rc.garbageCollect()
     // eslint-disable-next-line no-console
     console.log(

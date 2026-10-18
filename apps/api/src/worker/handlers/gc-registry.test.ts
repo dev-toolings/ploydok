@@ -256,13 +256,20 @@ describe("gc.registry worker", () => {
 })
 
 describe("runRegistryGc", () => {
-  it("returns zeros when no apps exist", async () => {
+  it("reclaims orphan blobs on the global sweep even when all apps are deleted", async () => {
     const db = mockDb({ apps: [] })
+    const garbageCollect = mock(async () => ({ ok: true, output: "reclaimed" }))
     const result = await runRegistryGc({
       db: db as unknown as GcOptions["db"],
-      registryClient: mockClient(),
+      registryClient: mockClient({ garbageCollect }),
     })
-    expect(result).toEqual({ reposScanned: 0, tagsDeleted: 0, bytesFreed: 0 })
+    expect(garbageCollect).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({
+      reposScanned: 0,
+      tagsDeleted: 0,
+      bytesFreed: 0,
+      blobReclaim: { ok: true, output: "reclaimed" },
+    })
   })
 
   it("skips repos with 0 tags", async () => {

@@ -15,6 +15,12 @@ import {
 import * as queueClaimMod from "../queue-claim"
 import * as queueAuditMod from "../queue-audit"
 import * as appVolumesMod from "../../services/app-volumes"
+import * as registryMod from "../registry"
+import * as singletonsMod from "../../debug/singletons"
+import { env } from "../../env"
+import { mkdtemp, mkdir, writeFile, access, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 
 mock.module("../../caddy/attachment.js", () => ({
   detachCaddyFromProjectNetwork: async () => {},
@@ -103,6 +109,126 @@ function createMockDb(options?: {
 describe("handleDeleteApp", () => {
   beforeEach(() => {
     mock.restore()
+  })
+
+  it("wipes normal and preview repositories and local images before deleting the app and its build directory", async () => {
+    const { handleDeleteApp } = await import("./delete-app")
+    const { db, updateCalls } = createMockDb()
+    const root = await mkdtemp(path.join(tmpdir(), "ploydok-delete-"))
+    const testEnv = env as { PLOYDOK_BUILD_DIR: string }
+    const previous = env.PLOYDOK_BUILD_DIR
+    testEnv.PLOYDOK_BUILD_DIR = root
+    const appDir = path.join(root, "Demo_APP")
+    const sibling = path.join(root, "other-app")
+    await mkdir(appDir)
+    await writeFile(path.join(appDir, "build.log"), "artifact")
+    await mkdir(sibling)
+    const remove = mock(async (_req: { image: string; allTags: boolean }) => ({
+      deleted: true,
+    }))
+    spyOn(singletonsMod, "getSharedAgent").mockReturnValue({
+      imageRemove: remove,
+    } as any)
+    const registry = spyOn(registryMod, "deleteRepository").mockResolvedValue({
+      tagsDeleted: 2,
+      errors: [],
+    })
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      app_id: "Demo_APP",
+      requested_by_user_id: "user-1",
+      source: "api",
+      options: { dockerCleanup: false, deleteCaddyRoutes: false },
+    })
+    try {
+      await handleDeleteApp(db, { id: "delete", payload: { jobId: "delete" } })
+      expect(registry.mock.calls).toEqual([
+        ["app-demo-app"],
+        ["preview-app-demo-app"],
+      ])
+      const hosts = [
+        ...new Set(
+          [env.PLOYDOK_REGISTRY_URL, env.PLOYDOK_REGISTRY_PUSH_URL].map((url) =>
+            url.replace(/^https?:\/\//, "")
+          )
+        ),
+      ]
+      expect(remove.mock.calls.map(([req]) => req)).toEqual(
+        ["app-demo-app", "preview-app-demo-app"].flatMap((repo) =>
+          hosts.map((host) => ({ image: `${host}/${repo}`, allTags: true }))
+        )
+      )
+      expect(db.delete).toHaveBeenCalledWith(apps)
+      await expect(access(appDir)).rejects.toThrow()
+      await access(sibling)
+      expect(updateCalls.at(-1)?.values).toMatchObject({ status: "succeeded" })
+    } finally {
+      testEnv.PLOYDOK_BUILD_DIR = previous
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("records partial image failures in the job while continuing repository cleanup and DB deletion", async () => {
+    const { handleDeleteApp } = await import("./delete-app")
+    const { db, updateCalls } = createMockDb()
+    const registry = spyOn(registryMod, "deleteRepository")
+      .mockResolvedValueOnce({
+        tagsDeleted: 1,
+        errors: ["manifest DELETE 405"],
+      })
+      .mockResolvedValueOnce({ tagsDeleted: 1, errors: [] })
+    const remove = mock(async () => {
+      throw new Error("image in use")
+    })
+    spyOn(singletonsMod, "getSharedAgent").mockReturnValue({
+      imageRemove: remove,
+    } as any)
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      app_id: "demo",
+      requested_by_user_id: "user-1",
+      source: "api",
+      options: {
+        dockerCleanup: false,
+        deleteBuildArtifacts: false,
+        deleteCaddyRoutes: false,
+      },
+    })
+    await handleDeleteApp(db, { id: "delete", payload: { jobId: "delete" } })
+    expect(registry).toHaveBeenCalledTimes(2)
+    expect(remove.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(db.delete).toHaveBeenCalledWith(apps)
+    const final = updateCalls.at(-1)?.values as {
+      status: string
+      error_message: string
+    }
+    expect(final.error_message).toContain("image in use")
+    expect(final).toMatchObject({
+      status: "failed",
+      error_message: expect.stringContaining("manifest DELETE 405"),
+    })
+  })
+
+  it("preserves images when deleteImages is false", async () => {
+    const { handleDeleteApp } = await import("./delete-app")
+    const { db } = createMockDb()
+    const registry = spyOn(registryMod, "deleteRepository").mockResolvedValue({
+      tagsDeleted: 0,
+      errors: [],
+    })
+    const agent = spyOn(singletonsMod, "getSharedAgent")
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      app_id: "demo",
+      requested_by_user_id: "user-1",
+      source: "api",
+      options: {
+        deleteImages: false,
+        dockerCleanup: false,
+        deleteBuildArtifacts: false,
+        deleteCaddyRoutes: false,
+      },
+    })
+    await handleDeleteApp(db, { id: "delete", payload: { jobId: "delete" } })
+    expect(registry).not.toHaveBeenCalled()
+    expect(agent).not.toHaveBeenCalled()
   })
 
   it("validates payload schema — throws on invalid JSON", async () => {
