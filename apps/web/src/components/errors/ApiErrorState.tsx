@@ -33,6 +33,22 @@ export function titleForStatus(code?: string, status?: number): string {
   return i18n.t("errors:somethingWentWrong")
 }
 
+function bodyForStatus(status?: number): string | undefined {
+  if (status === 401) return i18n.t("errors:notSignedInBody")
+  if (status === 403) return i18n.t("errors:forbiddenBody")
+  if (status === 404) return i18n.t("errors:notFoundBody")
+  if (status !== undefined && status >= 500)
+    return i18n.t("errors:somethingBrokeBody")
+  return undefined
+}
+
+// A client error (bad id, missing rights) fails the same way on every retry.
+export function isRetryable(code?: string, status?: number): boolean {
+  if (code === "BACKEND_UNAVAILABLE") return true
+  if (status === undefined || status === 408 || status === 429) return true
+  return status >= 500
+}
+
 // ---------------------------------------------------------------------------
 // Icons (inline SVG — no extra dep)
 // ---------------------------------------------------------------------------
@@ -113,6 +129,13 @@ export function ApiErrorState({
 }: ApiErrorStateProps): React.JSX.Element {
   const { t } = useTranslation("errors")
   const title = titleForStatus(code, status)
+  const body = code === "BACKEND_UNAVAILABLE" ? undefined : bodyForStatus(status)
+  const canRetry = onRetry !== undefined && isRetryable(code, status)
+  // Outside dev the API message is untranslated; only a 5xx carries a useful
+  // request reference.
+  const showDetail =
+    Boolean(message) &&
+    (Boolean(import.meta.env?.DEV) || (status !== undefined && status >= 500))
 
   // Dedicated branch for SECOND_FACTOR_REQUIRED: show a CTA to configure a
   // second passkey or backup codes instead of a generic error message.
@@ -164,20 +187,31 @@ export function ApiErrorState({
       )}
 
       {/* Title + message */}
-      <div className="space-y-1">
+      <div className="space-y-2">
         <h2 className="text-base font-medium text-foreground">{title}</h2>
-        {message && <p className="text-sm text-muted-foreground">{message}</p>}
+        {body ? (
+          <>
+            <p className="text-sm text-muted-foreground">{body}</p>
+            {showDetail && (
+              <p className="rounded-lg border border-panel-border/70 bg-panel-inset px-3 py-2 text-left font-mono text-xs break-words text-muted-foreground">
+                {message}
+              </p>
+            )}
+          </>
+        ) : (
+          message && <p className="text-sm text-muted-foreground">{message}</p>
+        )}
       </div>
 
       {/* Actions */}
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {onRetry && (
+        {canRetry && (
           <Button variant="default" size="sm" onClick={onRetry}>
             <RefreshIcon className="mr-1.5 size-3.5" />
             {t("common:retry")}
           </Button>
         )}
-        <Button variant="ghost" size="sm" asChild>
+        <Button variant={canRetry ? "ghost" : "default"} size="sm" asChild>
           <Link to="/dashboard">
             <HomeIcon className="mr-1.5 size-3.5" />
             {t("common:goHome")}
