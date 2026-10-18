@@ -15,6 +15,7 @@ import {
   useSearch,
 } from "@tanstack/react-router"
 import { Separator } from "@workspace/ui/components/separator"
+import { Skeleton } from "@workspace/ui/components/skeleton"
 import { createPageHead } from "../../../../../../lib/page-metadata"
 import { DeploymentsTable } from "../../../../../../components/apps/DeploymentsTable"
 import { BuildLogDrawer } from "../../../../../../components/apps/BuildLogDrawer"
@@ -183,8 +184,8 @@ function AppDeploymentsTab(): React.JSX.Element {
     select: (state) => state.location.pathname,
   })
 
-  const { data: builds, isLoading, error } = useBuilds(appId)
-  const { data: app } = useApp(appId)
+  const { data: builds, isPending: buildsPending, error } = useBuilds(appId)
+  const { data: app, isPending: appPending } = useApp(appId)
   const rollback = useRollbackApp(appId)
   const cancelBuild = useCancelBuild(appId)
 
@@ -268,7 +269,7 @@ function AppDeploymentsTab(): React.JSX.Element {
 
       <DeploymentsTable
         builds={builds ?? []}
-        isLoading={isLoading}
+        isLoading={buildsPending}
         onSelectBuild={handleSelectBuild}
         onRollback={handleRollback}
         onCancel={handleCancel}
@@ -287,6 +288,12 @@ function AppDeploymentsTab(): React.JSX.Element {
       {app ? (
         <>
           <AppBuildRuntimeSettings app={app} />
+
+          <Separator />
+        </>
+      ) : appPending ? (
+        <>
+          <Skeleton className="h-64 rounded-lg" />
 
           <Separator />
         </>
