@@ -106,6 +106,8 @@ export async function listAppsForUser(
     framework_detection: string | null
     domain: string | null
     container_id: string | null
+    runtime_mode: "docker" | "swarm"
+    swarm_service_name: string | null
     icon_url: string | null
     quick_links: string | null
     track_latest: boolean
@@ -133,6 +135,8 @@ export async function listAppsForUser(
       framework_detection: apps.framework_detection,
       domain: apps.domain,
       container_id: apps.container_id,
+      runtime_mode: apps.runtime_mode,
+      swarm_service_name: apps.swarm_service_name,
       icon_url: apps.icon_url,
       quick_links: apps.quick_links,
       track_latest: apps.track_latest,

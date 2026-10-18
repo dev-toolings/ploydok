@@ -93,6 +93,46 @@ describe("deriveLiveStatus", () => {
     expect(next).toBe("running")
   })
 
+  it("does not resurrect an uncommitted Swarm deploy from a stale task", async () => {
+    for (const taskStatus of ["starting", "unhealthy"] as const) {
+      const idx = await buildIndex([
+        snap({ id: "task-failed", appId: "app-failed", status: taskStatus }),
+      ])
+      const next = deriveLiveStatus(
+        {
+          id: "app-failed",
+          status: "failed",
+          container_id: null,
+          runtime_mode: "swarm",
+          swarm_service_name: null,
+          updated_at: STALE_UPDATED_AT,
+        },
+        idx,
+        NOW
+      )
+      expect(next).toBeNull()
+    }
+  })
+
+  it("recovers an established Swarm app from a live task", async () => {
+    const idx = await buildIndex([
+      snap({ id: "task-live", appId: "app-established", status: "running" }),
+    ])
+    const next = deriveLiveStatus(
+      {
+        id: "app-established",
+        status: "failed",
+        container_id: null,
+        runtime_mode: "swarm",
+        swarm_service_name: "ploydok-app-established",
+        updated_at: STALE_UPDATED_AT,
+      },
+      idx,
+      NOW
+    )
+    expect(next).toBe("running")
+  })
+
   it("treats unhealthy + starting as alive (no flip from running)", async () => {
     for (const status of ["unhealthy", "starting"] as const) {
       const idx = await buildIndex([snap({ id: "ctr", appId: "app", status })])
@@ -305,6 +345,34 @@ describe("reconcileAppStatusFromIndex", () => {
     )
 
     expect(out.container_id).toBeNull()
+    expect(updateCalls).toHaveLength(0)
+  })
+
+  it("leaves transitional app rows to the worker", async () => {
+    const updateCalls: Array<unknown> = []
+    const fakeDb = {
+      update: () => ({
+        set: (patch: unknown) => {
+          updateCalls.push(patch)
+          return { where: () => Promise.resolve() }
+        },
+      }),
+    } as unknown as Db
+
+    const idx = await buildIndex([
+      snap({ id: "ctr-building", appId: "app-building", status: "running" }),
+    ])
+    const row = {
+      id: "app-building",
+      status: "building",
+      container_id: null,
+      runtime_mode: "docker",
+      updated_at: FRESH_UPDATED_AT,
+    }
+
+    const out = await reconcileAppStatusFromIndex(fakeDb, row, idx)
+
+    expect(out).toBe(row)
     expect(updateCalls).toHaveLength(0)
   })
 })
