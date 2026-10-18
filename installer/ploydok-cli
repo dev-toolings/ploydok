@@ -311,6 +311,25 @@ runtime_kind() {
   fi
 }
 
+# Descriptors rendered by an older installer keep constructs that Swarm
+# ignores; the upgrade rewrites them before deploying.
+migrate_stack_descriptor() {
+  local descriptor="$1" helper
+  grep -qE '^    tmpfs:[[:space:]]*$' "$descriptor" || return 0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[ploydok-cli] dry-run: migrate service-level tmpfs to Swarm tmpfs mounts in $descriptor"
+    return 0
+  fi
+  helper="${PLOYDOK_STACK_MIGRATOR:-$(dirname -- "${BASH_SOURCE[0]}")/migrate-stack-descriptor}"
+  [[ -f "$helper" ]] || helper="$(real_path /usr/local/lib/ploydok/migrate-stack-descriptor)"
+  [[ -f "$helper" ]] || {
+    echo "stack descriptor migration required: missing migrate-stack-descriptor; rerun the signed installer for this release before upgrade" >&2
+    return 1
+  }
+  bash "$helper" "$descriptor" >/dev/null
+  echo "[ploydok-cli] migrated service-level tmpfs to Swarm tmpfs mounts in $descriptor"
+}
+
 cmd="${1:-}"
 [[ -n "$cmd" ]] || { usage >&2; exit 1; }
 shift || true
@@ -622,6 +641,10 @@ EOF
           "s#^([[:space:]]*image: ).*/ploydok-${service}[^[:space:]]*#\\1${resolved_images[$service]}#" \
           "$descriptor"
       done
+    fi
+    if [[ "$runtime" == "swarm" ]] && ! migrate_stack_descriptor "$descriptor"; then
+      run cp "$backup_descriptor" "$descriptor"
+      exit 1
     fi
 
     if [[ "$SKIP_MIGRATIONS" == "1" ]]; then

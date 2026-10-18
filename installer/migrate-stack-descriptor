@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Rewrite a rendered docker-stack.yml so it keeps working after an upgrade.
+#
+# `docker stack deploy` silently drops the service-level `tmpfs:` key, so
+# descriptors rendered before the long-syntax fix give read-only services no
+# writable /tmp. Each legacy entry becomes a long-syntax tmpfs mount in the
+# service's `volumes:` list. The rewrite is idempotent and prints `migrated`
+# when it changed the file.
+set -Eeuo pipefail
+
+descriptor="${1:?usage: migrate-stack-descriptor <docker-stack.yml>}"
+[[ -f "$descriptor" ]] || { echo "missing stack descriptor: $descriptor" >&2; exit 1; }
+grep -qE '^    tmpfs:[[:space:]]*$' "$descriptor" || exit 0
+
+tmp="$(mktemp "$(dirname -- "$descriptor")/.migrate-stack.XXXXXX")"
+trap 'rm -f -- "$tmp"' EXIT
+
+awk '
+  function bytes(value,    n, unit) {
+    if (!match(value, /^[0-9]+[kKmMgG]?$/)) return ""
+    n = value + 0
+    unit = tolower(substr(value, length(value)))
+    if (unit == "k") n *= 1024
+    else if (unit == "m") n *= 1024 * 1024
+    else if (unit == "g") n *= 1024 * 1024 * 1024
+    return sprintf("%.0f", n)
+  }
+  function mounts(service,    i, out, parts, target, size, n, opts, j) {
+    out = ""
+    for (i = 1; i <= count[service]; i++) {
+      n = split(entry[service, i], parts, ":")
+      target = parts[1]
+      size = ""
+      if (n > 1) {
+        split(parts[2], opts, ",")
+        for (j in opts) if (opts[j] ~ /^size=/) size = bytes(substr(opts[j], 6))
+      }
+      out = out "      - type: tmpfs\n        target: " target "\n"
+      if (size != "") out = out "        tmpfs:\n          size: " size "\n"
+    }
+    return out
+  }
+  # Pass 1: collect legacy tmpfs entries and which services have volumes.
+  NR == FNR {
+    if ($0 ~ /^services:[[:space:]]*$/) { inServices = 1; next }
+    if ($0 ~ /^[^[:space:]#]/) inServices = 0
+    if (!inServices) next
+    if ($0 ~ /^  [A-Za-z0-9_.-]+:[[:space:]]*$/) { svc = $1; sub(/:$/, "", svc); inTmpfs = 0; next }
+    if ($0 ~ /^    volumes:[[:space:]]*$/) hasVolumes[svc] = 1
+    if ($0 ~ /^    tmpfs:[[:space:]]*$/) { inTmpfs = 1; next }
+    if (inTmpfs && $0 ~ /^      - /) {
+      value = $0
+      sub(/^      - [[:space:]]*/, "", value)
+      gsub(/["\047]/, "", value)
+      entry[svc, ++count[svc]] = value
+      next
+    }
+    inTmpfs = 0
+    next
+  }
+  # Pass 2: drop the legacy block and emit the mounts.
+  {
+    if ($0 ~ /^services:[[:space:]]*$/) inServices = 1
+    else if ($0 ~ /^[^[:space:]#]/) inServices = 0
+    if (inServices && $0 ~ /^  [A-Za-z0-9_.-]+:[[:space:]]*$/) {
+      svc = $1; sub(/:$/, "", svc); skipping = 0
+    }
+    if (skipping) {
+      if ($0 ~ /^      - /) next
+      skipping = 0
+    }
+    if (inServices && $0 ~ /^    tmpfs:[[:space:]]*$/ && count[svc] > 0) {
+      skipping = 1
+      if (!hasVolumes[svc]) printf "    volumes:\n%s", mounts(svc)
+      next
+    }
+    print
+    if (inServices && $0 ~ /^    volumes:[[:space:]]*$/ && count[svc] > 0) printf "%s", mounts(svc)
+  }
+' "$descriptor" "$descriptor" >"$tmp"
+
+chmod --reference="$descriptor" "$tmp"
+chown --reference="$descriptor" "$tmp" 2>/dev/null || true
+mv -f -- "$tmp" "$descriptor"
+trap - EXIT
+echo migrated

@@ -58,6 +58,7 @@ assert_file "$TMP/root/etc/systemd/system/ploydok.service"
 assert_file "$TMP/root/usr/local/bin/ploydok-cli"
 assert_file "$TMP/root/usr/local/lib/ploydok/ploydok-dr"
 assert_file "$TMP/root/usr/local/lib/ploydok/verify-restored-platform"
+assert_file "$TMP/root/usr/local/lib/ploydok/migrate-stack-descriptor"
 assert_not_exists "$TMP/root/var/lib/ploydok/docker-compose.yml"
 assert_not_exists "$TMP/root/var/lib/ploydok/postgres"
 assert_not_exists "$TMP/root/var/lib/ploydok/redis"
@@ -464,6 +465,14 @@ assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/
 assert_text_contains "$swarm_upgrade_output" "bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$swarm_upgrade_output" "docker stack deploy --resolve-image always"
 assert_text_not_contains "$swarm_upgrade_output" "docker stack rm"
+assert_text_not_contains "$swarm_upgrade_output" "migrate service-level tmpfs"
+# A descriptor rendered by an older installer is migrated during the upgrade.
+sed -i '/^  api:$/a\    tmpfs:\n      - /tmp:rw,noexec,nosuid,size=256m' "$TMP/swarm-root/opt/ploydok/docker-stack.yml"
+legacy_upgrade_output="$(
+  PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
+    bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
+)"
+assert_text_contains "$legacy_upgrade_output" "migrate service-level tmpfs to Swarm tmpfs mounts in $TMP/swarm-root/opt/ploydok/docker-stack.yml"
 reinstall_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
   PLOYDOK_PUBLIC_HOST=ploydok.test bash "$ROOT/installer/install.sh" \
   --mode=takeover --skip-docker-install --yes --version=test2 2>&1)"
@@ -584,6 +593,7 @@ assert_text_not_contains "$unsigned_output" "--certificate-oidc-issuer"
 assert_text_contains "$(bash "$ROOT/installer/install.sh" --help)" "PLOYDOK_COSIGN_IDENTITY_REGEXP"
 assert_contains "$TMP/swarm-root/usr/local/lib/ploydok/update-stack.sh" 'PLOYDOK_COSIGN_IDENTITY_REGEXP:-$IDENTITY_REGEX'
 
+bash "$ROOT/installer/tests/migrate-stack-descriptor.sh"
 bash "$ROOT/installer/tests/bootstrap.sh"
 bash "$ROOT/installer/tests/disaster-recovery.sh"
 bash "$ROOT/installer/tests/release-images.sh"
