@@ -1,0 +1,89 @@
+{
+  "retrieved_on": "2026-10-16",
+  "assets": [
+    {
+      "file": "amazon-s3.svg",
+      "label": "Amazon S3",
+      "download_url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/aws-s3.svg",
+      "reference_url": "https://aws.amazon.com/architecture/icons/",
+      "sha256": "f8651024d0ff906ec599a2c2a804222d5bdf0977f78a39eb54074b29573dc3cb"
+    },
+    {
+      "file": "azure-blob-storage.svg",
+      "label": "Azure Blob Storage",
+      "download_url": "https://raw.githubusercontent.com/benc-uk/icon-collection/master/azure-icons/Blob-Block.svg",
+      "reference_url": "https://learn.microsoft.com/azure/architecture/icons/",
+      "sha256": "aa29925d5737aa74aacb2945160ce971727855a47d88fa153c21fa7f897cf4e4"
+    },
+    {
+      "file": "backblaze-b2.svg",
+      "label": "Backblaze (provider logo)",
+      "download_url": "https://raw.githubusercontent.com/selfhst/icons/main/svg/backblaze.svg",
+      "reference_url": "https://github.com/selfhst/icons",
+      "sha256": "ffd8ce8508b6a8faa6be5ba8e470c1bd878d9b27fe7b8b0a0ef3f47ad9ffbf41"
+    },
+    {
+      "file": "cloudflare-r2.svg",
+      "label": "Cloudflare R2",
+      "download_url": "https://raw.githubusercontent.com/cloudflare/cloudflare-docs/production/src/icons/r2.svg",
+      "reference_url": "https://github.com/cloudflare/cloudflare-docs",
+      "sha256": "d830439d65e19ff6bc960476595237277ab54ef241b90f09f860a4bb7890ee23"
+    },
+    {
+      "file": "digitalocean-spaces.svg",
+      "label": "DigitalOcean (provider logo)",
+      "download_url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/digital-ocean-icon.svg",
+      "reference_url": "https://www.digitalocean.com/brand",
+      "sha256": "223f8c22cf943f94533635f0b8ac9e8190ef7baed5f0ff146cf65809745dd558"
+    },
+    {
+      "file": "garage.svg",
+      "label": "Garage",
+      "download_url": "https://garagehq.deuxfleurs.fr/images/garage-logo.svg",
+      "reference_url": "https://garagehq.deuxfleurs.fr/",
+      "sha256": "53efbbb55354e0d53366263af2ea7fa09fbe6d955f99c1ce15b6871714e29e79"
+    },
+    {
+      "file": "google-cloud-storage.svg",
+      "label": "Google Cloud Storage",
+      "download_url": "https://services.google.com/fh/files/misc/core-products-icons.zip",
+      "reference_url": "https://cloud.google.com/icons",
+      "sha256": "df42fc4b652cb133a4150bea7988aa965651d2c52fdfd141b6e8a359552eec8e"
+    },
+    {
+      "file": "hetzner.svg",
+      "label": "Hetzner",
+      "download_url": "https://raw.githubusercontent.com/selfhst/icons/main/svg/hetzner.svg",
+      "reference_url": "https://github.com/selfhst/icons",
+      "sha256": "6b6a62d46ae170cae3e60bf8922bfed55667bd7a2e0aa013a72d25db1b54585a"
+    },
+    {
+      "file": "minio.svg",
+      "label": "MinIO",
+      "download_url": "https://raw.githubusercontent.com/selfhst/icons/main/svg/minio.svg",
+      "reference_url": "https://github.com/selfhst/icons",
+      "sha256": "56806e395cf6506e1b5f62c90792eb383752b9ae674f19dde43c6a5df2af3292"
+    },
+    {
+      "file": "ovhcloud.svg",
+      "label": "OVHcloud",
+      "download_url": "https://raw.githubusercontent.com/selfhst/icons/main/svg/ovh.svg",
+      "reference_url": "https://github.com/selfhst/icons",
+      "sha256": "a76fffa8aec6974c09b77cb243cfaf759470595f048961d990d28091aa1a5a1f"
+    },
+    {
+      "file": "scaleway.svg",
+      "label": "Scaleway",
+      "download_url": "https://raw.githubusercontent.com/selfhst/icons/main/svg/scaleway.svg",
+      "reference_url": "https://github.com/selfhst/icons",
+      "sha256": "83371a953381cf6603ca7b9a2a7e4164d878c386503e59614b3904a7709afcc2"
+    },
+    {
+      "file": "wasabi.svg",
+      "label": "Wasabi",
+      "download_url": "https://raw.githubusercontent.com/vectorlogozone/vectorlogozone/main/src/content/logos/wasabi/wasabi-icon.svg",
+      "reference_url": "https://wasabi.com/company/newsroom/press-kit",
+      "sha256": "89a9be818688fce9165097ae7aa29e9a5b5b2466228223b9efcf95de88b2d9dc"
+    }
+  ]
+}
