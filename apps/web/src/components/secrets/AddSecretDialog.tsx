@@ -4,7 +4,13 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
-import { NativeSelect } from "@workspace/ui/components/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 import {
   Field,
   FieldContent,
@@ -103,34 +109,42 @@ export function AddSecretDialog({
           <Field>
             <FieldLabel htmlFor="secret-scope">{t("secrets.scope")}</FieldLabel>
             <FieldContent>
-              <NativeSelect
-                id="secret-scope"
+              <Select
                 value={scope}
-                onChange={(e) => setScope(e.target.value as SecretScope)}
+                onValueChange={(next) => setScope(next as SecretScope)}
               >
-                {SCOPES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </NativeSelect>
+                <SelectTrigger id="secret-scope">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCOPES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FieldContent>
           </Field>
 
           <Field>
             <FieldLabel htmlFor="secret-phase">{t("secrets.phase")}</FieldLabel>
             <FieldContent>
-              <NativeSelect
-                id="secret-phase"
+              <Select
                 value={phase}
-                onChange={(e) => setPhase(e.target.value as SecretPhase)}
+                onValueChange={(next) => setPhase(next as SecretPhase)}
               >
-                {PHASES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </NativeSelect>
+                <SelectTrigger id="secret-phase">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PHASES.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FieldContent>
           </Field>
 
