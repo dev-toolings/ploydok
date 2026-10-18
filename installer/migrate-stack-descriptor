@@ -5,16 +5,30 @@
 # `docker stack deploy` silently drops the service-level `tmpfs:` key, so
 # descriptors rendered before the long-syntax fix give read-only services no
 # writable /tmp. Each legacy entry becomes a long-syntax tmpfs mount in the
-# service's `volumes:` list. The rewrite is idempotent and prints `migrated`
-# when it changed the file.
+# service's `volumes:` list.
+#
+# Older descriptors also restart services `on-failure` and probe the API
+# container with /health/ready. A dependency blip then fails the probe, Swarm
+# stops the API with SIGTERM, it exits 0, and nothing restarts it. Restart
+# policies become `any` and the API probe uses the /health liveness route.
+#
+# The rewrite is idempotent and prints `migrated` when it changed the file.
 set -Eeuo pipefail
 
 descriptor="${1:?usage: migrate-stack-descriptor <docker-stack.yml>}"
 [[ -f "$descriptor" ]] || { echo "missing stack descriptor: $descriptor" >&2; exit 1; }
-grep -qE '^    tmpfs:[[:space:]]*$' "$descriptor" || exit 0
+legacy_tmpfs='^    tmpfs:[[:space:]]*$'
+legacy_restart='^        condition: on-failure[[:space:]]*$'
+legacy_probe="127\.0\.0\.1:3335/health/ready'"
+grep -qE "$legacy_tmpfs|$legacy_restart|$legacy_probe" "$descriptor" || exit 0
 
 tmp="$(mktemp "$(dirname -- "$descriptor")/.migrate-stack.XXXXXX")"
-trap 'rm -f -- "$tmp"' EXIT
+trap 'rm -f -- "$tmp" "$tmp.awk"' EXIT
+
+sed -E \
+  -e "s/$legacy_restart/        condition: any/" \
+  -e "s|$legacy_probe|127.0.0.1:3335/health'|" \
+  "$descriptor" >"$tmp"
 
 awk '
   function bytes(value,    n, unit) {
@@ -78,7 +92,8 @@ awk '
     print
     if (inServices && $0 ~ /^    volumes:[[:space:]]*$/ && count[svc] > 0) printf "%s", mounts(svc)
   }
-' "$descriptor" "$descriptor" >"$tmp"
+' "$tmp" "$tmp" >"$tmp.awk"
+mv -f -- "$tmp.awk" "$tmp"
 
 chmod --reference="$descriptor" "$tmp"
 chown --reference="$descriptor" "$tmp" 2>/dev/null || true

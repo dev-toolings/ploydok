@@ -467,14 +467,14 @@ assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/
 assert_text_contains "$swarm_upgrade_output" "bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$swarm_upgrade_output" "docker stack deploy --resolve-image always"
 assert_text_not_contains "$swarm_upgrade_output" "docker stack rm"
-assert_text_not_contains "$swarm_upgrade_output" "migrate service-level tmpfs"
+assert_text_not_contains "$swarm_upgrade_output" "migrate legacy stack descriptor"
 # A descriptor rendered by an older installer is migrated during the upgrade.
 sed -i '/^  api:$/a\    tmpfs:\n      - /tmp:rw,noexec,nosuid,size=256m' "$TMP/swarm-root/opt/ploydok/docker-stack.yml"
 legacy_upgrade_output="$(
   PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
-assert_text_contains "$legacy_upgrade_output" "migrate service-level tmpfs to Swarm tmpfs mounts in $TMP/swarm-root/opt/ploydok/docker-stack.yml"
+assert_text_contains "$legacy_upgrade_output" "migrate legacy stack descriptor constructs in $TMP/swarm-root/opt/ploydok/docker-stack.yml"
 # Root BuildKit cannot run under Swarm; the upgrade asks for the installer.
 cp "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "$TMP/swarm-stack.yml"
 sed -i 's#moby/buildkit:v0.29.0-rootless@#moby/buildkit:v0.29.0@#' "$TMP/swarm-root/opt/ploydok/docker-stack.yml"

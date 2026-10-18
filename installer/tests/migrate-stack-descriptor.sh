@@ -51,6 +51,30 @@ cp "$TMP/legacy.yml" "$TMP/once.yml"
 [[ -z "$(bash "$MIGRATE" "$TMP/legacy.yml")" ]] || fail "second run must be a no-op"
 cmp -s "$TMP/legacy.yml" "$TMP/once.yml" || fail "second run changed the descriptor"
 
+# A descriptor rendered before the restart fix: readiness probe on the API,
+# `on-failure` restarts, and no tmpfs to migrate.
+cat >"$TMP/restart.yml" <<'YAML'
+services:
+  api:
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3335/health/ready');process.exit(r.ok?0:1)"]
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+  postgres:
+    deploy:
+      restart_policy:
+        condition: on-failure
+YAML
+[[ "$(bash "$MIGRATE" "$TMP/restart.yml")" == "migrated" ]] || fail "restart descriptor not reported as migrated"
+! grep -q "on-failure" "$TMP/restart.yml" || fail "on-failure restart policy left behind"
+[[ "$(grep -c '^        condition: any$' "$TMP/restart.yml")" == 2 ]] || fail "expected every restart policy to become any"
+grep -Fq "fetch('http://127.0.0.1:3335/health')" "$TMP/restart.yml" || fail "api probe not moved to liveness"
+! grep -q "health/ready" "$TMP/restart.yml" || fail "readiness probe left behind"
+grep -Fq "delay: 5s" "$TMP/restart.yml" || fail "restart delay dropped"
+[[ -z "$(bash "$MIGRATE" "$TMP/restart.yml")" ]] || fail "second restart run must be a no-op"
+
 cp "$ROOT/installer/templates/docker-stack.yml" "$TMP/current.yml"
 [[ -z "$(bash "$MIGRATE" "$TMP/current.yml")" ]] || fail "current template must not need migration"
 cmp -s "$ROOT/installer/templates/docker-stack.yml" "$TMP/current.yml" || fail "current template was rewritten"

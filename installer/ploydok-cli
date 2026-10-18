@@ -319,12 +319,13 @@ runtime_kind() {
 }
 
 # Descriptors rendered by an older installer keep constructs that Swarm
-# ignores; the upgrade rewrites them before deploying.
+# ignores or that leave a stopped service down; the upgrade rewrites them
+# before deploying. Keep these patterns aligned with migrate-stack-descriptor.
 migrate_stack_descriptor() {
   local descriptor="$1" helper
-  grep -qE '^    tmpfs:[[:space:]]*$' "$descriptor" || return 0
+  grep -qE "^    tmpfs:[[:space:]]*$|^        condition: on-failure[[:space:]]*$|127\.0\.0\.1:3335/health/ready'" "$descriptor" || return 0
   if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[ploydok-cli] dry-run: migrate service-level tmpfs to Swarm tmpfs mounts in $descriptor"
+    echo "[ploydok-cli] dry-run: migrate legacy stack descriptor constructs in $descriptor"
     return 0
   fi
   helper="${PLOYDOK_STACK_MIGRATOR:-$(dirname -- "${BASH_SOURCE[0]}")/migrate-stack-descriptor}"
@@ -334,7 +335,7 @@ migrate_stack_descriptor() {
     return 1
   }
   bash "$helper" "$descriptor" >/dev/null
-  echo "[ploydok-cli] migrated service-level tmpfs to Swarm tmpfs mounts in $descriptor"
+  echo "[ploydok-cli] migrated legacy stack descriptor constructs in $descriptor"
 }
 
 cmd="${1:-}"
