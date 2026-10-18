@@ -87,8 +87,8 @@ poser `size-4` partout aplatit les états vides et décentre les glyphes en past
 ## Champs de formulaire — une seule surface
 
 Tout champ passe par un primitive de `@workspace/ui` : `Input`, `Textarea`,
-`InputGroup`, `SelectTrigger`, ou `NativeSelect` pour un `<select>` natif. Ils
-partagent la même surface : `bg-background` (blanc dans une `Card` en clair),
+`InputGroup`, ou `Select` + `SelectTrigger` pour toute liste déroulante. Pas de
+`<select>` natif. Ils partagent la même surface : `bg-background` (blanc dans une `Card` en clair),
 `border-input`, `rounded-[10px]`, focus `ring-2 ring-ring/20`. Pas de
 `<input>`/`<select>`/`<textarea>` stylé à la main, et pas de `bg-muted` sur un
 champ en lecture seule (gris sur le gris du panel) : `ReadOnlyValue` ou `Input

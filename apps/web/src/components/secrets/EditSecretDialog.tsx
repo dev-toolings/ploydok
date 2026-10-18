@@ -8,7 +8,13 @@ import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Field, FieldContent, FieldLabel } from "@workspace/ui/components/field"
 import { Input } from "@workspace/ui/components/input"
-import { NativeSelect } from "@workspace/ui/components/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 import {
   Dialog,
   DialogContent,
@@ -118,18 +124,22 @@ export function EditSecretDialog({
                 {t("secrets.phase")}
               </FieldLabel>
               <FieldContent>
-                <NativeSelect
-                  id="edit-secret-phase"
+                <Select
                   value={phase}
-                  onChange={(e) => setPhase(e.target.value as SecretPhase)}
+                  onValueChange={(next) => setPhase(next as SecretPhase)}
                   disabled={isDatabaseManaged}
                 >
-                  {PHASES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  <SelectTrigger id="edit-secret-phase">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PHASES.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </FieldContent>
             </Field>
           </div>
