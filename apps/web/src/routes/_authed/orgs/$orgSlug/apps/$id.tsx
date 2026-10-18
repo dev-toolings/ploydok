@@ -22,7 +22,9 @@ function AppDetailLayout(): React.JSX.Element {
   const loaderData = Route.useLoaderData()
   const { data: app } = useApp(appId, { initialData: loaderData.app })
   const currentOrgSlug = useCurrentOrganizationSlug()
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const pathname = useRouterState({
+    select: (s) => (s.resolvedLocation ?? s.location).pathname,
+  })
 
   const currentApp = app
   const isLogsRoute =
