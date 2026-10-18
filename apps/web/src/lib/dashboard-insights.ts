@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { apiFetch } from "./api"
 import type { ApiError } from "./api"
 import type {
@@ -42,6 +42,7 @@ export function useDeploymentActivity(
       ),
     enabled: Boolean(orgSlug),
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -59,6 +60,7 @@ export function useDeploymentWindows(orgSlug: string, days: number) {
     },
     enabled: Boolean(orgSlug),
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 }
 

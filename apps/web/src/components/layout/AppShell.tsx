@@ -557,6 +557,12 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
+  // `location` moves as soon as a link is clicked, while the rendered matches
+  // stay on the previous page until its loader resolves. Chrome that depends
+  // on the page being shown must follow `resolvedLocation`, or it flashes.
+  const renderedPathname = useRouterState({
+    select: (state) => (state.resolvedLocation ?? state.location).pathname,
+  })
   const me = useSessionMe()
   const meLoading = me === undefined
   const { data: organizations = [], isPending: orgsLoading } =
@@ -1280,10 +1286,10 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               // the logs route needs the terminal flush to the edges, so we strip
               // padding/gap on `/apps/<id>/*` and only apply scroll. Logs also
               // disables scroll here — its internal body handles overflow.
-              resolveWrapperClass(pathname)
+              resolveWrapperClass(renderedPathname)
             )}
           >
-            {APP_DETAIL_RE.test(pathname) ? (
+            {APP_DETAIL_RE.test(renderedPathname) ? (
               children
             ) : (
               // BoardUI caps page content at 1300px and centers it; the 48px
@@ -1394,7 +1400,9 @@ function MobileSearchButton(): React.JSX.Element {
 function TopbarBreadcrumb(): React.JSX.Element | null {
   const { t } = useTranslation("common")
   const matches = useMatches()
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const pathname = useRouterState({
+    select: (s) => (s.resolvedLocation ?? s.location).pathname,
+  })
   const orgSlug = useCurrentOrganizationSlug()
 
   const appId = extractAppId(matches)
