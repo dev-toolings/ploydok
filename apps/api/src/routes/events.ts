@@ -19,6 +19,7 @@ import { z } from "zod"
 import { createDb } from "@ploydok/db"
 import { getReadState, markNotificationsRead } from "@ploydok/db/queries"
 import { eventBus } from "../worker/event-bus"
+import { readSyncStatus } from "../worker/provider-sync-status"
 import { env } from "../env"
 import type { AuthUser } from "../auth/middleware"
 
@@ -40,6 +41,15 @@ const REPLAY_LIMIT = 20
 // ---------------------------------------------------------------------------
 
 export const eventsRouter = new Hono<{ Variables: { user?: AuthUser } }>()
+
+// Exact sync receipts are not subject to notification cursors or ring eviction.
+eventsRouter.get("/provider-sync/:syncId", async (c) => {
+  const user = c.get("user")
+  if (!user) return c.json({ error: "unauthenticated" }, 401)
+  const result = await readSyncStatus(user.id, c.req.param("syncId"))
+  if (!result) return c.json({ error: "sync_not_found" }, 404)
+  return c.json(result)
+})
 
 // GET / — SSE stream for the authenticated user
 eventsRouter.get("/", async (c) => {

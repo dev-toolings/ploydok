@@ -376,6 +376,7 @@
     "imported_one": "Imported {{count}} repo in {{elapsed}}s.",
     "imported_other": "Imported {{count}} repos in {{elapsed}}s.",
     "unknownError": "Unknown error.",
+    "timedOut": "Sync status could not be confirmed within five minutes. Refresh the cache to check the result.",
     "runningHint": "Walking your provider API and writing the cache. You can close this dialog — the job keeps running in the background.",
     "importedSoFar": "Imported so far",
     "cacheTotal": "Cache total",
