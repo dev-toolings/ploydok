@@ -12,6 +12,15 @@ import * as installTokensMod from "../../github/installation-tokens"
 import * as providerReposQueries from "@ploydok/db/queries"
 import * as queues from "../queues"
 import * as queueAuditMod from "../queue-audit"
+import * as syncStatus from "../provider-sync-status"
+
+let writeStatusSpy: ReturnType<typeof spyOn>
+beforeEach(() => {
+  writeStatusSpy = spyOn(syncStatus, "writeSyncTargetStatus").mockResolvedValue(
+    undefined
+  )
+})
+afterEach(() => writeStatusSpy.mockRestore())
 
 // ---------------------------------------------------------------------------
 // Minimal mock DB
@@ -195,9 +204,14 @@ describe("handleSyncProviderRepos — GitHub fan-out", () => {
     await enqueueProviderReposSync({
       provider: "github",
       installationId: "github:999",
+      requestedBy: "actor",
+      syncId: "sync",
     })
 
     expect(mockEnqueue.mock.calls.length).toBe(1)
+    expect(writeStatusSpy).toHaveBeenCalledWith("actor", "sync", "github-999", {
+      status: "running",
+    })
     expect((mockEnqueue.mock.calls[0] as unknown[])[0]).toBe("github-999")
     expect((mockEnqueue.mock.calls[0] as unknown[])[1]).toMatchObject({
       provider: "github",
@@ -345,6 +359,8 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     await handleSyncProviderRepos(db as never, {
       provider: "github",
       installationId: "999",
+      requestedBy: "actor",
+      syncId: "sync",
     })
 
     expect(listReposSpy).toHaveBeenCalledTimes(2)
@@ -359,6 +375,10 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
     expect(installation.id).toBe("github:999")
     expect(installation.account_login).toBe("org")
     expect(rows).toHaveLength(3)
+    expect(writeStatusSpy).toHaveBeenCalledWith("actor", "sync", "github-999", {
+      status: "done",
+      totalRepos: 3,
+    })
   })
 
   it("binds a webhook-less installation to its App before listing repos", async () => {
@@ -429,8 +449,14 @@ describe("handleSyncProviderRepos — GitHub per-installation", () => {
       handleSyncProviderRepos(db as never, {
         provider: "github",
         installationId: "999",
+        requestedBy: "actor",
+        syncId: "sync",
       })
     ).rejects.toThrow("GitHub page 2 unavailable")
+    expect(writeStatusSpy).toHaveBeenCalledWith("actor", "sync", "github-999", {
+      status: "error",
+      error: "GitHub page 2 unavailable",
+    })
 
     expect(replaceSnapshotSpy).not.toHaveBeenCalled()
     expect(legacyBackfillSpy).not.toHaveBeenCalled()
@@ -538,6 +564,8 @@ describe("handleSyncProviderRepos — GitLab per-user", () => {
     await handleSyncProviderRepos(db as never, {
       provider: "gitlab",
       userId: "user-1",
+      requestedBy: "user-1",
+      syncId: "sync",
     })
 
     expect(listReposSpy).toHaveBeenCalled()
@@ -553,6 +581,10 @@ describe("handleSyncProviderRepos — GitLab per-user", () => {
     expect(rows[0]?.id).toBe("gitlab:42")
     expect(rows[0]?.full_name).toBe("group/project")
     expect(rows[0]?.provider).toBe("gitlab")
+    expect(writeStatusSpy).toHaveBeenCalledWith("user-1", "sync", "gitlab-user-1", {
+      status: "done",
+      totalRepos: 1,
+    })
 
     getGitLabConfigSpy.mockRestore()
     decryptSpy.mockRestore()

@@ -26,6 +26,7 @@ import { getGitHubAppsFingerprint } from "../../github/config-fingerprint"
 import { workerLog } from "../logger"
 import { providerReposSyncQueue } from "../queues"
 import { eventBus } from "../event-bus"
+import { writeSyncTargetStatus } from "../provider-sync-status"
 import { auditClaimed, auditUnauthorized } from "../queue-audit.js"
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,19 @@ export async function enqueueProviderReposSync(
   // Suffix with timestamp so repeated manual syncs each enqueue a fresh job
   // instead of being deduped against an already-running one.
   const jobId = `${target}-${Date.now()}`
+  if (
+    normalizedPayload.requestedBy &&
+    normalizedPayload.syncId &&
+    target !== "github-all" &&
+    target !== "gitlab-all"
+  ) {
+    await writeSyncTargetStatus(
+      normalizedPayload.requestedBy,
+      normalizedPayload.syncId,
+      target,
+      { status: "running" }
+    )
+  }
   await providerReposSyncQueue.add(target, normalizedPayload, { jobId })
 }
 
@@ -120,10 +134,45 @@ export async function handleSyncProviderRepos(
     requestedBy: payload.requestedBy,
   }
 
-  if (payload.provider === "github") {
-    await syncGitHub(db, payload.installationId, ctx)
-  } else {
-    await syncGitLab(db, payload.userId, ctx)
+  const target =
+    payload.provider === "github"
+      ? payload.installationId
+        ? `github-${normalizeGitHubInstallationId(payload.installationId)}`
+        : null
+      : payload.userId
+        ? `gitlab-${payload.userId}`
+        : null
+  let failure: string | undefined
+  try {
+    if (payload.provider === "github") {
+      await syncGitHub(db, payload.installationId, ctx)
+    } else {
+      await syncGitLab(db, payload.userId, ctx)
+    }
+  } catch (err) {
+    failure = err instanceof Error ? err.message : String(err)
+    throw err
+  } finally {
+    if (target && payload.requestedBy && payload.syncId) {
+      await writeSyncTargetStatus(
+        payload.requestedBy,
+        payload.syncId,
+        target,
+        failure !== undefined || ctx.totalRepos === undefined
+          ? {
+              status: "error",
+              error:
+                failure ??
+                "Sync ended without publishing a repository snapshot",
+            }
+          : { status: "done", totalRepos: ctx.totalRepos }
+      ).catch((err) =>
+        workerLog.warn(
+          { err, syncId: payload.syncId },
+          "failed to persist provider sync result"
+        )
+      )
+    }
   }
 }
 
@@ -133,6 +182,7 @@ export async function handleSyncProviderRepos(
 // ---------------------------------------------------------------------------
 
 interface SyncCtx {
+  totalRepos?: number
   syncId: string | undefined
   channel: string | null
   requestedBy: string | undefined
@@ -148,6 +198,12 @@ function emit(
   data: Record<string, unknown>,
   message: string
 ): void {
+  if (
+    type === "provider.sync.completed" &&
+    typeof data.totalRepos === "number"
+  ) {
+    ctx.totalRepos = data.totalRepos
+  }
   if (!ctx.channel) return
   eventBus.publish(ctx.channel, {
     type,

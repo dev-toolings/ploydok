@@ -376,6 +376,7 @@
     "imported_one": "{{count}} dépôt importé en {{elapsed}}s.",
     "imported_other": "{{count}} dépôts importés en {{elapsed}}s.",
     "unknownError": "Erreur inconnue.",
+    "timedOut": "Le statut de la synchronisation n'a pas pu être confirmé en cinq minutes. Actualisez le cache pour vérifier le résultat.",
     "runningHint": "Parcours de l'API du fournisseur et écriture du cache. Vous pouvez fermer cette boîte — le travail continue en arrière-plan.",
     "importedSoFar": "Importés pour l'instant",
     "cacheTotal": "Total du cache",

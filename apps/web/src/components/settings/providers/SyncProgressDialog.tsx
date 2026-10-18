@@ -20,13 +20,9 @@ import {
 // Status semantics
 // ---------------------------------------------------------------------------
 //
-// "running" — mutation in flight OR no installation rows have a fresh
-//             last_synced_at yet (worker hasn't written anything).
-// "done"    — every cached installation has last_synced_at >= startedAt.
-//             For empty caches this requires at least one row to appear.
-// "error"   — the enqueue mutation itself rejected (HTTP non-2xx).
-//
-// "running" is the default until the polling layer detects a "done" state.
+// "running": queued or importing, with SSE progress and receipt polling.
+// "done": every target in this sync has published its repository snapshot.
+// "error": enqueue/worker failure, or no confirmed result within five minutes.
 
 export type SyncStatus = "idle" | "running" | "done" | "error"
 
