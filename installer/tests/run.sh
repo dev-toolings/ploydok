@@ -368,8 +368,10 @@ assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "moby/buildkit:v0
 ! grep -qE '^    tmpfs:' "$TMP/swarm-root/opt/ploydok/docker-stack.yml" || { echo "docker-stack.yml must not use the service-level tmpfs key" >&2; exit 1; }
 assert_text_contains "$(sed -n '/^  api:/,/^  web:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "type: tmpfs"
 assert_text_contains "$(sed -n '/^  web:/,/^  agent:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "type: tmpfs"
-assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "buildkit-cache:/var/lib/buildkit"
-assert_text_not_contains "$(sed -n '/^  buildkitd:/,/^networks:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "buildkit-cache:/home/user/.local/share/buildkit"
+assert_contains "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "buildkit-rootless-cache:/home/user/.local/share/buildkit"
+assert_text_contains "$(sed -n '/^  buildkitd:/,/^  prometheus:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "moby/buildkit:v0.29.0-rootless@sha256:"
+assert_text_contains "$(sed -n '/^  buildkitd:/,/^  prometheus:/p' "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" "--oci-worker-no-process-sandbox"
+assert_text_not_contains "$(cat "$TMP/swarm-root/opt/ploydok/docker-stack.yml")" ":/var/lib/buildkit"
 assert_contains "$TMP/swarm-root/opt/ploydok/Caddyfile" "admin unix//run/caddy-admin/admin.sock|0660"
 assert_text_not_contains "$(cat "$TMP/swarm-root/opt/ploydok/Caddyfile")" "admin 0.0.0.0:2019"
 assert_contains "$TMP/swarm-root/opt/ploydok/CaddyAdminProxyfile" "reverse_proxy unix//run/caddy-admin/admin.sock"
@@ -473,6 +475,16 @@ legacy_upgrade_output="$(
     bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1
 )"
 assert_text_contains "$legacy_upgrade_output" "migrate service-level tmpfs to Swarm tmpfs mounts in $TMP/swarm-root/opt/ploydok/docker-stack.yml"
+# Root BuildKit cannot run under Swarm; the upgrade asks for the installer.
+cp "$TMP/swarm-root/opt/ploydok/docker-stack.yml" "$TMP/swarm-stack.yml"
+sed -i 's#moby/buildkit:v0.29.0-rootless@#moby/buildkit:v0.29.0@#' "$TMP/swarm-root/opt/ploydok/docker-stack.yml"
+if root_buildkit_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" PLOYDOK_INSTALL_SKIP_COSIGN=1 \
+  bash "$ROOT/installer/ploydok-cli" upgrade --data-dir=/var/lib/ploydok --version=test2 2>&1)"; then
+  echo "upgrade must refuse a root BuildKit descriptor" >&2
+  exit 1
+fi
+assert_text_contains "$root_buildkit_output" "rootless BuildKit migration required"
+cp "$TMP/swarm-stack.yml" "$TMP/swarm-root/opt/ploydok/docker-stack.yml"
 reinstall_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
   PLOYDOK_PUBLIC_HOST=ploydok.test bash "$ROOT/installer/install.sh" \
   --mode=takeover --skip-docker-install --yes --version=test2 2>&1)"

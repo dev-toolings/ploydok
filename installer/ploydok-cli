@@ -226,6 +226,13 @@ require_monitoring_assets() {
     }
 }
 
+require_rootless_buildkit() {
+  local descriptor="$1"
+  sed -n '/^  buildkitd:/,/^  [a-z-]*:$/p' "$descriptor" | grep -Fq -- '-rootless@sha256:' || {
+    echo "rootless BuildKit migration required; rerun the signed installer for this release before upgrade" >&2
+    exit 2
+  }
+}
 require_local_backup_mount() {
   local descriptor="$1"
   [[ -d "$(real_path "$DATA_DIR/storage")" ]] &&
@@ -549,6 +556,7 @@ EOF
     fi
     require_monitoring_assets "$descriptor"
     require_local_backup_mount "$descriptor"
+    if [[ "$runtime" == "swarm" ]]; then require_rootless_buildkit "$descriptor"; fi
     run chmod 0400 \
       "$(real_path "$DATA_DIR/secrets/metrics-token")" \
       "$(real_path "$DATA_DIR/secrets/alert-webhook-url")"
