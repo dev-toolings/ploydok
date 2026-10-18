@@ -274,8 +274,8 @@ export async function resumeServiceCreation(
   if (!claim) return false
   const token = claim.token
   let compensating = claim.saga.state === "compensating"
-  async function fence() {
-    if (!(await fenceCreationSaga(db, "service", serviceId, token))) {
+  async function fence(leaseMs = 30_000) {
+    if (!(await fenceCreationSaga(db, "service", serviceId, token, { leaseMs }))) {
       throw new Error("service creation saga lease lost")
     }
   }
@@ -451,7 +451,7 @@ export async function resumeServiceCreation(
             dependency,
             condition,
             restartPolicy: dependencySpec.restartPolicy,
-            onPoll: fence,
+            onPoll: () => fence(),
           })
           await fence()
           await db.transaction(async (tx) => {
@@ -643,7 +643,7 @@ export async function resumeServiceCreation(
             condition,
             replicas: dependencyService.replicas,
             restartPolicy: dependencyService.restartPolicy,
-            onPoll: fence,
+            onPoll: () => fence(),
           })
           await fence()
           await db.transaction(async (tx) => {
@@ -663,6 +663,8 @@ export async function resumeServiceCreation(
           })
         }
         try {
+          // A cold image pull inside serviceCreate can take up to 300s.
+          await fence(360_000)
           await swarm.serviceCreate({ spec: plannedServiceToSpec(spec) })
         } catch (error) {
           if (!isAlreadyExists(toAgentError(error))) throw error
@@ -686,7 +688,7 @@ export async function resumeServiceCreation(
           condition: "service_started",
           replicas: target.replicas,
           restartPolicy: target.restartPolicy,
-          onPoll: fence,
+          onPoll: () => fence(),
         })
         await fence()
         await ensureCaddyOnProjectNetwork(getSharedAgent(), network)

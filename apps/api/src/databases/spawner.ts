@@ -28,6 +28,9 @@ import type { DatabaseRow } from "@ploydok/db"
 const log = childLogger("databases.spawner")
 
 const AGENT_CONTAINER_NAME_RE = /^ploydok-[a-z0-9][a-z0-9-]{0,62}$/
+// Cold image pulls can take up to 300s plus RPC overhead. Keep the creation
+// lease longer than that call so reconciliation cannot steal it mid-pull.
+const DATABASE_CREATION_LEASE_MS = 360_000
 const DATABASE_HEALTHCHECK_TIMEOUT_MS = 90_000
 const DATABASE_HEALTHCHECK_POLL_MS = 1_000
 
@@ -535,11 +538,17 @@ async function provisionDatabaseCreation(
     return { id, containerId, connectionString: runtime.connectionString }
   }
 
-  const claim = await claimCreationSaga(db, "database", id)
+  const claim = await claimCreationSaga(db, "database", id, {
+    leaseMs: DATABASE_CREATION_LEASE_MS,
+  })
   if (!claim) throw new Error(`database creation saga ${id} is already claimed`)
   const token = claim.token
   const fence = async () => {
-    if (!(await fenceCreationSaga(db, "database", id, token))) {
+    if (
+      !(await fenceCreationSaga(db, "database", id, token, {
+        leaseMs: DATABASE_CREATION_LEASE_MS,
+      }))
+    ) {
       throw new Error(`database creation saga lease lost for ${id}`)
     }
   }

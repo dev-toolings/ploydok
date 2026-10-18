@@ -583,6 +583,45 @@ impl AgentService {
         }
     }
 
+    // Reuse the validated deployment pull RPC; cached images need no registry access.
+    async fn ensure_image_present(
+        &self,
+        image: &str,
+        registry_auth: Option<ploydok_proto::agent::RegistryAuth>,
+    ) -> Result<(), Status> {
+        match self.docker.inspect_image(image).await {
+            Ok(_) => return Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {}
+            Err(error) => return Err(bollard_err("inspect_image", error)),
+        }
+        let pull = async {
+            let mut stream = self
+                .image_pull(Request::new(ImagePullRequest {
+                    image: image.to_string(),
+                    registry_auth,
+                }))
+                .await?
+                .into_inner();
+            while let Some(progress) = stream.next().await {
+                progress?;
+            }
+            Ok::<(), Status>(())
+        };
+        tokio::time::timeout(Duration::from_secs(300), pull)
+            .await
+            .map_err(|_| {
+                Status::deadline_exceeded(format!("image_pull {image}: timed out after 300s"))
+            })?
+            .map_err(|error| {
+                Status::new(
+                    error.code(),
+                    format!("image_pull {image}: {}", error.message()),
+                )
+            })
+    }
+
     async fn ensure_managed_container(&self, container_id: &str) -> Result<(), Status> {
         let inspect = self
             .docker
@@ -630,6 +669,8 @@ impl Agent for AgentService {
                 audit_with_client("container_create", &req.name, Err(s.message()), &client);
             })
             .map_err(|s| *s)?;
+
+        self.ensure_image_present(&req.image, None).await?;
 
         // Build environment variables list.
         let env: Vec<String> = req.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -1105,7 +1146,12 @@ impl Agent for AgentService {
                     }
                     Err(e) => {
                         tracing::error!(image = %image, error = %e, "image_pull stream error");
-                        let _ = tx.send(Err(Status::internal(e.to_string()))).await;
+                        // Bollard's Display omits the registry's DockerStreamError detail.
+                        let detail = match e {
+                            bollard::errors::Error::DockerStreamError { error } => error,
+                            other => other.to_string(),
+                        };
+                        let _ = tx.send(Err(Status::internal(detail))).await;
                         break;
                     }
                 }
@@ -2358,6 +2404,8 @@ impl Agent for AgentService {
         self.validator
             .validate_service_create(spec)
             .map_err(|e| *e)?;
+        self.ensure_image_present(&spec.image, req.registry_auth.clone())
+            .await?;
         let service = build_swarm_service_spec(spec);
         let credentials = registry_credentials(req.registry_auth.as_ref());
         let created = self
@@ -3296,5 +3344,200 @@ mod swarm_restart_policy_tests {
             restart_condition("on-failure"),
             TaskSpecRestartPolicyConditionEnum::ON_FAILURE
         );
+    }
+}
+
+#[cfg(test)]
+mod cold_image_tests {
+    use super::*;
+    use crate::validator::PermissiveValidator;
+    use tokio::net::TcpListener;
+
+    // Script Docker HTTP responses without using a real daemon or pulling images.
+    async fn mock_docker(
+        replies: Vec<(&'static str, u16, &'static str)>,
+    ) -> (AgentService, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            for (path, status, body) in replies {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                let mut request = Vec::new();
+                loop {
+                    let mut buf = [0; 4096];
+                    let n = socket.read(&mut buf).await.expect("read request");
+                    assert!(n > 0);
+                    request.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    if let Some((headers, payload)) = text.split_once("\r\n\r\n") {
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if payload.len() >= length {
+                            break;
+                        }
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                assert!(
+                    request.lines().next().expect("request line").contains(path),
+                    "{request}"
+                );
+                socket.write_all(format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()
+                ).as_bytes()).await.expect("reply");
+            }
+        });
+        let docker = bollard::Docker::connect_with_http(
+            &format!("http://{address}"),
+            10,
+            bollard::API_DEFAULT_VERSION,
+        )
+        .expect("mock Docker client");
+        let dir = tempfile::tempdir().expect("signer directory");
+        let service = AgentService {
+            monitor: Monitor::new(docker.clone()),
+            docker,
+            validator: Arc::new(PermissiveValidator),
+            audit_signer: AuditSigner::bootstrap(dir.path()).expect("signer"),
+            host_sampler: crate::host_stats::HostSampler::new(),
+        };
+        (service, server, dir)
+    }
+
+    #[tokio::test]
+    async fn cold_container_pulls_before_create_for_every_database_engine() {
+        for image in [
+            "postgres:16-alpine",
+            "mysql:8.4",
+            "mariadb:11.4",
+            "redis:7-alpine",
+            "mongo:7",
+            "ghcr.io/tursodatabase/libsql-server:v0.24.32",
+        ] {
+            let (service, server, _dir) = mock_docker(vec![
+                ("/images/", 404, r#"{"message":"No such image"}"#),
+                ("/images/create?", 200, "{\"status\":\"Pull complete\"}\n"),
+                (
+                    "/containers/create?",
+                    201,
+                    r#"{"Id":"created","Warnings":[]}"#,
+                ),
+            ])
+            .await;
+            let response = service
+                .container_create(Request::new(ContainerCreateRequest {
+                    name: "ploydok-db-test".into(),
+                    image: image.into(),
+                    ..Default::default()
+                }))
+                .await
+                .expect("cold create");
+            assert_eq!(response.into_inner().container_id, "created");
+            server.await.expect("mock finished");
+        }
+    }
+
+    #[tokio::test]
+    async fn cached_container_does_not_pull() {
+        let (service, server, _dir) = mock_docker(vec![
+            ("/images/", 200, "{}"),
+            (
+                "/containers/create?",
+                201,
+                r#"{"Id":"cached","Warnings":[]}"#,
+            ),
+        ])
+        .await;
+        service
+            .container_create(Request::new(ContainerCreateRequest {
+                image: "redis:7-alpine".into(),
+                ..Default::default()
+            }))
+            .await
+            .expect("cached create");
+        server.await.expect("mock finished");
+    }
+
+    #[tokio::test]
+    async fn pull_failure_preserves_image_and_registry_error_and_stops_creation() {
+        let (service, server, _dir) = mock_docker(vec![
+            ("/images/", 404, r#"{"message":"No such image"}"#),
+            ("/images/create?", 200, "{\"error\":\"registry denied\"}\n"),
+        ])
+        .await;
+        let error = service
+            .container_create(Request::new(ContainerCreateRequest {
+                image: "redis:7-alpine".into(),
+                ..Default::default()
+            }))
+            .await
+            .expect_err("pull must fail");
+        assert!(error.message().contains("image_pull redis:7-alpine:"));
+        assert!(error.message().contains("registry denied"), "{error}");
+        server.await.expect("mock finished");
+    }
+
+    #[tokio::test]
+    async fn inspect_failure_does_not_attempt_a_pull() {
+        let (service, server, _dir) = mock_docker(vec![(
+            "/images/",
+            500,
+            r#"{"message":"daemon unavailable"}"#,
+        )])
+        .await;
+        let error = service
+            .ensure_image_present("redis:7-alpine", None)
+            .await
+            .expect_err("inspect fails");
+        assert!(error.message().contains("inspect_image"));
+        server.await.expect("mock finished");
+    }
+
+    #[tokio::test]
+    async fn automatic_pull_still_enforces_the_registry_allowlist() {
+        let (mut service, server, _dir) =
+            mock_docker(vec![("/images/", 404, r#"{"message":"No such image"}"#)]).await;
+        service.validator = Arc::new(crate::validator::StrictValidator::new(
+            crate::validator::ValidatorConfig::default(),
+        ));
+        let error = service
+            .ensure_image_present("untrusted.invalid/database:latest", None)
+            .await
+            .expect_err("registry must be rejected before pull");
+        assert_eq!(error.code(), tonic::Code::PermissionDenied);
+        server.await.expect("mock finished");
+    }
+
+    #[tokio::test]
+    async fn cold_swarm_service_uses_the_same_pull_path() {
+        let (service, server, _dir) = mock_docker(vec![
+            ("/images/", 404, r#"{"message":"No such image"}"#),
+            ("/images/create?", 200, "{\"status\":\"Pull complete\"}\n"),
+            (
+                "/services/create",
+                201,
+                r#"{"ID":"service-id","Warnings":[]}"#,
+            ),
+        ])
+        .await;
+        let response = service
+            .service_create(Request::new(ServiceCreateRequest {
+                spec: Some(SwarmServiceSpec {
+                    name: "ploydok-db-test".into(),
+                    image: "postgres:16-alpine".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+            .await
+            .expect("cold Swarm create");
+        assert_eq!(response.into_inner().service_id, "service-id");
+        server.await.expect("mock finished");
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect, mock } from "bun:test"
 import { Hono } from "hono"
+import { AgentError, GrpcStatus } from "../agent/errors"
 import { PgDialect } from "drizzle-orm/pg-core"
 import type { SQL } from "drizzle-orm"
 import { createDatabasesRouter } from "./databases"
@@ -16,13 +17,14 @@ mock.module("../auth/second-factor", () => ({
   ),
 }))
 
+const mockSpawnDatabase = mock(async () => ({
+  id: "db-test-id",
+  containerId: "container-123",
+  connectionString: "postgres://ploydok:secret@ploydok-db-db-test-id:5432/app",
+}))
+
 mock.module("../databases/spawner", () => ({
-  spawnDatabase: mock(async () => ({
-    id: "db-test-id",
-    containerId: "container-123",
-    connectionString:
-      "postgres://ploydok:secret@ploydok-db-db-test-id:5432/app",
-  })),
+  spawnDatabase: mockSpawnDatabase,
   getConnectionString: mock(
     async () => "postgres://ploydok:secret@ploydok-db-db-test-id:5432/app"
   ),
@@ -197,6 +199,29 @@ describe("POST /databases validation", () => {
     expect(res.status).toBe(201)
     const data = (await res.json()) as { id: string }
     expect(data.id).toBe("db-test-id")
+  })
+
+  it("returns the image pull failure instead of a generic spawn error", async () => {
+    const details = "image_pull postgres:16-alpine: registry unavailable"
+    mockSpawnDatabase.mockRejectedValueOnce(
+      new AgentError(Object.assign(new Error(details), {
+        code: GrpcStatus.INTERNAL,
+        details,
+        metadata: {} as never,
+      }))
+    )
+    const res = await wrapRouter(buildDb({ dbRow: { id: "proj-1" } })).fetch(
+      req("POST", "/", {
+        projectId: "proj-1",
+        kind: "postgres",
+        name: "mydb",
+        plan: "small",
+      })
+    )
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({
+      error: { code: "IMAGE_PULL_ERROR", message: details },
+    })
   })
 
   it("replays POST /databases by idempotency key", async () => {

@@ -207,7 +207,7 @@ export class Agent {
 
   containerCreate(
     req: ContainerCreateRequest,
-    timeoutMs?: number
+    timeoutMs: number = 330_000
   ): Promise<ContainerCreateResponse> {
     log.debug({ name: req.name, image: req.image }, "containerCreate")
     return callUnary(

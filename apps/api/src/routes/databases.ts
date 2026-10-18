@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Hono } from "hono"
+import { AgentError } from "../agent/errors"
 import { logContainers } from "../services/log-provenance"
 import type { MiddlewareHandler } from "hono"
 import { z } from "zod"
@@ -299,6 +300,13 @@ async function getDbForOwner(db: Db, dbId: string, userId: string) {
   return Boolean(rows[0])
 }
 
+function databaseSpawnError(err: unknown, fallback: string) {
+  if (err instanceof AgentError && err.details.startsWith("image_pull ")) {
+    return { code: "IMAGE_PULL_ERROR", message: err.details }
+  }
+  return { code: "SPAWN_ERROR", message: fallback }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createDatabasesRouter(db: Db): Hono<any, any, any> {
   const router = new Hono<AppEnv>()
@@ -378,10 +386,7 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
           )
           return c.json(
             {
-              error: {
-                code: "SPAWN_ERROR",
-                message: "Failed to resume database creation",
-              },
+              error: databaseSpawnError(err, "Failed to resume database creation"),
             },
             500
           )
@@ -421,7 +426,7 @@ export function createDatabasesRouter(db: Db): Hono<any, any, any> {
       }
       log.error({ err, projectId, kind, name }, "database spawn failed")
       return c.json(
-        { error: { code: "SPAWN_ERROR", message: "Failed to spawn database" } },
+        { error: databaseSpawnError(err, "Failed to spawn database") },
         500
       )
     }
