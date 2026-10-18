@@ -1,34 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import {
-  RiAmazonLine,
-  RiGoogleLine,
-  RiHardDrive3Line,
-  RiMicrosoftLine,
-  RiServerLine,
-  RiStackLine,
-} from "@remixicon/react"
+import { RiHardDrive3Line, RiStackLine } from "@remixicon/react"
 import { cn } from "@workspace/ui/lib/utils"
 import type { RemixiconComponentType } from "@remixicon/react"
 import type { StorageProviderId } from "../../lib/storage-destinations"
 
-/** Brand glyph when Remix Icon has one, a short monogram otherwise. */
 const MARKS: Record<
   StorageProviderId,
-  { icon?: RemixiconComponentType; monogram?: string; tone: string }
+  { sources: ReadonlyArray<string> } | { icon: RemixiconComponentType }
 > = {
-  aws: { icon: RiAmazonLine, tone: "text-[#ff9900]" },
-  "cloudflare-r2": { monogram: "R2", tone: "text-[#f38020]" },
-  "azure-blob": { icon: RiMicrosoftLine, tone: "text-[#0078d4]" },
-  gcs: { icon: RiGoogleLine, tone: "text-[#4285f4]" },
-  "backblaze-b2": { monogram: "B2", tone: "text-[#e21e29]" },
-  wasabi: { monogram: "W", tone: "text-[#3cb64b]" },
-  "digitalocean-spaces": { monogram: "DO", tone: "text-[#0069ff]" },
-  hetzner: { monogram: "H", tone: "text-[#d50c2d]" },
-  scaleway: { monogram: "SW", tone: "text-[#4f0599] dark:text-[#a77ce0]" },
-  ovhcloud: { monogram: "OVH", tone: "text-[#123f6d] dark:text-[#6fa8e6]" },
-  minio: { icon: RiServerLine, tone: "text-[#c72e49]" },
-  "s3-compatible": { icon: RiStackLine, tone: "text-muted-foreground" },
-  local: { icon: RiHardDrive3Line, tone: "text-muted-foreground" },
+  aws: { sources: ["amazon-s3"] },
+  "cloudflare-r2": { sources: ["cloudflare-r2"] },
+  "azure-blob": { sources: ["azure-blob-storage"] },
+  gcs: { sources: ["google-cloud-storage"] },
+  "backblaze-b2": { sources: ["backblaze-b2"] },
+  wasabi: { sources: ["wasabi"] },
+  "digitalocean-spaces": { sources: ["digitalocean-spaces"] },
+  hetzner: { sources: ["hetzner"] },
+  scaleway: { sources: ["scaleway"] },
+  ovhcloud: { sources: ["ovhcloud"] },
+  minio: { sources: ["minio", "garage"] },
+  "s3-compatible": { icon: RiStackLine },
+  local: { icon: RiHardDrive3Line },
 }
 
 export function ProviderMark({
@@ -39,23 +31,31 @@ export function ProviderMark({
   className?: string
 }): React.JSX.Element {
   const mark = MARKS[provider]
-  const Icon = mark.icon
+  const Icon = "icon" in mark ? mark.icon : undefined
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "inline-flex size-10 shrink-0 items-center justify-center rounded-lg border border-panel-border/70 bg-panel-inset",
-        mark.tone,
+        "inline-flex size-10 shrink-0 items-center justify-center gap-0.5 rounded-lg border border-panel-border/70",
+        "sources" in mark ? "bg-white" : "bg-panel-inset text-muted-foreground",
         className
       )}
     >
-      {Icon ? (
-        <Icon className="size-5" />
-      ) : (
-        <span className="text-xs font-semibold tracking-tight">
-          {mark.monogram}
-        </span>
-      )}
+      {"sources" in mark &&
+        mark.sources.map((source) => (
+          <img
+            key={source}
+            src={`/icons/storage/${source}.svg`}
+            alt=""
+            width={20}
+            height={20}
+            className={cn(
+              "shrink-0 object-contain",
+              mark.sources.length > 1 ? "size-3.5" : "size-5"
+            )}
+          />
+        ))}
+      {Icon && <Icon className="size-5" />}
     </span>
   )
 }
