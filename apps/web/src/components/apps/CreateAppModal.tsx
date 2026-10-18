@@ -621,6 +621,13 @@ export function CreateAppModal({
     form.rootDir || undefined,
     organizationId
   )
+  const requiredBuildArgs = React.useMemo(
+    () =>
+      form.source !== "image" && form.buildMethod === "docker"
+        ? (selectedTarget?.requiredBuildArgs ?? [])
+        : [],
+    [form.source, form.buildMethod, selectedTarget?.requiredBuildArgs]
+  )
   const targetClassification = selectedTarget?.classification ?? null
   const classification = targetClassification ?? classifier.data ?? null
   const explainableClassification = asExplainableClassification(classification)
@@ -816,6 +823,25 @@ export function CreateAppModal({
   }, [recommendedPreset, classification?.suggestedStartCommand])
 
   React.useEffect(() => {
+    if (requiredBuildArgs.length === 0) return
+    setForm((prev) => {
+      const existing = new Set(prev.initialEnvVars.map((item) => item.key))
+      const additions = requiredBuildArgs
+        .filter((key) => !existing.has(key))
+        .map(
+          (key): InitialEnvVar => ({
+            id: `required-build-arg-${key}`,
+            key,
+            value: "",
+            phase: "build",
+          })
+        )
+      if (additions.length === 0) return prev
+      return { ...prev, initialEnvVars: [...prev.initialEnvVars, ...additions] }
+    })
+  }, [requiredBuildArgs])
+
+  React.useEffect(() => {
     if (classification?.stack !== "symfony") return
     setForm((prev) => {
       const existing = new Set(prev.initialEnvVars.map((item) => item.key))
@@ -945,7 +971,10 @@ export function CreateAppModal({
       return form.selectedRepo !== null && form.branch.length > 0
     }
     if (currentStep === "env")
-      return validateInitialEnvVars(form.initialEnvVars)
+      return (
+        validateInitialEnvVars(form.initialEnvVars) &&
+        missingBuildArgs(form.initialEnvVars, requiredBuildArgs).length === 0
+      )
     if (currentStep === "build") {
       if (!isBuildConfigValid(form)) return false
       if (
@@ -1196,7 +1225,10 @@ export function CreateAppModal({
 
             <div className="my-4 h-px bg-border" />
 
-            <SummaryCard form={form} />
+            <SummaryCard
+              form={form}
+              embeddedSqlite={Boolean(selectedTarget?.sqliteFiles?.length)}
+            />
           </aside>
 
           <div className="flex min-h-0 flex-col">
@@ -1246,6 +1278,7 @@ export function CreateAppModal({
                 <ResourcesStep
                   form={form}
                   classification={classification}
+                  embeddedSqlite={Boolean(selectedTarget?.sqliteFiles?.length)}
                   value={form.plan}
                   onChange={(v) => setField("plan", v)}
                 />
@@ -1254,6 +1287,7 @@ export function CreateAppModal({
                 <EnvStep
                   vars={form.initialEnvVars}
                   onChange={(vars) => setField("initialEnvVars", vars)}
+                  requiredBuildArgs={requiredBuildArgs}
                   classification={classification}
                   probes={classifier.probes}
                   source={form.source}
@@ -1288,6 +1322,7 @@ export function CreateAppModal({
                   onChange={(database) => setField("database", database)}
                   databases={databases ?? []}
                   isLoading={databasesLoading}
+                  sqliteFiles={selectedTarget?.sqliteFiles ?? []}
                 />
               )}
 
@@ -1549,7 +1584,13 @@ export function BranchSelectionDialog({
 // Sidebar — live summary
 // ---------------------------------------------------------------------------
 
-function SummaryCard({ form }: { form: FormState }): React.JSX.Element {
+function SummaryCard({
+  form,
+  embeddedSqlite,
+}: {
+  form: FormState
+  embeddedSqlite: boolean
+}): React.JSX.Element {
   const { t } = useTranslation("apps")
   const sourceLabel: Record<SourceKind, string> = {
     github: t("create.github"),
@@ -1559,7 +1600,9 @@ function SummaryCard({ form }: { form: FormState }): React.JSX.Element {
   const envCount = form.initialEnvVars.filter((item) => item.key.trim()).length
   const databaseValue =
     form.database.mode === "none"
-      ? "—"
+      ? embeddedSqlite
+        ? "SQLite"
+        : "—"
       : form.database.mode === "existing"
         ? t("create.existingValue")
         : form.database.newDatabaseName || t("create.newValue")
@@ -3032,11 +3075,13 @@ function BuildStep({
 function ResourcesStep({
   form,
   classification,
+  embeddedSqlite,
   value,
   onChange,
 }: {
   form: FormState
   classification: StackClassification | null
+  embeddedSqlite: boolean
   value: PlanSelectorValue
   onChange: (v: PlanSelectorValue) => void
 }): React.JSX.Element {
@@ -3060,7 +3105,9 @@ function ResourcesStep({
           : form.buildMethod
   const databaseValue =
     form.database.mode === "none"
-      ? t("create.noneValue")
+      ? embeddedSqlite
+        ? t("create.embeddedSqlite")
+        : t("create.noneValue")
       : form.database.mode === "existing"
         ? t("create.existingDatabaseValue")
         : t("create.newDatabaseValue", {
@@ -3371,6 +3418,20 @@ function LaravelRuntimePanel({
   )
 }
 
+/** Required build args still present in the list without a build-time value. */
+function missingBuildArgs(
+  vars: Array<InitialEnvVar>,
+  required: ReadonlyArray<string>
+): Array<string> {
+  return required.filter((key) =>
+    vars.some(
+      (item) =>
+        item.key.trim() === key &&
+        (!item.value || item.phase === "runtime")
+    )
+  )
+}
+
 function validateInitialEnvVars(vars: Array<InitialEnvVar>): boolean {
   const seen = new Set<string>()
   for (const item of vars) {
@@ -3522,11 +3583,13 @@ function DatabaseStep({
   onChange,
   databases,
   isLoading,
+  sqliteFiles,
 }: {
   value: DatabaseSelection
   onChange: (value: DatabaseSelection) => void
   databases: Array<Database>
   isLoading: boolean
+  sqliteFiles: Array<string>
 }): React.JSX.Element {
   const { t } = useTranslation("apps")
   const runningDatabases = databases.filter((db) => db.status === "running")
@@ -3551,7 +3614,11 @@ function DatabaseStep({
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              <SelectItem value="none">{t("create.noDatabase")}</SelectItem>
+              <SelectItem value="none">
+                {sqliteFiles.length > 0
+                  ? t("create.embeddedSqliteOption")
+                  : t("create.noDatabase")}
+              </SelectItem>
               <SelectItem value="existing">
                 {t("create.linkExisting")}
               </SelectItem>
@@ -3560,6 +3627,34 @@ function DatabaseStep({
           </SelectContent>
         </Select>
       </section>
+
+      {sqliteFiles.length > 0 && (
+        <section className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">
+                {t("create.sqliteDetected")}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("create.sqliteDetectedHint")}
+              </p>
+            </div>
+            <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 font-sans text-xs font-semibold text-primary">
+              SQLite
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {sqliteFiles.map((file) => (
+              <li
+                key={file}
+                className="truncate font-mono text-xs text-muted-foreground"
+              >
+                {file}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {value.mode !== "none" && (
         <section className="flex flex-col gap-2">
@@ -3704,9 +3799,11 @@ function EnvStep({
   rootDir,
   database,
   databases,
+  requiredBuildArgs,
 }: {
   vars: Array<InitialEnvVar>
   onChange: (vars: Array<InitialEnvVar>) => void
+  requiredBuildArgs: ReadonlyArray<string>
   classification: StackClassification | null
   probes: ProbeResults | undefined
   source: SourceKind
@@ -3944,6 +4041,30 @@ function EnvStep({
         {classification?.stack === "symfony" && (
           <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
             {t("create.symfonyDetected")}
+          </div>
+        )}
+
+        {requiredBuildArgs.length > 0 && (
+          <div
+            className={cn(
+              "rounded-md border px-3 py-2 text-xs",
+              missingBuildArgs(vars, requiredBuildArgs).length > 0
+                ? "border-amber-500/30 bg-amber-50 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+                : "border-border bg-muted/30 text-muted-foreground"
+            )}
+          >
+            <p className="font-medium">{t("create.requiredBuildArgs")}</p>
+            <p className="mt-1">{t("create.requiredBuildArgsHint")}</p>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {requiredBuildArgs.map((key) => (
+                <code
+                  key={key}
+                  className="rounded bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+                >
+                  {key}
+                </code>
+              ))}
+            </div>
           </div>
         )}
 

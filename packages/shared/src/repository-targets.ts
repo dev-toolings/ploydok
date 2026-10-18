@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { parseDockerfileArgs, requiredDockerfileArgs } from "./dockerfile-args"
 import {
   ALL_PROBE_KEYS,
   MANIFEST_FILE_PROBE_KEYS,
@@ -21,6 +22,29 @@ export class ManifestTooLargeError extends Error {
 export interface RepositoryTarget {
   rootDir: string
   classification: StackClassification
+  /** Versioned SQLite files under this root: embedded, not a managed service. */
+  sqliteFiles?: string[]
+  /** Dockerfile `ARG`s without a default: the build needs a value for each. */
+  requiredBuildArgs?: string[]
+}
+
+const SQLITE_FILE = /\.(sqlite3?|db3)$/i
+const MAX_SQLITE_FILES = 5
+
+function sqliteFilesUnder(files: Set<string>, rootDir: string): string[] {
+  const prefix = rootDir === "." ? "" : `${rootDir}/`
+  return [...files]
+    .filter((file) => file.startsWith(prefix) && SQLITE_FILE.test(file))
+    .sort()
+    .slice(0, MAX_SQLITE_FILES)
+}
+
+function withSqliteFiles(
+  target: RepositoryTarget,
+  files: Set<string>
+): RepositoryTarget {
+  const sqliteFiles = sqliteFilesUnder(files, target.rootDir)
+  return sqliteFiles.length > 0 ? { ...target, sqliteFiles } : target
 }
 
 const markers = ALL_PROBE_KEYS.filter(
@@ -42,6 +66,19 @@ const ignoredDirectories = new Set([
   ".output",
   ".next",
 ])
+
+async function readRequiredBuildArgs(
+  path: string,
+  readFile: (path: string) => Promise<string>
+): Promise<string[]> {
+  try {
+    return requiredDockerfileArgs(parseDockerfileArgs(await readFile(path)))
+  } catch (error) {
+    // An oversized Dockerfile only loses the hint, never the detection.
+    if (error instanceof ManifestTooLargeError) return []
+    throw error
+  }
+}
 
 /** Paths come from a provider tree or a cloned Git index, never guessed folders. */
 export async function discoverRepositoryTargets(
@@ -87,7 +124,17 @@ export async function discoverRepositoryTargets(
       explicit.recommendedBuild === "dockerfile" ||
       explicit.recommendedBuild === "compose"
     ) {
-      targets.push({ rootDir, classification: explicit })
+      const target = withSqliteFiles(
+        { rootDir, classification: explicit },
+        files
+      )
+      const requiredBuildArgs =
+        explicit.recommendedBuild === "dockerfile"
+          ? await readRequiredBuildArgs(`${prefix}Dockerfile`, readFile)
+          : []
+      targets.push(
+        requiredBuildArgs.length > 0 ? { ...target, requiredBuildArgs } : target
+      )
       continue
     }
     const manifests: ManifestContents = {}
@@ -139,7 +186,7 @@ export async function discoverRepositoryTargets(
     if (pom && /<packaging>\s*pom\s*<\/packaging>/.test(pom)) continue
     const classification = classifyStackWithManifests(probes, manifests)
     if (classification.stack !== "unknown" || classification.ambiguous)
-      targets.push({ rootDir, classification })
+      targets.push(withSqliteFiles({ rootDir, classification }, files))
   }
   return targets
 }

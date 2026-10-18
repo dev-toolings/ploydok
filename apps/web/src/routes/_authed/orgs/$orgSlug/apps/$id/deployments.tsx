@@ -15,6 +15,7 @@ import {
   useSearch,
 } from "@tanstack/react-router"
 import { Separator } from "@workspace/ui/components/separator"
+import { Skeleton } from "@workspace/ui/components/skeleton"
 import { createPageHead } from "../../../../../../lib/page-metadata"
 import { DeploymentsTable } from "../../../../../../components/apps/DeploymentsTable"
 import { BuildLogDrawer } from "../../../../../../components/apps/BuildLogDrawer"
@@ -141,6 +142,19 @@ function DeploymentLiveBanner({ appId }: { appId: string }): React.JSX.Element {
           ? t("deployments.liveReconnecting")
           : t("deployments.liveConnecting")
 
+  if (status === "connecting" && !latest) {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2"
+        aria-busy="true"
+        aria-label={label}
+      >
+        <span className="size-2 shrink-0 rounded-full skeleton-surface" />
+        <span className="h-2.5 w-24 rounded skeleton-surface" />
+      </div>
+    )
+  }
+
   return (
     <div
       className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
@@ -183,8 +197,8 @@ function AppDeploymentsTab(): React.JSX.Element {
     select: (state) => state.location.pathname,
   })
 
-  const { data: builds, isLoading, error } = useBuilds(appId)
-  const { data: app } = useApp(appId)
+  const { data: builds, isPending: buildsPending, error } = useBuilds(appId)
+  const { data: app, isPending: appPending } = useApp(appId)
   const rollback = useRollbackApp(appId)
   const cancelBuild = useCancelBuild(appId)
 
@@ -268,7 +282,7 @@ function AppDeploymentsTab(): React.JSX.Element {
 
       <DeploymentsTable
         builds={builds ?? []}
-        isLoading={isLoading}
+        isLoading={buildsPending}
         onSelectBuild={handleSelectBuild}
         onRollback={handleRollback}
         onCancel={handleCancel}
@@ -287,6 +301,12 @@ function AppDeploymentsTab(): React.JSX.Element {
       {app ? (
         <>
           <AppBuildRuntimeSettings app={app} />
+
+          <Separator />
+        </>
+      ) : appPending ? (
+        <>
+          <Skeleton className="h-64 rounded-lg" />
 
           <Separator />
         </>

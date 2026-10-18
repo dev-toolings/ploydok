@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 import {
   RiCheckLine,
   RiCloseLine,
@@ -209,6 +210,7 @@ export function BuildLogDrawer({
   appName,
   onClose,
 }: BuildLogDrawerProps): React.JSX.Element {
+  const { t } = useTranslation("apps")
   const isOpen = Boolean(buildId)
   const isTerminalBuild = build
     ? build.status !== "pending" && build.status !== "running"
@@ -277,13 +279,13 @@ export function BuildLogDrawer({
   const failureDetails =
     build?.status === "failed" && build.errorMessage
       ? {
-          title: "Build failed",
+          title: t("deployments.buildFailed"),
           tone: "red" as const,
           message: build.errorMessage,
         }
       : build?.status === "succeeded_with_warning" && build.postDeployError
         ? {
-            title: "Post-deploy hook failed",
+            title: t("deployments.postDeployFailed"),
             tone: "amber" as const,
             message: build.postDeployError,
           }
@@ -346,14 +348,14 @@ export function BuildLogDrawer({
                   </span>
                 )}
                 {build.postDeployError && (
-                  <span className="inline-flex items-center gap-1 text-amber-400">
+                  <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
                     <RiErrorWarningLine className="size-3" aria-hidden="true" />
                     post-deploy hook failed
                   </span>
                 )}
                 {build.errorMessage && (
                   <span
-                    className="inline-flex min-w-0 items-center gap-1 text-red-400"
+                    className="inline-flex min-w-0 items-center gap-1 text-red-600 dark:text-red-400"
                     title={build.errorMessage}
                   >
                     <RiErrorWarningLine className="size-3" aria-hidden="true" />
@@ -409,8 +411,8 @@ export function BuildLogDrawer({
             className={cn(
               "shrink-0 border-b px-4 py-3",
               failureDetails.tone === "red"
-                ? "border-red-500/25 bg-red-500/10"
-                : "border-amber-500/25 bg-amber-500/10"
+                ? "border-red-500/30 bg-red-50 dark:bg-red-500/10"
+                : "border-amber-500/30 bg-amber-50 dark:bg-amber-500/10"
             )}
           >
             <div className="flex items-start gap-2">
@@ -418,8 +420,8 @@ export function BuildLogDrawer({
                 className={cn(
                   "mt-0.5 size-4 shrink-0",
                   failureDetails.tone === "red"
-                    ? "text-red-300"
-                    : "text-amber-300"
+                    ? "text-red-600 dark:text-red-300"
+                    : "text-amber-600 dark:text-amber-300"
                 )}
                 aria-hidden="true"
               />
@@ -428,8 +430,8 @@ export function BuildLogDrawer({
                   className={cn(
                     "text-xs font-semibold",
                     failureDetails.tone === "red"
-                      ? "text-red-200"
-                      : "text-amber-200"
+                      ? "text-red-700 dark:text-red-200"
+                      : "text-amber-700 dark:text-amber-200"
                   )}
                 >
                   {failureDetails.title}
@@ -438,8 +440,8 @@ export function BuildLogDrawer({
                   className={cn(
                     "mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed",
                     failureDetails.tone === "red"
-                      ? "text-red-100/90"
-                      : "text-amber-100/90"
+                      ? "text-red-900 dark:text-red-100/90"
+                      : "text-amber-900 dark:text-amber-100/90"
                   )}
                 >
                   {failureDetails.message}

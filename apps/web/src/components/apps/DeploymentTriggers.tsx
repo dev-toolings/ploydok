@@ -45,23 +45,21 @@ export function DeploymentTriggers({
   const { t } = useTranslation("apps")
   const { data: app, isLoading, error } = useApp(appId)
 
-  if (isLoading) {
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>{t("triggers.failed")}</AlertTitle>
+        <AlertDescription>{error.message}</AlertDescription>
+      </Alert>
+    )
+  }
+
+  if (isLoading || !app) {
     return (
       <div className="grid gap-4 sm:grid-cols-2">
         <Skeleton className="h-72 rounded-lg" />
         <Skeleton className="h-72 rounded-lg" />
       </div>
-    )
-  }
-
-  if (error || !app) {
-    return (
-      <Alert variant="destructive">
-        <AlertTitle>{t("triggers.failed")}</AlertTitle>
-        <AlertDescription>
-          {error?.message ?? t("triggers.notFound")}
-        </AlertDescription>
-      </Alert>
     )
   }
 

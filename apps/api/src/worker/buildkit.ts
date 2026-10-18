@@ -13,6 +13,8 @@
 import path from "node:path";
 import os from "node:os";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { parseDockerfileArgs, requiredDockerfileArgs } from "@ploydok/shared";
+import type { DockerfileArg } from "@ploydok/shared";
 import { env } from "../env";
 
 // ---------------------------------------------------------------------------
@@ -35,9 +37,11 @@ export interface BuildImageOptions {
   buildArgs?: Record<string, string>;
   /**
    * Build secrets mounted via BuildKit `RUN --mount=type=secret,id=...`.
-   * The same values are also exposed as build args by the caller when needed.
+   * Keys the Dockerfile declares with `ARG` are also passed as build args.
    */
   buildSecrets?: Record<string, string>;
+  /** Variables defined for the runtime phase only, never sent to the build. */
+  runtimeOnlyEnvKeys?: readonly string[];
   /** Called for every log line emitted by buildctl on stdout/stderr. */
   onLog?: (line: string) => void;
   /** Cancels the active buildctl process on deploy cancellation/lease loss. */
@@ -52,6 +56,31 @@ export interface BuildImageResult {
 }
 
 const BUILDX_SCHEME = "buildx://";
+const FAILURE_TAIL_LINES = 200;
+async function readDockerfileArgs(file: string): Promise<DockerfileArg[]> {
+  try {
+    return parseDockerfileArgs(await readFile(file, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+/** Root cause of a failed BuildKit run, from its plain progress output. */
+export function summarizeBuildFailure(lines: readonly string[]): string | null {
+  const stripStep = (line: string) => line.replace(/^#\d+\s+(?:\d+\.\d+\s+)?/, "").trim();
+  const errors = lines
+    .map(stripStep)
+    .filter((line) => /^ERROR:\s/.test(line))
+    .map((line) =>
+      line
+        .replace(/^ERROR:\s+/, "")
+        .replace(/^(?:failed to (?:build|solve):\s*)+/i, "")
+    );
+  const cause = errors.at(-1);
+  if (!cause) return null;
+  const location = lines.map(stripStep).find((line) => /^Dockerfile[^\s:]*:\d+$/.test(line));
+  return location ? `${location}: ${cause}` : cause;
+}
 
 /** Builder name when the address selects Docker buildx, otherwise null. */
 export function buildxBuilderName(addr: string): string | null {
@@ -89,6 +118,37 @@ export async function buildImage(
   const dockerfileName = path.basename(opts.dockerfile);
 
   const builder = buildxBuilderName(addr);
+  const declaredArgs = await readDockerfileArgs(opts.dockerfile);
+  const buildArgs: Record<string, string> = {};
+  for (const { name } of declaredArgs) {
+    const value = opts.buildSecrets?.[name];
+    if (value !== undefined) buildArgs[name] = value;
+  }
+  Object.assign(buildArgs, opts.buildArgs);
+  const missingArgs = requiredDockerfileArgs(declaredArgs).filter(
+    (name) => !buildArgs[name]
+  );
+  if (Object.keys(buildArgs).length > 0) {
+    opts.onLog?.(`[build] build args: ${Object.keys(buildArgs).join(", ")}`);
+  }
+  const runtimeOnly = new Set(opts.runtimeOnlyEnvKeys ?? []);
+  const runtimeOnlyArgs = missingArgs.filter((name) => runtimeOnly.has(name));
+  const undefinedArgs = missingArgs.filter((name) => !runtimeOnly.has(name));
+  const missingHint = [
+    undefinedArgs.length > 0
+      ? `no value for build args ${undefinedArgs.join(", ")}`
+      : null,
+    runtimeOnlyArgs.length > 0
+      ? `${runtimeOnlyArgs.join(", ")} defined for the runtime phase only, set the phase to build or both`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  if (missingHint) {
+    opts.onLog?.(
+      `[build] WARNING: ${missingHint}${undefinedArgs.length > 0 ? "; define them in the app environment variables" : ""}`
+    );
+  }
   const metadataDir = builder
     ? await mkdtemp(path.join(os.tmpdir(), "ploydok-buildx-meta-"))
     : null;
@@ -138,7 +198,7 @@ export async function buildImage(
         "plain",
       ];
 
-  for (const [key, value] of Object.entries(opts.buildArgs ?? {})) {
+  for (const [key, value] of Object.entries(buildArgs)) {
     if (builder) args.push("--build-arg", `${key}=${value}`);
     else args.push("--opt", `build-arg:${key}=${value}`);
   }
@@ -169,6 +229,11 @@ export async function buildImage(
 
     // Collect digest from output while streaming logs.
     let imageDigest = "";
+    const tail: string[] = [];
+    const remember = (line: string) => {
+      tail.push(line);
+      if (tail.length > FAILURE_TAIL_LINES) tail.shift();
+    };
 
     async function pipeLines(
       stream: ReadableStream<Uint8Array>
@@ -189,6 +254,7 @@ export async function buildImage(
           if (digestMatch && !imageDigest) {
             imageDigest = digestMatch[0];
           }
+          remember(line);
           opts.onLog?.(line);
         }
       }
@@ -196,6 +262,7 @@ export async function buildImage(
       if (buf) {
         const digestMatch = buf.match(/sha256:[a-f0-9]{64}/);
         if (digestMatch && !imageDigest) imageDigest = digestMatch[0];
+        remember(buf);
         opts.onLog?.(buf);
       }
     }
@@ -209,8 +276,12 @@ export async function buildImage(
     const durationMs = Date.now() - startMs;
 
     if (code !== 0) {
+      const cause = summarizeBuildFailure(tail);
+      const hint = missingHint ? ` (${missingHint})` : "";
       throw new Error(
-        `${builder ? "docker buildx" : "buildctl"} failed (exit ${code}) for image ${opts.imageRef}`
+        `${builder ? "docker buildx" : "buildctl"} failed (exit ${code})${
+          cause ? `: ${cause}` : ` for image ${opts.imageRef}`
+        }${hint}`
       );
     }
 

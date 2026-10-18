@@ -1534,6 +1534,9 @@ export async function handleDeploy(
           // them ONLY as --secret mounts. Passing them as --build-arg bakes
           // the plaintext into the image history, visible via `docker history`.
           buildSecrets: buildEnv,
+          runtimeOnlyEnvKeys: Object.keys(runtimeSecretEnv).filter(
+            (key) => !(key in buildEnv)
+          ),
           onLog,
           ...(currentDeployAbortSignal()
             ? { signal: currentDeployAbortSignal()! }

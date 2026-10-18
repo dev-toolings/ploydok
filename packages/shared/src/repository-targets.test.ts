@@ -179,3 +179,21 @@ it("still propagates non-size read errors", async () => {
     })
   ).rejects.toThrow("401 unauthorized")
 })
+
+it("lists versioned SQLite files under their application root", async () => {
+  const targets = await discover({
+    Dockerfile:
+      "ARG NODE_IMAGE=node:22\nFROM ${NODE_IMAGE}\nARG SITE_URL TARGETARCH\n",
+    "packages/content/guides.sqlite": "",
+    "node_modules/pkg/fixture.sqlite": "",
+    "docs/notes.db": "",
+  })
+  expect(targets).toEqual([
+    {
+      rootDir: ".",
+      classification: expect.anything(),
+      sqliteFiles: ["packages/content/guides.sqlite"],
+      requiredBuildArgs: ["SITE_URL"],
+    },
+  ])
+})

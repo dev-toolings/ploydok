@@ -286,4 +286,55 @@ describe("buildImage", () => {
     const secretIdx = cmd.indexOf("--secret");
     expect(cmd[secretIdx + 1]).toContain("id=INTERNAL_TOKEN,src=");
   });
+  it("passes env values for Dockerfile ARGs and explains a failed RUN", async () => {
+    writeFileSync(
+      path.join(tmpDir, "Dockerfile"),
+      [
+        "ARG NODE_IMAGE=node:22",
+        "FROM ${NODE_IMAGE} AS build",
+        "ARG SITE_URL",
+        "ARG TARGETARCH",
+        "ARG API_ORIGIN \\",
+        "    PUBLIC_KEY",
+        'RUN test -n "$SITE_URL" && bun run build',
+      ].join("\n"),
+    );
+    spawnSpy = spyOn(Bun, "spawn").mockReturnValue(
+      fakeBunProcess({
+        stderrLines: [
+          '#20 ERROR: process "/bin/sh -c test -n \\"$SITE_URL\\" && bun run build" did not complete successfully: exit code: 1',
+          "WARNING: local cache import at /tmp/cache not found",
+          "Dockerfile:18",
+          '>>> RUN test -n "$SITE_URL" && bun run build',
+          'ERROR: failed to build: failed to solve: process "/bin/sh -c test -n \\"$SITE_URL\\" && bun run build" did not complete successfully: exit code: 1',
+        ],
+        exitCode: 1,
+      }) as ReturnType<typeof Bun.spawn>,
+    );
+    const logs: string[] = [];
+
+    const { buildImage } = await import("./buildkit");
+
+    await expect(
+      buildImage({
+        contextDir: tmpDir,
+        dockerfile: path.join(tmpDir, "Dockerfile"),
+        imageRef: "127.0.0.1:5000/app-args:sha",
+        cacheDir: path.join(tmpDir, "cache"),
+        buildSecrets: { API_ORIGIN: "https://api.example.com", OTHER: "x" },
+        runtimeOnlyEnvKeys: ["PUBLIC_KEY"],
+        onLog: (line) => logs.push(line),
+      }),
+    ).rejects.toThrow(
+      'buildctl failed (exit 1): Dockerfile:18: process "/bin/sh -c test -n \\"$SITE_URL\\" && bun run build" did not complete successfully: exit code: 1 (no value for build args SITE_URL; PUBLIC_KEY defined for the runtime phase only, set the phase to build or both)',
+    );
+
+    const spawnMock = spawnSpy as unknown as { mock: { calls: Array<[string[]]> } };
+    const cmd = spawnMock.mock.calls[0]![0];
+    expect(cmd).toContain("build-arg:API_ORIGIN=https://api.example.com");
+    expect(cmd.some((arg) => arg.startsWith("build-arg:OTHER"))).toBe(false);
+    expect(logs).toContain(
+      "[build] WARNING: no value for build args SITE_URL; PUBLIC_KEY defined for the runtime phase only, set the phase to build or both; define them in the app environment variables",
+    );
+  });
 });
