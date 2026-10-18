@@ -41,7 +41,8 @@ use bollard::container::{
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::{
-    BuildImageOptions, CreateImageOptions, PruneImagesOptions, PushImageOptions, RemoveImageOptions,
+    BuildImageOptions, CreateImageOptions, ListImagesOptions, PruneImagesOptions, PushImageOptions,
+    RemoveImageOptions,
 };
 use bollard::models::EndpointSettings;
 use bollard::models::{
@@ -91,7 +92,9 @@ use ploydok_proto::agent::{
 
 use crate::audit::{audit, audit_with_client, client_identity_from_request};
 use crate::audit_signer::AuditSigner;
-use crate::validator::{validate_workload_network_name, Validator};
+use crate::validator::{
+    validate_image_repository_remove, validate_workload_network_name, Validator,
+};
 
 // Include monitor.rs as a submodule. This is the single canonical declaration
 // of the monitor module; lib.rs re-exports it via `pub use service::monitor`.
@@ -386,6 +389,22 @@ fn registry_credentials(
             })
         }
     })
+}
+
+fn repository_image_references(
+    repository: &str,
+    references: impl Iterator<Item = String>,
+) -> Vec<String> {
+    let mut references: Vec<_> = references
+        .filter(|reference| {
+            reference
+                .strip_prefix(repository)
+                .is_some_and(|suffix| suffix.starts_with(':') || suffix.starts_with('@'))
+        })
+        .collect();
+    references.sort();
+    references.dedup();
+    references
 }
 
 fn split_image_tag(image: &str) -> (&str, &str) {
@@ -1431,6 +1450,51 @@ impl Agent for AgentService {
     ) -> Result<Response<ImageRemoveResponse>, Status> {
         let req = request.into_inner();
         self.validator.validate_image_remove(&req).map_err(|e| *e)?;
+        if req.all_tags {
+            // Enforce scope even with the development permissive validator.
+            validate_image_repository_remove(&req.image).map_err(|e| *e)?;
+            let images = self
+                .docker
+                .list_images(Some(ListImagesOptions::<String> {
+                    all: true,
+                    ..Default::default()
+                }))
+                .await
+                .map_err(|e| bollard_err("list_images", e))?;
+            let references = repository_image_references(
+                &req.image,
+                images
+                    .into_iter()
+                    .flat_map(|image| image.repo_tags.into_iter().chain(image.repo_digests)),
+            );
+            let mut errors = Vec::new();
+            for reference in references {
+                match self
+                    .docker
+                    .remove_image(
+                        &reference,
+                        Some(RemoveImageOptions {
+                            force: false,
+                            noprune: true,
+                        }),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => (),
+                    Err(bollard::errors::Error::DockerResponseServerError {
+                        status_code: 404,
+                        ..
+                    }) => (),
+                    Err(error) => errors.push(format!("{reference}: {error}")),
+                }
+            }
+            if !errors.is_empty() {
+                return Err(Status::internal(errors.join("; ")));
+            }
+            audit("image_remove_repository", &req.image, Ok(()));
+            return Ok(Response::new(ImageRemoveResponse { deleted: true }));
+        }
         self.docker
             .remove_image(
                 &req.image,
@@ -3172,9 +3236,36 @@ mod sec02_tests {
     use bollard::models::{ContainerSummary, DistributionInspect, PushImageInfo};
 
     use super::{
-        is_ploydok_registry_container, split_image_tag, validate_distribution_digest,
-        validate_push_frame,
+        is_ploydok_registry_container, repository_image_references, split_image_tag,
+        validate_distribution_digest, validate_push_frame,
     };
+
+    #[test]
+    fn repository_cleanup_selects_only_exact_references_and_deduplicates() {
+        let references = [
+            "registry:5000/app-demo:old",
+            "registry:5000/app-demo:new",
+            "registry:5000/app-demo:new",
+            "registry:5000/app-demo@sha256:abc",
+            "registry:5000/app-demo-other:latest",
+            "registry:5000/preview-app-demo:latest",
+            "registry:5000/ploydok-api:latest",
+            "docker.io/library/postgres:16",
+            "127.0.0.1:5000/app-demo:latest",
+            "<none>:<none>",
+        ];
+        assert_eq!(
+            repository_image_references(
+                "registry:5000/app-demo",
+                references.into_iter().map(String::from)
+            ),
+            vec![
+                "registry:5000/app-demo:new",
+                "registry:5000/app-demo:old",
+                "registry:5000/app-demo@sha256:abc",
+            ]
+        );
+    }
 
     #[test]
     fn exact_tag_digest_comes_from_distribution_after_real_aux_frame() {
@@ -3408,6 +3499,24 @@ mod cold_image_tests {
             host_sampler: crate::host_stats::HostSampler::new(),
         };
         (service, server, dir)
+    }
+
+    #[tokio::test]
+    async fn repository_removal_continues_after_conflicts_without_force_or_parent_pruning() {
+        let (service, server, _dir) = mock_docker(vec![
+            ("/images/json?all=true", 200, r#"[{"Id":"sha256:abc","ParentId":"","RepoTags":["registry:5000/app-demo:a","registry:5000/app-demo:b","registry:5000/app-other:shared"],"RepoDigests":[],"Created":1,"Size":1,"SharedSize":0,"Labels":{},"Containers":0}]"#),
+            ("/images/registry:5000/app-demo:a?force=false&noprune=true", 409, r#"{"message":"image in use"}"#),
+            ("/images/registry:5000/app-demo:b?force=false&noprune=true", 200, "[]"),
+        ]).await;
+        let error = service
+            .image_remove(Request::new(ImageRemoveRequest {
+                image: "registry:5000/app-demo".into(),
+                all_tags: true,
+            }))
+            .await
+            .expect_err("partial failure must be reported");
+        assert!(error.message().contains("image in use"));
+        server.await.expect("all matching references attempted");
     }
 
     #[tokio::test]

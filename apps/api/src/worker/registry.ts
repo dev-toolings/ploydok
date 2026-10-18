@@ -76,15 +76,27 @@ export interface TagList {
  * Returns an empty array if the repository does not exist (404).
  */
 export async function listTags(repo: string): Promise<string[]> {
-  const res = await registryFetch(`${repo}/tags/list`);
-  if (res.status === 404) return [];
-  if (!res.ok) {
-    throw new Error(
-      `registry listTags failed (${res.status}): ${await res.text()}`,
-    );
-  }
-  const body = (await res.json()) as TagList;
-  return body.tags ?? [];
+  const tags: string[] = [];
+  let query = "";
+  const pages = new Set<string>();
+  do {
+    if (pages.has(query)) {
+      throw new Error("registry listTags repeated pagination cursor");
+    }
+    pages.add(query);
+    const res = await registryFetch(`${repo}/tags/list${query}`);
+    if (res.status === 404) return [];
+    if (!res.ok) {
+      throw new Error(
+        `registry listTags failed (${res.status}): ${await res.text()}`,
+      );
+    }
+    const body = (await res.json()) as TagList;
+    tags.push(...(body.tags ?? []));
+    const next = res.headers.get("Link")?.match(/<([^>]+)>;\s*rel="?next"?/);
+    query = next?.[1] ? new URL(next[1], registryBase()).search : "";
+  } while (query);
+  return [...new Set(tags)];
 }
 
 /**
@@ -100,6 +112,8 @@ export async function getManifest(
       Accept: [
         "application/vnd.docker.distribution.manifest.v2+json",
         "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
       ].join(", "),
     },
   });
@@ -160,6 +174,39 @@ export async function deleteDigest(
   throw new Error(
     `registry deleteDigest failed (${res.status}): ${await res.text()}`,
   );
+}
+
+/** Delete every tagged manifest, including rollback targets, without blob GC. */
+export async function deleteRepository(repo: string): Promise<{
+  tagsDeleted: number;
+  errors: string[];
+}> {
+  const tags = await listTags(repo);
+  const errors: string[] = [];
+  const digests = new Map<string, number>();
+  // Resolve before deleting: several tags can point to the same manifest.
+  for (const tag of tags) {
+    try {
+      const manifest = await getManifest(repo, tag);
+      if (!manifest) continue;
+      if (!/^sha256:[a-f0-9]{64}$/.test(manifest.digest)) {
+        throw new Error("missing or invalid Docker-Content-Digest");
+      }
+      digests.set(manifest.digest, (digests.get(manifest.digest) ?? 0) + 1);
+    } catch (error) {
+      errors.push(`${repo}:${tag}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  let tagsDeleted = 0;
+  for (const [digest, count] of digests) {
+    try {
+      await deleteDigest(repo, digest);
+      tagsDeleted += count;
+    } catch (error) {
+      errors.push(`${repo}@${digest}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { tagsDeleted, errors };
 }
 
 /**

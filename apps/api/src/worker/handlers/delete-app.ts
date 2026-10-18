@@ -4,7 +4,7 @@
  *
  * Steps performed (each one best-effort, all errors collected and surfaced):
  *  1. Stop the Swarm service (if any) then leftover blue/green containers.
- *  2. Wipe registry images (manifests with keepPerRepo=0) + reclaim blobs.
+ *  2. Delete app registry manifests and local images. Scheduled GC reclaims blobs.
  *  3. Remove Caddy upstream/route for the app.
  *  4. Delete on-disk build workspaces (~/.ploydok-dev/builds/<appId>/).
  *  5. Delete the `apps` row — `builds`, `domains`, `env_vars` cascade via FK.
@@ -27,12 +27,13 @@ import { CaddyClient } from "../../caddy/client.js"
 import { detachCaddyFromProjectNetwork } from "../../caddy/attachment.js"
 import { getSharedAgent } from "../../debug/singletons.js"
 import { staticRootForApp } from "./build-static.js"
-import { runRegistryGc } from "./gc-registry.js"
+import { deleteRepository } from "../registry.js"
+import { imageRepoForApp } from "../../services/runtime-containers.js"
 import { purgeAppVolumeRoot } from "../../services/app-volumes.js"
 
 export interface DeleteAppOptions {
   appId: string
-  /** Wipe registry images + blobs. Default true. */
+  /** Wipe app registry manifests and local images. Default true. */
   deleteImages?: boolean
   /** Stop + force-remove the Docker containers. Default true. */
   dockerCleanup?: boolean
@@ -51,6 +52,7 @@ export interface DeleteAppResult {
   steps: {
     containers: { ok: boolean; error?: string }
     registry: { ok: boolean; tagsDeleted: number; error?: string }
+    localImages: { ok: boolean; error?: string }
     caddy: { ok: boolean; error?: string }
     buildArtifacts: { ok: boolean; error?: string }
     staticArtifacts: { ok: boolean; error?: string }
@@ -179,6 +181,7 @@ export async function handleDeleteApp(
     steps: {
       containers: { ok: true },
       registry: { ok: true, tagsDeleted: 0 },
+      localImages: { ok: true },
       caddy: { ok: true },
       buildArtifacts: { ok: true },
       staticArtifacts: { ok: true },
@@ -226,24 +229,40 @@ export async function handleDeleteApp(
       }
     }
 
-    // 2. Registry: wipe all manifests for this app + reclaim blobs.
+    // 2. Wipe only this app's normal and preview repositories. Retention GC
+    // protects rollback images, so it must not be used for permanent deletion.
+    // Blob reclamation belongs to scheduled registry GC, never this cascade.
     if (deleteImages) {
-      try {
-        // gc.registry exception: keep this as a direct call rather than enqueueing
-        // through `system_jobs`. The auth gate is already enforced upstream by the
-        // claim of `app_delete_jobs` (sprint 6bis), and `keepPerRepo: 0` is the only
-        // caller that uses the wipe-everything mode. Async-via-queue would create
-        // transient states ("app deleted but GC pending"). See
-        // Shared system job producer for cleanup/follow-up work.
-        const gc = await runRegistryGc({ db, appFilter: appId, keepPerRepo: 0 })
-        result.steps.registry = { ok: true, tagsDeleted: gc.tagsDeleted }
-      } catch (err) {
-        result.steps.registry = {
-          ok: false,
-          tagsDeleted: 0,
-          error: errToString(err),
+      const repo = imageRepoForApp(appId)
+      const registryErrors: string[] = []
+      const localErrors: string[] = []
+      const registries = new Set([
+        env.PLOYDOK_REGISTRY_URL.replace(/^https?:\/\//, ""),
+        env.PLOYDOK_REGISTRY_PUSH_URL.replace(/^https?:\/\//, ""),
+      ])
+      for (const repository of [repo, `preview-${repo}`]) {
+        try {
+          const cleanup = await deleteRepository(repository)
+          result.steps.registry.tagsDeleted += cleanup.tagsDeleted
+          registryErrors.push(...cleanup.errors)
+        } catch (err) {
+          registryErrors.push(`${repository}: ${errToString(err)}`)
         }
-        log.warn({ appId, err }, "registry cleanup failed (continuing)")
+        for (const registry of registries) {
+          const image = `${registry}/${repository}`
+          try {
+            await getSharedAgent().imageRemove({ image, allTags: true })
+          } catch (err) {
+            localErrors.push(`${image}: ${errToString(err)}`)
+          }
+        }
+      }
+      if (registryErrors.length) {
+        result.steps.registry.ok = false
+        result.steps.registry.error = registryErrors.join("; ")
+      }
+      if (localErrors.length) {
+        result.steps.localImages = { ok: false, error: localErrors.join("; ") }
       }
     }
 

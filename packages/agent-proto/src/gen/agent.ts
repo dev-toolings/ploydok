@@ -669,6 +669,11 @@ export interface ImagePushResponse {
 
 export interface ImageRemoveRequest {
   image: string;
+  /**
+   * Remove all local tags/digests of this exact managed repository. When true,
+   * image must be registry/repository without a tag or digest. Never force.
+   */
+  allTags: boolean;
 }
 
 export interface ImageRemoveResponse {
@@ -7864,13 +7869,16 @@ export const ImagePushResponse: MessageFns<ImagePushResponse> = {
 };
 
 function createBaseImageRemoveRequest(): ImageRemoveRequest {
-  return { image: "" };
+  return { image: "", allTags: false };
 }
 
 export const ImageRemoveRequest: MessageFns<ImageRemoveRequest> = {
   encode(message: ImageRemoveRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.image !== "") {
       writer.uint32(10).string(message.image);
+    }
+    if (message.allTags !== false) {
+      writer.uint32(16).bool(message.allTags);
     }
     return writer;
   },
@@ -7890,6 +7898,14 @@ export const ImageRemoveRequest: MessageFns<ImageRemoveRequest> = {
           message.image = reader.string();
           continue;
         }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.allTags = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -7900,13 +7916,23 @@ export const ImageRemoveRequest: MessageFns<ImageRemoveRequest> = {
   },
 
   fromJSON(object: any): ImageRemoveRequest {
-    return { image: isSet(object.image) ? globalThis.String(object.image) : "" };
+    return {
+      image: isSet(object.image) ? globalThis.String(object.image) : "",
+      allTags: isSet(object.allTags)
+        ? globalThis.Boolean(object.allTags)
+        : isSet(object.all_tags)
+        ? globalThis.Boolean(object.all_tags)
+        : false,
+    };
   },
 
   toJSON(message: ImageRemoveRequest): unknown {
     const obj: any = {};
     if (message.image !== "") {
       obj.image = message.image;
+    }
+    if (message.allTags !== false) {
+      obj.allTags = message.allTags;
     }
     return obj;
   },
@@ -7917,6 +7943,7 @@ export const ImageRemoveRequest: MessageFns<ImageRemoveRequest> = {
   fromPartial(object: DeepPartial<ImageRemoveRequest>): ImageRemoveRequest {
     const message = createBaseImageRemoveRequest();
     message.image = object.image ?? "";
+    message.allTags = object.allTags ?? false;
     return message;
   },
 };

@@ -599,7 +599,12 @@ message ImagePushRequest {
 
 message ImagePushResponse { string digest = 1; }
 
-message ImageRemoveRequest { string image = 1; }
+message ImageRemoveRequest {
+  string image = 1;
+  // Remove all local tags/digests of this exact managed repository. When true,
+  // image must be registry/repository without a tag or digest. Never force.
+  bool all_tags = 2;
+}
 message ImageRemoveResponse { bool deleted = 1; }
 
 message BuildCachePruneRequest {

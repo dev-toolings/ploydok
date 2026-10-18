@@ -316,3 +316,88 @@ describe("diskGuard", () => {
     await expect(diskGuard(80)).resolves.toBeUndefined();
   });
 });
+
+describe("deleteRepository", () => {
+  afterEach(() => mock.restore());
+
+  it("deletes all manifests including latest and undated tags once per digest", async () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      url,
+      init
+    ) => {
+      if (String(url).includes("tags/list"))
+        return makeResponse({ tags: ["latest", "old"] });
+      if (init?.method === "DELETE") return makeResponse({}, 202);
+      return makeResponse({ schemaVersion: 2 }, 200, {
+        "Docker-Content-Digest": digest,
+      });
+    }) as typeof fetch);
+    const { deleteRepository } = await import("./registry");
+    expect(await deleteRepository("app-demo")).toEqual({
+      tagsDeleted: 2,
+      errors: [],
+    });
+    const deletes = fetchSpy.mock.calls.filter(
+      ([, init]) => init?.method === "DELETE"
+    );
+    expect(deletes).toHaveLength(1);
+    expect(String(deletes[0]?.[0])).toEndWith(
+      `/v2/app-demo/manifests/${digest}`
+    );
+    expect(
+      fetchSpy.mock.calls.every(([url]) =>
+        String(url).includes("/v2/app-demo/")
+      )
+    ).toBeTrue();
+  });
+
+  it("reports unresolved digests and DELETE failures and still deletes other manifests", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      url,
+      init
+    ) => {
+      const target = String(url);
+      if (target.includes("tags/list"))
+        return makeResponse({ tags: ["missing-digest", "blocked", "good"] });
+      if (init?.method === "DELETE")
+        return makeResponse({}, target.endsWith("b".repeat(64)) ? 405 : 202);
+      const tag = target.split("/").at(-1);
+      return makeResponse(
+        { schemaVersion: 2 },
+        200,
+        tag === "missing-digest"
+          ? {}
+          : {
+              "Docker-Content-Digest": `sha256:${(tag === "blocked" ? "b" : "c").repeat(64)}`,
+            }
+      );
+    }) as typeof fetch);
+    const { deleteRepository } = await import("./registry");
+    const result = await deleteRepository("app-demo");
+    expect(result.tagsDeleted).toBe(1);
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors.join(";")).toContain(
+      "missing or invalid Docker-Content-Digest"
+    );
+    expect(result.errors.join(";")).toContain("405");
+    expect(
+      fetchSpy.mock.calls.filter(([, init]) => init?.method === "DELETE")
+    ).toHaveLength(2);
+  });
+
+  it("follows registry tag pagination", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        makeResponse({ tags: ["a"] }, 200, {
+          Link: '</v2/app-demo/tags/list?n=1&last=a>; rel="next"',
+        })
+      )
+      .mockResolvedValueOnce(makeResponse({ tags: ["b"] }));
+    const { listTags } = await import("./registry");
+    expect(await listTags("app-demo")).toEqual(["a", "b"]);
+    expect(String(fetchSpy.mock.calls[1]?.[0])).toEndWith(
+      "/v2/app-demo/tags/list?n=1&last=a"
+    );
+  });
+});

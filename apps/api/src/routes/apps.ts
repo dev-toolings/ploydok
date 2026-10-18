@@ -2269,11 +2269,12 @@ export function createAppsRouter(db: Db): Hono {
   //
   // Marks the app as 'deleting', enqueues an `app.delete.requested` job, and
   // returns 202. The worker performs: stop+rm containers, wipe registry
-  // images+blobs, remove Caddy route, rm build artifacts, delete DB row
-  // (cascades builds/env_vars/domains via FK).
+  // manifests and local images, remove Caddy route, rm build artifacts, delete
+  // DB row (cascades builds/env_vars/domains via FK).
+  // Scheduled registry GC reclaims orphan blobs separately.
   //
   // Coolify-style query flags (all default true):
-  //   ?deleteImages=false        — keep registry manifests + blobs
+  //   ?deleteImages=false        : keep registry manifests and local images
   //   ?dockerCleanup=false       — leave the container running
   //   ?deleteBuildArtifacts=false — keep ~/.ploydok-dev/builds/<appId>/
   //   ?deleteCaddyRoutes=false   — leave the Caddy upstream wired

@@ -620,6 +620,7 @@ fn test_image_remove_rejects_non_ploydok_images() {
     let v = make_validator();
     let valid = ImageRemoveRequest {
         image: "registry:5000/preview-app-demo:abc123".to_string(),
+        all_tags: false,
     };
     assert!(v.validate_image_remove(&valid).is_ok());
 
@@ -631,12 +632,40 @@ fn test_image_remove_rejects_non_ploydok_images() {
         let err = v
             .validate_image_remove(&ImageRemoveRequest {
                 image: image.to_string(),
+                all_tags: false,
             })
             .unwrap_err();
         assert!(matches!(
             err.code(),
             Code::PermissionDenied | Code::InvalidArgument
         ));
+    }
+}
+
+#[test]
+fn test_image_repository_remove_requires_exact_managed_repository() {
+    let v = make_validator();
+    for image in ["127.0.0.1:5000/app-demo", "registry:5000/preview-app-demo"] {
+        assert!(v
+            .validate_image_remove(&ImageRemoveRequest {
+                image: image.to_string(),
+                all_tags: true,
+            })
+            .is_ok());
+    }
+    for image in [
+        "registry:5000/app-demo:latest",
+        "registry:5000/app-demo@sha256:abc",
+        "registry:5000/app-*",
+        "docker.io/library/postgres",
+        "registry:5000/ploydok-api",
+    ] {
+        assert!(v
+            .validate_image_remove(&ImageRemoveRequest {
+                image: image.to_string(),
+                all_tags: true,
+            })
+            .is_err());
     }
 }
 
