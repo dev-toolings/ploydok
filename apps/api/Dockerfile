@@ -19,9 +19,12 @@ COPY apps/api ./apps/api
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages ./packages
 
+# chmod: COPY keeps the host file modes and the read bit is not versioned, so a
+# 0600 source file would be unreadable by the non-root runtime user.
 # Filter out web/UI runtime dependencies too: their production graph includes
 # bundlers. Boot migrations use drizzle-orm and the checked-in SQL files.
 RUN bun install --frozen-lockfile --production --filter '@ploydok/*' \
+ && chmod -R a+rX /app/apps /app/packages \
  && rm -rf /root/.bun/install/cache /app/apps/web /app/packages/ui \
  && test -z "$(find /app/node_modules -type f -name esbuild -print -quit)"
 
