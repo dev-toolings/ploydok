@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "bun:test"
 import type { SwarmTaskSnapshot } from "@ploydok/agent-proto"
-import { taskIsHealthy } from "./swarm-runner"
+import { describeTasks, taskForLogs, taskIsHealthy } from "./swarm-runner"
 
 function task(
   overrides: Partial<SwarmTaskSnapshot> = {}
@@ -88,3 +88,39 @@ describe("taskIsHealthy", () => {
     ).toBe(true)
   })
 })
+
+describe("rollout failure details", () => {
+  const snapshot = (over: Partial<SwarmTaskSnapshot>): SwarmTaskSnapshot => ({
+    id: "mrvw6cnw9x01sfgge6le3javl",
+    serviceName: "ploydok-app-x",
+    containerId: "952cf57a8488",
+    slot: 1,
+    image: "registry/app:sha",
+    desiredState: "running",
+    status: "Exited (1)",
+    nodeId: "node",
+    error: "",
+    ...over,
+  })
+
+  it("summarizes each task instead of dumping the snapshot", () => {
+    expect(
+      describeTasks([
+        snapshot({ state: "exited", running: false, exitCode: 1 }),
+        snapshot({ id: "abcdefabcdefabcdef", state: "running", running: true, healthStatus: "unhealthy", error: "probe failed" }),
+      ])
+    ).toBe(
+      "task mrvw6cnw9x01 state=exited exit=1; task abcdefabcdef state=running health=unhealthy error=probe failed"
+    )
+    expect(describeTasks([])).toBe("no task scheduled")
+  })
+
+  it("reads the logs of the stopped container first", () => {
+    const running = snapshot({ containerId: "running", running: true, healthStatus: "starting" })
+    const crashed = snapshot({ containerId: "crashed", running: false })
+    const pending = snapshot({ containerId: "" })
+    expect(taskForLogs([pending, running, crashed])?.containerId).toBe("crashed")
+    expect(taskForLogs([pending])).toBeUndefined()
+  })
+})
+

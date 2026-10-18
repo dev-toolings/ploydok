@@ -7,6 +7,7 @@ import { and, desc, eq, inArray } from "drizzle-orm"
 import { AgentClient } from "@ploydok/agent-proto"
 import type {
   ListServiceTasksResponse,
+  LogLine,
   ServiceCreateResponse,
   ServiceRollbackResponse,
   ServiceUpdateImageResponse,
@@ -46,6 +47,8 @@ import {
 
 const DEFAULT_TASK_POLL_MS = 2_000
 const DEFAULT_TASK_TIMEOUT_MS = 180_000
+const FAILURE_LOG_LINES = 30
+const FAILURE_LOG_TIMEOUT_MS = 5_000
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function grpcUnary<Res>(
@@ -129,6 +132,67 @@ export function taskIsHealthy(
   return taskIsRunning(task.status) && /\(healthy\)/i.test(task.status)
 }
 
+/** One readable line per task instead of the raw snapshot. */
+export function describeTasks(tasks: readonly SwarmTaskSnapshot[]): string {
+  if (tasks.length === 0) return "no task scheduled"
+  return tasks
+    .map((task) =>
+      [
+        `task ${task.id.slice(0, 12)}`,
+        `state=${task.state || task.status || "unknown"}`,
+        task.running === false && task.exitCode !== undefined && task.exitCode >= 0
+          ? `exit=${task.exitCode}`
+          : null,
+        task.healthStatus && task.healthStatus !== "none"
+          ? `health=${task.healthStatus}`
+          : null,
+        task.error ? `error=${task.error}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+    .join("; ")
+}
+
+/** The task whose container output best explains a failed rollout. */
+export function taskForLogs(
+  tasks: readonly SwarmTaskSnapshot[]
+): SwarmTaskSnapshot | undefined {
+  const withContainer = tasks.filter((task) => task.containerId)
+  return (
+    withContainer.find((task) => task.running === false) ??
+    withContainer.find((task) => task.healthStatus === "unhealthy") ??
+    withContainer[0]
+  )
+}
+
+function readContainerTail(
+  agent: InstanceType<typeof AgentClient>,
+  containerId: string
+): Promise<string[]> {
+  return new Promise((resolve) => {
+    const lines: string[] = []
+    const stream = agent.containerLogs({
+      containerId,
+      follow: false,
+      sinceUnix: 0,
+      tail: FAILURE_LOG_LINES,
+    })
+    const done = () => {
+      clearTimeout(timer)
+      resolve(lines)
+    }
+    // Logs only enrich the failure: never let them hang or mask it.
+    const timer = setTimeout(() => {
+      stream.cancel()
+      resolve(lines)
+    }, FAILURE_LOG_TIMEOUT_MS)
+    stream.on("data", (entry: LogLine) => lines.push(entry.line))
+    stream.on("end", done)
+    stream.on("error", done)
+  })
+}
+
 async function waitForServiceHealthy(opts: {
   agent: InstanceType<typeof AgentClient>
   serviceName: string
@@ -164,8 +228,22 @@ async function waitForServiceHealthy(opts: {
     )
     await sleep(DEFAULT_TASK_POLL_MS)
   }
-  throw new Error(
-    `Swarm service ${opts.serviceName} did not reach ${opts.replicas} healthy task(s): ${JSON.stringify(last?.tasks ?? [])}`
+  const tasks = last?.tasks ?? []
+  const culprit = taskForLogs(tasks)
+  const output = culprit
+    ? await readContainerTail(opts.agent, culprit.containerId)
+    : []
+  for (const line of output) {
+    logBus.publish(opts.channel, `[container] ${line}`)
+  }
+  const summary = `Swarm service ${opts.serviceName} did not reach ${opts.replicas} healthy task(s): ${describeTasks(tasks)}`
+  throw Object.assign(
+    new Error(
+      output.length > 0
+        ? `${summary}\nLast container output:\n${output.join("\n")}`
+        : summary
+    ),
+    { classifyMessage: summary }
   )
 }
 

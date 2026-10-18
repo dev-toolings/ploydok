@@ -81,15 +81,23 @@ const FATAL_PATTERNS: RegExp[] = [
  */
 export function classifyAgentError(err: unknown): TransientDeployError | FatalDeployError {
   const msg = err instanceof Error ? err.message : String(err)
+  // Errors that quote application output (container logs) expose the part
+  // written by Ploydok, so an app line such as "ECONNREFUSED" cannot change
+  // the retry decision.
+  const classifyMessage =
+    err instanceof Error
+      ? (err as Error & { classifyMessage?: unknown }).classifyMessage
+      : undefined
+  const probe = typeof classifyMessage === "string" ? classifyMessage : msg
 
   for (const pattern of FATAL_PATTERNS) {
-    if (pattern.test(msg)) {
+    if (pattern.test(probe)) {
       return new FatalDeployError(msg, err)
     }
   }
 
   for (const pattern of TRANSIENT_PATTERNS) {
-    if (pattern.test(msg)) {
+    if (pattern.test(probe)) {
       return new TransientDeployError(msg, err)
     }
   }
