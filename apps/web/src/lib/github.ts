@@ -438,10 +438,11 @@ export function useInstallations(options: { enabled?: boolean } = {}) {
     queryKey: ["github", "installations"],
     queryFn: () => apiFetch<InstallationsResponse>("/github/installations"),
     enabled: options.enabled ?? true,
-    // Short stale so returning from GitHub install flow refreshes immediately.
+    // Reuse the panel query when its installations card mounts.
+    // Returning from GitHub or focusing the page still refreshes stale data.
     staleTime: 5_000,
     refetchOnWindowFocus: true,
-    refetchOnMount: "always",
+    refetchOnMount: true,
     retry: (failureCount, error) => {
       if (error.status === 401 || error.status === 503) return false
       return failureCount < 2

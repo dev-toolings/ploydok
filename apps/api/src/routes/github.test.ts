@@ -48,8 +48,33 @@ let cachedRepoRows: Array<Record<string, unknown>> = []
 const cacheStatusFilters: unknown[][] = []
 const deletedTables: Array<unknown> = []
 let liveInstallations: Array<{ id: number; accountLogin?: string }> = []
+let persistedInstallations: Array<{
+  id: string
+  external_id: string
+  account_login: string
+  account_type: string
+  github_app_id: string
+  repository_selection: string
+  suspended_at: Date | null
+  html_url: string | null
+  avatar_url: string | null
+}> = []
+function persistInstallations(installations: typeof liveInstallations) {
+  persistedInstallations = installations.map((installation) => ({
+    id: `github:${installation.id}`,
+    external_id: String(installation.id),
+    account_login: installation.accountLogin ?? "",
+    account_type: "Organization",
+    github_app_id: "singleton",
+    repository_selection: "all",
+    suspended_at: null,
+    html_url: null,
+    avatar_url: null,
+  }))
+}
 let listInstallationsFailure: Error | null = null
 let listInstallationsCalls = 0
+let fillMissingOwnersCalls = 0
 const revokedInstallations: number[] = []
 let revokeFailure: Error | null = null
 let fakeInstanceAdmin = true
@@ -173,7 +198,10 @@ mock.module("@ploydok/db", () => ({
   webhook_deliveries: fakeTable,
 }))
 mock.module("../github/installation-tokens", () => ({
-  fillMissingGitHubAppOwners: async (apps: unknown[]) => apps,
+  fillMissingGitHubAppOwners: async (apps: unknown[]) => {
+    fillMissingOwnersCalls += 1
+    return apps
+  },
   getInstallationToken: async () => "test-installation-token",
   evictInstallationToken: () => undefined,
   evictAllInstallationTokens: () => {
@@ -312,7 +340,8 @@ mock.module("@ploydok/db/queries", () => ({
     _userId: string,
     installationId: string
   ) => userGitHubInstallationIds.includes(installationId),
-  listInstallations: async () => [],
+  listInstallations: async (_db: unknown, _provider: string, ids?: string[]) =>
+    persistedInstallations.filter((row) => !ids || ids.includes(row.id)),
   listRepos: async () => ({
     rows: cachedRepoRows,
     total: cachedRepoRows.length,
@@ -428,8 +457,10 @@ beforeEach(() => {
   cacheStatusFilters.length = 0
   deletedTables.length = 0
   liveInstallations = []
+  persistedInstallations = []
   listInstallationsFailure = null
   listInstallationsCalls = 0
+  fillMissingOwnersCalls = 0
   revokedInstallations.length = 0
   revokeFailure = null
   fakeInstanceAdmin = true
@@ -773,6 +804,54 @@ describe("GET /github/repos/:owner/:repo/files-exist", () => {
 })
 
 describe("GitHub routes are user-scoped", () => {
+  it("serves persisted metadata and full repo counts without calling GitHub", async () => {
+    mockGitHubAppConfig = { slug: "ploydok-local" }
+    persistInstallations([
+      { id: 42, accountLogin: "Cached" },
+      { id: 77, accountLogin: "Second" },
+    ])
+    persistedInstallations[0]!.suspended_at = new Date("2026-10-18T10:00:00Z")
+    cacheStatusRows = [
+      { id: "github:42", repoCount: 105, lastSyncedAt: new Date() },
+      { id: "github:77", repoCount: 13, lastSyncedAt: new Date() },
+    ]
+    listInstallationsFailure = new Error("GitHub is unavailable")
+    using repos = spyOn(githubModule.ghProvider, "listRepos").mockRejectedValue(
+      new Error("GitHub must stay off the page load path")
+    )
+    const originalFetch = globalThis.fetch
+    const fetchSpy = mock(() => {
+      throw new Error("Unexpected GitHub request")
+    })
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    try {
+      const app = buildApp(FAKE_USER)
+      const res = await app.request("/github/installations")
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({
+        installations: [
+          {
+            id: 42,
+            githubAppId: "singleton",
+            accountLogin: "Cached",
+            repositorySelection: "all",
+            suspendedAt: "2026-10-18T10:00:00.000Z",
+            repositoryCount: 105,
+          },
+          { id: 77, repositoryCount: 13 },
+        ],
+      })
+      expect((await app.request("/github/app/config")).status).toBe(200)
+      expect((await app.request("/github/installations/cache-status")).status).toBe(200)
+      expect(listInstallationsCalls).toBe(0)
+      expect(fillMissingOwnersCalls).toBe(0)
+      expect(repos).not.toHaveBeenCalled()
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it("returns every linked installation for one user and excludes foreign ones", async () => {
     fakeInstanceAdmin = false
     mockGitHubAppConfig = { slug: "ploydok-local" }
@@ -782,6 +861,7 @@ describe("GitHub routes are user-scoped", () => {
       { id: 77, accountLogin: "Org B" },
       { id: 99, accountLogin: "Foreign" },
     ]
+    persistInstallations(liveInstallations)
     using _spy = spyOn(githubModule.ghProvider, "listRepos").mockResolvedValue({
       repos: [],
       hasMore: false,
@@ -796,13 +876,14 @@ describe("GitHub routes are user-scoped", () => {
     expect(body.installations.map(({ id }) => id)).toEqual([42, 77])
   })
 
-  it("returns every live App installation to an instance admin", async () => {
+  it("returns every persisted App installation to an instance admin", async () => {
     userGitHubInstallationIds = ["42"]
     mockGitHubAppConfig = { slug: "ploydok-local" }
     liveInstallations = [
       { id: 42, accountLogin: "Linked" },
       { id: 99, accountLogin: "Foreign mapping" },
     ]
+    persistInstallations(liveInstallations)
     using _spy = spyOn(githubModule.ghProvider, "listRepos").mockResolvedValue({
       repos: [],
       hasMore: false,
@@ -876,6 +957,7 @@ describe("GitHub routes are user-scoped", () => {
       { id: 42, accountLogin: "Allowed" },
       { id: 99, accountLogin: "Foreign" },
     ]
+    persistInstallations(liveInstallations)
     cacheStatusRows = [
       {
         id: "github:42",
@@ -907,12 +989,13 @@ describe("GitHub routes are user-scoped", () => {
     expect(cacheStatusFilters[0]?.[2]).toEqual(["github:42"])
   })
 
-  it("reports cache state for every live installation to an admin", async () => {
+  it("reports cache state for every persisted installation to an admin", async () => {
     userGitHubInstallationIds = ["42"]
     liveInstallations = [
       { id: 42, accountLogin: "Linked" },
       { id: 99, accountLogin: "Foreign mapping" },
     ]
+    persistInstallations(liveInstallations)
     cacheStatusRows = [
       {
         id: "github:42",
@@ -1545,6 +1628,7 @@ describe("GET /github/repos", () => {
       { id: 77, accountLogin: "Personal" },
       { id: 88, accountLogin: "OtherOrg" },
     ]
+    persistInstallations(liveInstallations)
     using _repos = spyOn(
       githubModule.ghProvider,
       "listRepos"
@@ -1798,6 +1882,7 @@ describe("DELETE /github/installations/:id", () => {
       { id: 77, accountLogin: "Org B" },
       { id: 99, accountLogin: "Foreign" },
     ]
+    persistInstallations(liveInstallations)
     using _spy = spyOn(githubModule.ghProvider, "listRepos").mockResolvedValue({
       repos: [],
       hasMore: false,

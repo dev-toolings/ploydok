@@ -58,7 +58,6 @@ import { GitHubCache } from "../github/cache"
 import { GitHubProvider } from "../github/client"
 import {
   evictAllInstallationTokens,
-  fillMissingGitHubAppOwners,
   listAppInstallations,
   revokeAppInstallation,
 } from "../github/installation-tokens"
@@ -1136,7 +1135,7 @@ githubRouter.post("/installations/sync", githubWriteScope, async (c) => {
 
 // ---------------------------------------------------------------------------
 // GET /github/installations/cache-status  (auth required)
-// Returns cache status for every live installation to instance admins, and
+// Returns cache status for every persisted installation to instance admins, and
 // only user-linked installations to members.
 // ---------------------------------------------------------------------------
 
@@ -1153,10 +1152,11 @@ githubRouter.get("/installations/cache-status", async (c) => {
     if (organizationId && !scope) {
       return c.json({ error: "organization_not_found" }, 404)
     }
-    installationIds = await getAccessibleGitHubInstallationIds(
-      userId,
-      scope?.id
-    )
+    installationIds = scope
+      ? await listGitHubInstallationIdsForOrganizationAndUser(db, scope.id, userId)
+      : (await isInstanceAdmin(db, userId))
+        ? (await listInstallations(db, "github")).map((row) => row.external_id)
+        : await getUserGitHubInstallationIds(userId)
   } catch (err) {
     log.error({ err, userId }, "failed to resolve GitHub cache-status scope")
     return c.json({ error: "github_api_error", detail: String(err) }, 502)
@@ -1556,77 +1556,75 @@ githubRouter.get("/installations", async (c) => {
     if (hasOrganizationQuery(c) && !scope.organization) {
       return c.json({ error: "organization_not_found" }, 404)
     }
-    let installations: Awaited<ReturnType<typeof listAppInstallations>>
-    let claimableInstallations: Awaited<
-      ReturnType<typeof listAppInstallations>
-    > = []
-    let organizationGrantIds: Set<string> | null = null
-    if (hasOrganizationQuery(c)) {
-      const allowedIds = new Set(scope.installationIds)
-      organizationGrantIds = new Set(
-        await listGitHubInstallationIdsForOrganization(
-          db,
-          scope.organization!.id
+    // Read the persisted snapshot once. GitHub discovery and repo refreshes run
+    // through webhooks, reconnect and the sync worker, never during page loads.
+    const isAdmin =
+      !hasOrganizationQuery(c) && (await isInstanceAdmin(db, userId))
+    const trustedIds =
+      scope.organization?.role === "owner"
+        ? await getUserGitHubInstallationIds(userId)
+        : []
+    const visibleIds = new Set(scope.installationIds)
+    const snapshotIds = [...new Set([...scope.installationIds, ...trustedIds])]
+    const rows = await listInstallations(
+      db,
+      "github",
+      isAdmin ? undefined : snapshotIds.map(getGitHubInstallationDbId)
+    )
+    const organizationGrantIds = scope.organization
+      ? new Set(
+          await listGitHubInstallationIdsForOrganization(db, scope.organization.id)
         )
-      )
-      installations = await listUserGitHubInstallations(
-        userId,
-        scope.installationIds
-      )
-      if (scope.organization?.role === "owner") {
-        const trustedInstallations = await listUserGitHubInstallations(userId)
-        claimableInstallations = trustedInstallations.filter(
-          (installation) =>
-            installation.accountType === "Organization" &&
-            !allowedIds.has(String(installation.id))
-        )
-      }
-    } else {
-      installations = (await isInstanceAdmin(db, userId))
-        ? await listAppInstallations()
-        : await listUserGitHubInstallations(userId)
-    }
-    // Enrich each with a repository count (best-effort; skip on error).
-    const enrich = async (
-      rows: Awaited<ReturnType<typeof listAppInstallations>>,
-      includeRepoCount = true
-    ) =>
-      Promise.all(
-        rows.map(async (inst) => {
-          if (!includeRepoCount) {
-            return { ...inst, repositoryCount: null as number | null }
-          }
-          try {
-            const { repos } = await ghProvider.listRepos(String(inst.id), {
-              page: 1,
-              perPage: 100,
-            })
-            return { ...inst, repositoryCount: repos.length }
-          } catch {
-            return { ...inst, repositoryCount: null as number | null }
-          }
-        })
-      )
-    const enriched = await enrich(installations)
-    const enrichedClaimable = await enrich(claimableInstallations, false)
+      : null
+    const installations = rows.filter(
+      (row) => isAdmin || visibleIds.has(row.external_id)
+    )
+    const trustedIdSet = new Set(trustedIds)
+    const claimableInstallations = rows.filter(
+      (row) =>
+        row.account_type === "Organization" &&
+        trustedIdSet.has(row.external_id) &&
+        !visibleIds.has(row.external_id)
+    )
+    const counts = new Map(
+      (
+        await getCacheStatus(db, "github", installations.map((row) => row.id))
+      ).map((row) => [row.id, row.repoCount])
+    )
+    const toWire = (row: (typeof rows)[number], includeRepoCount = true) => ({
+      id: Number(row.external_id),
+      ...(row.github_app_id ? { githubAppId: row.github_app_id } : {}),
+      accountLogin: row.account_login,
+      accountType: row.account_type ?? "",
+      repositorySelection:
+        row.repository_selection === "all" ? "all" : "selected",
+      suspendedAt: row.suspended_at?.toISOString() ?? null,
+      htmlUrl: row.html_url ?? "",
+      avatarUrl: row.avatar_url ?? "",
+      repositoryCount: includeRepoCount ? (counts.get(row.id) ?? 0) : null,
+    })
     return c.json({
-      installations: enriched.map((installation) => ({
-        ...installation,
+      installations: installations.map((installation) => ({
+        ...toWire(installation),
         ...(organizationGrantIds
-          ? { granted: organizationGrantIds.has(String(installation.id)) }
+          ? { granted: organizationGrantIds.has(installation.external_id) }
           : {}),
       })),
       ...(scope.organization?.role === "owner"
-        ? { claimableInstallations: enrichedClaimable }
+        ? {
+            claimableInstallations: claimableInstallations.map((row) =>
+              toWire(row, false)
+            ),
+          }
         : {}),
       installUrl: getInstallationStartUrl(scope.organization?.id),
       installTargets: getInstallTargets(
-        await fillMissingGitHubAppOwners(await listGitHubAppConfigs(db)),
+        await listGitHubAppConfigs(db),
         scope.organization?.id
       ),
     })
   } catch (err) {
-    log.error({ err }, "listAppInstallations failed")
+    log.error({ err }, "list persisted GitHub installations failed")
     return c.json({ error: "github_api_error", detail: String(err) }, 502)
   }
 })
@@ -2578,7 +2576,7 @@ githubRouter.get("/app/callback", async (c) => {
 // ---------------------------------------------------------------------------
 
 githubRouter.get("/app/config", async (c) => {
-  const apps = await fillMissingGitHubAppOwners(await listGitHubAppConfigs(db))
+  const apps = await listGitHubAppConfigs(db)
   const first = apps[0]
   if (!first) {
     return c.json({ configured: false, apps: [] })
