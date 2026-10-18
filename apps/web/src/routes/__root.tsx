@@ -39,21 +39,32 @@ import { resolveRequestLocale } from "../lib/i18n/resolve-locale"
 import { createPageHead, formatPageTitle } from "../lib/page-metadata"
 import type { ErrorComponentProps } from "@tanstack/react-router"
 
-const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: (error, query) => {
-      if (!(error instanceof BackendUnavailableError)) return
-      if (query.meta?.["critical"] !== true) return
-      setBackendUnavailable(error.message)
+function makeQueryClient(): QueryClient {
+  return new QueryClient({
+    queryCache: new QueryCache({
+      onError: (error, query) => {
+        if (!(error instanceof BackendUnavailableError)) return
+        if (query.meta?.["critical"] !== true) return
+        setBackendUnavailable(error.message)
+      },
+    }),
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
+      },
     },
-  }),
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      refetchOnWindowFocus: false,
-    },
-  },
-})
+  })
+}
+
+let browserQueryClient: QueryClient | undefined
+
+// A module-level client on the server would share cached responses between
+// SSR requests, and therefore between users.
+function getQueryClient(): QueryClient {
+  if (typeof window === "undefined") return makeQueryClient()
+  return (browserQueryClient ??= makeQueryClient())
+}
 
 function RootErrorComponent({
   error,
@@ -290,6 +301,7 @@ function RootDocument({
 }: {
   children: React.ReactNode
 }): React.JSX.Element {
+  const [queryClient] = React.useState(getQueryClient)
   React.useEffect(() => {
     ensureDefaultLocaleSelected()
   }, [])
