@@ -592,7 +592,6 @@ export async function resumeServiceCreation(
       log.info({ serviceId, serviceCount: containers.length }, "service deployed")
     } else {
       const network = await ensureProjectSwarmNetwork(db, service.project_id)
-      if (service.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
       const plan = planServiceStack({ ...service, compose_raw: compose }, network, ownerId)
       const planned = plan.services.map((s) => s.name)
       // Every name is recorded before the first Swarm side effect, so a crash
@@ -681,6 +680,16 @@ export async function resumeServiceCreation(
           })()
         : plan.entrypoint
       if (service.domain && routeEntrypoint) {
+        const target = plan.services.find((candidate) => candidate.name === routeEntrypoint.name)!
+        await waitForSwarmServiceCondition(swarm, {
+          serviceName: target.name,
+          condition: "service_started",
+          replicas: target.replicas,
+          restartPolicy: target.restartPolicy,
+          onPoll: fence,
+        })
+        await fence()
+        await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
         await fence()
         await caddy.upsertRoute({
           accessLogs: false,
@@ -740,10 +749,19 @@ export async function startService(
     }
     const swarm = deps.swarm ?? swarmAgentFromGrpc(createAgentClient())
     const network = await ensureProjectSwarmNetwork(db, svc.project_id)
-    if (svc.domain) await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
     const plan = planServiceStack({ ...svc, compose_raw: await resolveServiceCompose(svc) }, network, userId)
     const names = await deployPlannedComposeStack(swarm, plan)
     await updateServiceSwarmNames(db, serviceId, names)
+    if (svc.domain && plan.entrypoint) {
+      const target = plan.services.find((candidate) => candidate.name === plan.entrypoint!.name)!
+      await waitForSwarmServiceCondition(swarm, {
+        serviceName: target.name,
+        condition: "service_started",
+        replicas: target.replicas,
+        restartPolicy: target.restartPolicy,
+      })
+      await ensureCaddyOnProjectNetwork(getSharedAgent(), network)
+    }
     await updateServiceStatus(db, serviceId, "running")
     return
   }
