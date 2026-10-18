@@ -111,6 +111,11 @@ assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_REGISTRY_API_URL=regis
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_BUILDKIT_ADDR=tcp://buildkitd:1234"
 assert_contains "$TMP/root/var/lib/ploydok/.env" "PLOYDOK_AGENT_ADDR=agent:50051"
 assert_contains "$TMP/root/var/lib/ploydok/config/buildkitd.toml" '[registry."registry:5000"]'
+assert_contains "$TMP/root/var/lib/ploydok/config/buildkitd.toml" 'gc = true'
+assert_contains "$TMP/root/var/lib/ploydok/config/buildkitd.toml" 'keepDuration = "168h"'
+assert_contains "$TMP/root/var/lib/ploydok/config/buildkitd.toml" 'maxUsedSpace = "3GB"'
+assert_contains "$TMP/root/var/lib/ploydok/config/buildkitd.toml" 'reservedSpace = "512MB"'
+assert_contains "$TMP/root/var/lib/ploydok/config/buildkitd.toml" 'minFreeSpace = "2GB"'
 assert_contains "$TMP/root/var/lib/ploydok/config/validator.toml" 'allowed_registries = ['
 assert_contains "$TMP/root/var/lib/ploydok/config/validator.toml" '"registry:5000"'
 assert_contains "$TMP/root/var/lib/ploydok/config/validator.toml" 'volume_prefix = "/var/lib/ploydok/volumes"'
@@ -337,7 +342,7 @@ assert_contains "$TMP/bootstrap-root/var/lib/ploydok/.env" "PLOYDOK_SETUP_TOKEN_
 assert_contains "$TMP/bootstrap-root/var/lib/ploydok/.env" "PLOYDOK_COOKIE_SECURE=auto"
 assert_contains "$TMP/bootstrap-root/var/lib/ploydok/.env" "PLOYDOK_TRUST_PROXY_HEADERS=true"
 
-PLOYDOK_INSTALL_DRY_RUN=1 \
+swarm_install_output="$(PLOYDOK_INSTALL_DRY_RUN=1 \
 PLOYDOK_INSTALL_ROOT="$TMP/swarm-root" \
 PLOYDOK_PUBLIC_HOST="ploydok.test" \
 bash "$ROOT/installer/install.sh" \
@@ -345,8 +350,9 @@ bash "$ROOT/installer/install.sh" \
   --data-dir=/var/lib/ploydok \
   --skip-docker-install \
   --yes \
-  --version=test
+  --version=test 2>&1)"
 
+assert_text_contains "$swarm_install_output" "docker swarm update --task-history-limit 2"
 assert_file "$TMP/swarm-root/opt/ploydok/docker-stack.yml"
 assert_file "$TMP/swarm-root/opt/ploydok/CaddyAdminProxyfile"
 assert_file "$TMP/swarm-root/usr/local/lib/ploydok/port-isolation.sh"
@@ -466,6 +472,7 @@ assert_text_contains "$swarm_upgrade_output" "docker pull ghcr.io/dev-toolings/p
 assert_text_contains "$swarm_upgrade_output" "--network ploydok_ploydok ghcr.io/dev-toolings/ploydok-api:test2"
 assert_text_contains "$swarm_upgrade_output" "bun run /app/packages/db/src/migrate.ts"
 assert_text_contains "$swarm_upgrade_output" "docker stack deploy --resolve-image always"
+assert_text_contains "$swarm_upgrade_output" "docker swarm update --task-history-limit 2"
 assert_text_not_contains "$swarm_upgrade_output" "docker stack rm"
 assert_text_not_contains "$swarm_upgrade_output" "migrate legacy stack descriptor"
 # A descriptor rendered by an older installer is migrated during the upgrade.
@@ -490,6 +497,7 @@ reinstall_output="$(PLOYDOK_INSTALL_DRY_RUN=1 PLOYDOK_INSTALL_ROOT="$TMP/swarm-r
   --mode=takeover --skip-docker-install --yes --version=test2 2>&1)"
 assert_text_contains "$reinstall_output" "systemctl reload-or-restart ploydok-port-isolation.service"
 assert_text_contains "$reinstall_output" "systemctl reload-or-restart ploydok.service"
+assert_text_contains "$reinstall_output" "docker swarm update --task-history-limit 2"
 assert_text_not_contains "$reinstall_output" "systemctl restart ploydok.service"
 assert_text_not_contains "$reinstall_output" "systemctl stop ploydok.service"
 assert_text_not_contains "$reinstall_output" "docker stack rm"

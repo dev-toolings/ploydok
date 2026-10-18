@@ -678,6 +678,8 @@ EOF
     fi
 
     if [[ "$runtime" == "swarm" ]]; then
+      # Keep the current task and one previous task per slot for diagnosis.
+      run docker swarm update --task-history-limit 2
       run bash "$(real_path /usr/local/lib/ploydok/stop-stack.sh)" wait
       if ! run docker stack deploy --resolve-image always --with-registry-auth --prune -c "$descriptor" ploydok; then
         echo "stack deploy failed; restoring previous stack descriptor" >&2

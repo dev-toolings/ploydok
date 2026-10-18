@@ -461,6 +461,30 @@ the agent container overlay.
    reference set before pruning.
 4. Never run an unscoped `docker system prune` on a production host.
 
+The installer and `ploydok-cli upgrade` set Swarm task history to two tasks per
+slot (the current task and one previous task), preserving recent diagnostics
+while reducing old containers that pin images. Swarm retains more when a
+service's restart policy sets `max_attempts`; the API and web currently set
+five, requiring six retained tasks. BuildKit uses a 3 GB GC target, a 512 MB
+cache reserve and a 2 GB free space target. Unused unshared cache older than
+seven days is reclaimed above 512 MB.
+These are periodic GC targets, not a hard quota for active builds. The keys
+follow the [BuildKit v0.29 configuration](https://github.com/moby/buildkit/blob/v0.29.0/docs/buildkitd.toml.md).
+
+The CLI upgrader updates images but does not re-render `buildkitd.toml`.
+For an existing Swarm host, apply the following from a reviewed checkout of
+this release, with no application builds running (default data directory):
+
+```bash
+sudo docker swarm update --task-history-limit 2
+sudo install -m 0644 installer/templates/buildkitd.toml /var/lib/ploydok/config/buildkitd.toml
+sudo docker service update --force ploydok_buildkitd
+```
+
+Review any local registry customizations before replacing the config. Rerunning
+the installer also renders the new file; an existing BuildKit service still
+needs the forced update above to read changed bind-mounted configuration.
+
 ### DeploymentFailureRateHigh
 
 Trigger: at least five deployments in 15 minutes and
