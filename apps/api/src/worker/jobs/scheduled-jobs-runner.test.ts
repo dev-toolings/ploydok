@@ -145,7 +145,7 @@ describe("runScheduledJobNow", () => {
 
   it("marks container_run jobs as timeout and cleans up the ephemeral container", async () => {
     const job = {
-      id: "job-timeout",
+      id: "Job_TIMEOUT-",
       org_id: "org-1",
       name: "Timeout job",
       schedule_cron: "* * * * *",
@@ -188,7 +188,11 @@ describe("runScheduledJobNow", () => {
     const containerStop = mock(async () => ({}))
     const containerRemove = mock(async () => ({}))
     const agent = {
-      containerCreate: mock(async () => ({ containerId: "ctr-ephemeral-1" })),
+      containerCreate: mock(async (req: { name: string }) => {
+        expect(req.name).toMatch(/^ploydok-[a-z0-9][a-z0-9-]{0,62}$/)
+        expect(req.name).not.toContain("--")
+        return { containerId: "ctr-ephemeral-1" }
+      }),
       containerStart: mock(async () => ({})),
       containerStop,
       containerRemove,

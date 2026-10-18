@@ -2,6 +2,17 @@
 import { posix } from "node:path"
 import { parse } from "yaml"
 import { isIP } from "node:net"
+import { createHash } from "node:crypto"
+import { normalizeRuntimeContainerSlug } from "../services/runtime-containers"
+
+export function composeContainerName(servicePrefix: string, serviceName: string): string {
+  const raw = `${servicePrefix}-${serviceName}`
+  if (/^ploydok-[a-z0-9][a-z0-9-]{0,62}$/.test(raw)) return raw
+  // Preserve distinct IDs and service keys that normalize to the same token.
+  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 10)
+  const token = normalizeRuntimeContainerSlug(raw, 60).replace(/-+$/, "")
+  return `${token}-${hash}`
+}
 
 export interface ComposeToContainersInput {
   compose: string
@@ -655,7 +666,7 @@ export function composeToContainers(
     const dependsOn = parseDependsOn(svc.depends_on)
     const restartPolicy = parseRestartPolicy(svc.restart)
     const healthcheck = parseHealthcheck(svc.healthcheck)
-    const containerName = `${servicePrefix}-${svcName}`
+    const containerName = composeContainerName(servicePrefix, svcName)
     if (svc.expose !== undefined && (!Array.isArray(svc.expose) || svc.expose.some((port: unknown) => !/^\d+$/.test(String(port)) || Number(port) < 1 || Number(port) > 65535)))
       throw new UnsupportedComposeFeatureError(`Service "${svcName}": expose must contain valid TCP port numbers`)
     const exposedPort = svc.expose?.length ? Number(svc.expose[0]) : ports[0]?.containerPort

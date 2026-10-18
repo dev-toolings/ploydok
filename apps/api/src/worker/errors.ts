@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { AgentError, GrpcStatus } from "../agent/errors"
 
 /**
  * Errors that BullMQ should retry (network glitches, agent down, Docker/registry timeouts).
@@ -46,6 +47,8 @@ const TRANSIENT_PATTERNS: RegExp[] = [
 ]
 
 const FATAL_PATTERNS: RegExp[] = [
+  /\bINVALID_ARGUMENT\b/i,
+  /\[agent\].*(?:code gRPC 3\b|action refusée par allowlist|Requête refusée.*règle:)/i,
   // Permissions et systèmes de fichiers en lecture seule : un volume mal monté
   // ou possédé par un autre uid ne se répare pas tout seul, un retry ne fait
   // que rejouer le build pour rien.
@@ -80,7 +83,20 @@ const FATAL_PATTERNS: RegExp[] = [
  * retry than to silently drop a deploy).
  */
 export function classifyAgentError(err: unknown): TransientDeployError | FatalDeployError {
+  if (err instanceof FatalDeployError || err instanceof TransientDeployError) return err
   const msg = err instanceof Error ? err.message : String(err)
+  // Wrappers keep context in their message and the agent status in their cause.
+  const seen = new Set<Error>()
+  for (let cause = err; cause instanceof Error && !seen.has(cause); cause = cause.cause) {
+    seen.add(cause)
+    if (cause instanceof AgentError && (
+      cause.code === GrpcStatus.INVALID_ARGUMENT ||
+      cause.code === GrpcStatus.PERMISSION_DENIED ||
+      cause.code === GrpcStatus.UNAUTHENTICATED
+    )) {
+      return new FatalDeployError(msg, err)
+    }
+  }
   // Errors that quote application output (container logs) expose the part
   // written by Ploydok, so an app line such as "ECONNREFUSED" cannot change
   // the retry decision.

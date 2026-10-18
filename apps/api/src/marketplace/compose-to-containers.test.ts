@@ -4,6 +4,7 @@ import {
   UnsupportedComposeFeatureError,
   composeRequiresContainerRuntime,
   composeToContainers,
+  composeContainerName,
 } from "./compose-to-containers"
 
 const PREFIX = "ploydok-svc-test-abc123"
@@ -22,6 +23,23 @@ function run(
 }
 
 describe("composeToContainers", () => {
+  it("normalizes raw Nano IDs and long service keys without name collisions", () => {
+    const prefix = "ploydok-svc-vAabMU_x0H0WQxlqV9J1-"
+    for (const service of ["Web_App", "web-app", "a".repeat(100), "a".repeat(99) + "b"]) {
+      const name = composeContainerName(prefix, service)
+      expect(name).toMatch(/^ploydok-[a-z0-9][a-z0-9-]{0,62}$/)
+      expect(name).toBe(composeContainerName(prefix, service))
+    }
+    expect(composeContainerName(prefix, "Web_App")).not.toBe(
+      composeContainerName(prefix, "web-app")
+    )
+    expect(composeContainerName(prefix, "a".repeat(100))).not.toBe(
+      composeContainerName(prefix, "a".repeat(99) + "b")
+    )
+    expect(run("services:\n  Web_App:\n    image: nginx", { servicePrefix: prefix })[0]!.name)
+      .toBe(composeContainerName(prefix, "Web_App"))
+  })
+
   it("minimal single service", () => {
     const result = run(`
 services:

@@ -11,7 +11,7 @@
  * Post-deploy failure → caller catches and marks build `succeeded_with_warning`
  *                       without rolling back.
  */
-import { nanoid } from "nanoid"
+import { ephemeralContainerName } from "../services/runtime-containers.js"
 import type { Agent } from "../agent/index.js"
 import { logBus } from "./log-bus.js"
 import { workerLog } from "./logger.js"
@@ -78,7 +78,7 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
   // Resolve network (same project network as the app)
   const networkName = await ensureProjectNetwork(db, projectId, agent)
 
-  const containerName = `ploydok-hook-${appId.toLowerCase()}-${phase}-${nanoid(6)}`
+  const containerName = ephemeralContainerName(`hook-${phase}`, appId)
 
   // Create ephemeral container (it will be started via ContainerExec's ExecStart)
   let containerId: string
@@ -106,7 +106,7 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     hookLog.error({ err }, "failed to create hook container")
-    throw new Error(`Failed to create ${phase}_deploy hook container: ${msg}`)
+    throw new Error(`Failed to create ${phase}_deploy hook container: ${msg}`, { cause: err })
   }
 
   // Start the container
