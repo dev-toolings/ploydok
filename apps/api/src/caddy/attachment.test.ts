@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
 import {
+  ensureCaddyOnProjectNetwork,
   isCaddyIngressContainer,
   networksToAttachForRunningApps,
   pickCaddyIngressContainer,
+  resetCaddyIdCache,
 } from "./attachment"
 
 describe("isCaddyIngressContainer", () => {
@@ -46,6 +48,96 @@ describe("pickCaddyIngressContainer", () => {
       },
     ])
     expect(picked?.id).toBe("live")
+  })
+})
+
+describe("ensureCaddyOnProjectNetwork cache", () => {
+  afterEach(() => resetCaddyIdCache())
+
+  it("reuses a cached running container after validating its runtime state", async () => {
+    let listCalls = 0
+    let inspectCalls = 0
+    const attached: string[] = []
+    const agent = {
+      listContainers: async () => {
+        listCalls++
+        return {
+          containers: [{ id: "cached", name: "ploydok-caddy", status: "running" }],
+        }
+      },
+      inspectContainerHealth: async ({ containerId }: { containerId: string }) => {
+        inspectCalls++
+        expect(containerId).toBe("cached")
+        return { containerMissing: false, running: true }
+      },
+      networkConnect: async ({ containerId }: { containerId: string }) => {
+        attached.push(containerId)
+      },
+    }
+
+    await ensureCaddyOnProjectNetwork(agent as any, "network-a")
+    await ensureCaddyOnProjectNetwork(agent as any, "network-b")
+
+    expect(listCalls).toBe(1)
+    expect(inspectCalls).toBe(1)
+    expect(attached).toEqual(["cached", "cached"])
+  })
+
+  it.each([
+    ["stopped", { containerMissing: false, running: false }],
+    ["missing", { containerMissing: true, running: false }],
+  ] as const)("refreshes a %s cached container before attaching", async (_case, state) => {
+    let listCalls = 0
+    const attached: string[] = []
+    const agent = {
+      listContainers: async () => {
+        listCalls++
+        return {
+          containers:
+            listCalls === 1
+              ? [{ id: "old", name: "ploydok-caddy", status: "running" }]
+              : [
+                  { id: "old", name: "ploydok-caddy", status: "stopped" },
+                  { id: "fresh", name: "ploydok_caddy.1.task", status: "running" },
+                ],
+        }
+      },
+      inspectContainerHealth: async ({ containerId }: { containerId: string }) => {
+        expect(containerId).toBe("old")
+        return state
+      },
+      networkConnect: async ({ containerId }: { containerId: string }) => {
+        attached.push(containerId)
+      },
+    }
+
+    await ensureCaddyOnProjectNetwork(agent as any, "network-a")
+    await ensureCaddyOnProjectNetwork(agent as any, "network-b")
+
+    expect(listCalls).toBe(2)
+    expect(attached).toEqual(["old", "fresh"])
+  })
+
+  it("propagates a cached-container inspection error", async () => {
+    const transientError = new Error("agent unavailable")
+    let attached = 0
+    const agent = {
+      listContainers: async () => ({
+        containers: [{ id: "cached", name: "ploydok-caddy", status: "running" }],
+      }),
+      inspectContainerHealth: async () => {
+        throw transientError
+      },
+      networkConnect: async () => {
+        attached++
+      },
+    }
+
+    await ensureCaddyOnProjectNetwork(agent as any, "network-a")
+    await expect(
+      ensureCaddyOnProjectNetwork(agent as any, "network-b")
+    ).rejects.toBe(transientError)
+    expect(attached).toBe(1)
   })
 })
 

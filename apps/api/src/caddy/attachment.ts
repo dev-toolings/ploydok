@@ -92,8 +92,9 @@ export function networksToAttachForRunningApps(
 
 /**
  * Lazy cache for the Caddy container id. Docker does not re-allocate an id
- * while the container is alive; we only refresh it if a `network_connect`
- * fails with NOT_FOUND (the container was recreated).
+ * while the container is alive, but a start-first rollout can leave the old
+ * container around after it stops. Validate the cached id before reusing it
+ * so a stopped task cannot keep accepting network attachments.
  */
 let cachedCaddyId: string | null = null
 
@@ -103,7 +104,13 @@ export function resetCaddyIdCache(): void {
 }
 
 async function resolveCaddyContainerId(agent: Agent): Promise<string> {
-  if (cachedCaddyId) return cachedCaddyId
+  if (cachedCaddyId) {
+    const cachedId = cachedCaddyId
+    const runtime = await agent.inspectContainerHealth({ containerId: cachedId })
+    const running = runtime.running === true || runtime.state === "running"
+    if (!runtime.containerMissing && running) return cachedId
+    resetCaddyIdCache()
+  }
   const { containers } = await agent.listContainers({ kindFilter: "" })
   const match = pickCaddyIngressContainer(containers)
   if (match) {
