@@ -798,6 +798,10 @@ install_cli() {
   if [[ -f "$src" ]]; then
     install -D -m 0755 "$src" "$(real_path /usr/local/lib/ploydok/ploydok-dr)"
   fi
+  src="$(install_dir)/migrate-stack-descriptor"
+  if [[ -f "$src" ]]; then
+    install -D -m 0755 "$src" "$(real_path /usr/local/lib/ploydok/migrate-stack-descriptor)"
+  fi
   src="$(install_dir)/verify-restored-platform"
   if [[ -f "$src" ]]; then
     install -D -m 0755 "$src" "$(real_path /usr/local/lib/ploydok/verify-restored-platform)"

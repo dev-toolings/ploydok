@@ -25,6 +25,7 @@ image, temporary builder/cache and local application image tags after the run.
 It never prunes shared builders, services or unrelated images.
 
 The host must already contain the reviewed `installer/ploydok-cli`,
+`installer/migrate-stack-descriptor` at `/usr/local/lib/ploydok/migrate-stack-descriptor`,
 `installer/verify-release-images` at `/usr/local/lib/ploydok/verify-release-images`,
 and `scripts/deploy-shuttle/upgrade-host.sh` at
 `/usr/local/bin/ploydok-shuttle-upgrade` (root-owned, executable). The adapter is
