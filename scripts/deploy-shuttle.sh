@@ -25,3 +25,4 @@ cleanup() {
 trap cleanup EXIT
 df -B1 "$root"
 "$shuttle_bin" deploy existing-stack --config deploy/shuttle-staging.json "$@"
+bun "$root/scripts/deploy-shuttle/smoke.ts"
