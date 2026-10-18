@@ -9,7 +9,7 @@
 // Transitional statuses (`building` / `restarting` / `pending` / `created`)
 // are owned by the worker and left untouched.
 //
-import { eq } from "drizzle-orm"
+import { and, eq, isNull } from "drizzle-orm"
 import { apps } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { Agent } from "../agent"
@@ -28,6 +28,7 @@ type ReconcilableApp = {
   container_id: string | null
   updated_at: Date | null
   runtime_mode?: string | null
+  swarm_service_name?: string | null
 }
 
 type ContainerLite = {
@@ -134,9 +135,27 @@ export function deriveLiveStatus(
 
   // snap.status ∈ {running, starting, unhealthy} → container is alive.
   if (app.status === "stopped" || app.status === "failed") {
+    // A Swarm task can remain visible briefly after a first deploy is
+    // cleaned up. Without a committed service name, it is not an
+    // established runtime that can recover the app.
+    if (app.runtime_mode === "swarm" && !app.swarm_service_name) {
+      return null
+    }
     return "running"
   }
   return null
+}
+
+function statusCondition(status: string | null) {
+  return status === null
+    ? isNull(apps.status)
+    : eq(apps.status, status as typeof apps.$inferSelect.status)
+}
+
+function containerIdCondition(containerId: string | null) {
+  return containerId === null
+    ? isNull(apps.container_id)
+    : eq(apps.container_id, containerId)
 }
 
 async function persistStatus(
@@ -149,7 +168,7 @@ async function persistStatus(
     await db
       .update(apps)
       .set({ status: next, updated_at: new Date() })
-      .where(eq(apps.id, appId))
+      .where(and(eq(apps.id, appId), statusCondition(prev)))
     log.info({ appId, from: prev, to: next }, "reconciled app status")
   } catch (err) {
     log.warn({ err, appId }, "failed to persist reconciled app status")
@@ -160,13 +179,20 @@ async function persistContainerId(
   db: Db,
   appId: string,
   next: string,
-  prev: string | null
+  prev: string | null,
+  expectedStatus: string | null
 ): Promise<void> {
   try {
     await db
       .update(apps)
       .set({ container_id: next, updated_at: new Date() })
-      .where(eq(apps.id, appId))
+      .where(
+        and(
+          eq(apps.id, appId),
+          statusCondition(expectedStatus),
+          containerIdCondition(prev)
+        )
+      )
     log.info({ appId, from: prev, to: next }, "reconciled apps.container_id")
   } catch (err) {
     log.warn({ err, appId }, "failed to persist reconciled container_id")
@@ -178,6 +204,14 @@ export async function reconcileAppStatusFromIndex<T extends ReconcilableApp>(
   app: T,
   index: AppContainerIndex
 ): Promise<T> {
+  if (
+    app.status !== "running" &&
+    app.status !== "stopped" &&
+    app.status !== "failed"
+  ) {
+    return app
+  }
+
   let mutated: T = app
   const live = resolveLiveContainer(app, index)
   if (
@@ -189,7 +223,13 @@ export async function reconcileAppStatusFromIndex<T extends ReconcilableApp>(
     // Container was recreated (blue/green swap, restart, etc.) — refresh the
     // canonical reference so the UI strict match keeps working. Swarm apps keep
     // `swarm_service_name` as the source of truth and leave container_id null.
-    await persistContainerId(db, app.id, live.name, app.container_id)
+    await persistContainerId(
+      db,
+      app.id,
+      live.name,
+      app.container_id,
+      app.status
+    )
     mutated = { ...mutated, container_id: live.name }
   }
 
