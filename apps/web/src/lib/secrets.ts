@@ -35,9 +35,13 @@ export interface CreateSecretPayload {
 
 export interface UpdateSecretPayload {
   key: string
-  value: string
   scope: SecretScope
+  /** Current phase: part of the secret identity. */
   phase: SecretPhase
+  /** Omitted to keep the stored value. */
+  value?: string
+  /** Moves the secret to this phase. */
+  newPhase?: SecretPhase
 }
 
 export interface ImportEnvResult {
@@ -121,12 +125,15 @@ export function useUpdateSecret(appId: string) {
     ApiError,
     UpdateSecretPayload
   >({
-    mutationFn: async ({ key, scope, phase, value }) => {
+    mutationFn: async ({ key, scope, phase, value, newPhase }) => {
       return apiFetch(
         `/apps/${appId}/secrets/${encodeURIComponent(key)}?scope=${scope}&phase=${phase}`,
         {
           method: "PATCH",
-          body: { value },
+          body: {
+            ...(value ? { value } : {}),
+            ...(newPhase && newPhase !== phase ? { phase: newPhase } : {}),
+          },
         }
       )
     },

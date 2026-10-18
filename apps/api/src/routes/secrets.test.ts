@@ -383,10 +383,14 @@ function importRequest(path: string, content: string) {
 }
 
 function updateRequest(path: string, value: string) {
+  return patchRequest(path, { value })
+}
+
+function patchRequest(path: string, body: Record<string, unknown>) {
   return new Request(`http://localhost${path}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ value }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -395,6 +399,78 @@ function updateRequest(path: string, value: string) {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /:id/secrets/:key", () => {
+  it("moves a secret to another phase and keeps its value", async () => {
+    const { db, rows } = buildFakeDb([secretRow("SITE_URL")])
+    const app = buildApp(db)
+
+    const res = await app.fetch(
+      patchRequest("/app1/secrets/SITE_URL?scope=shared&phase=runtime", {
+        phase: "both",
+      })
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      key: "SITE_URL",
+      scope: "shared",
+      phase: "both",
+    })
+    expect(rows[0]?.phase).toBe("both")
+    expect(rows[0]?.value_ciphertext.toString()).toBe("enc:site_url")
+  })
+
+  it("updates the value and the phase together", async () => {
+    const { db, rows } = buildFakeDb([secretRow("SITE_URL")])
+    const app = buildApp(db)
+
+    const res = await app.fetch(
+      patchRequest("/app1/secrets/SITE_URL?scope=shared&phase=runtime", {
+        value: "https://example.test",
+        phase: "build",
+      })
+    )
+
+    expect(res.status).toBe(200)
+    expect(rows[0]?.phase).toBe("build")
+    expect(rows[0]?.value_ciphertext.toString()).toBe(
+      "enc:https://example.test"
+    )
+  })
+
+  it("refuses a phase that already holds the same key", async () => {
+    const { db, rows } = buildFakeDb([
+      secretRow("SITE_URL"),
+      secretRow("SITE_URL", { id: "secret-build", phase: "build" }),
+    ])
+    const app = buildApp(db)
+
+    const res = await app.fetch(
+      patchRequest("/app1/secrets/SITE_URL?scope=shared&phase=runtime", {
+        phase: "build",
+      })
+    )
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({
+      error: {
+        code: "SECRET_EXISTS",
+        message: "SITE_URL already exists for the build phase",
+      },
+    })
+    expect(rows.map((row) => row.phase)).toEqual(["runtime", "build"])
+  })
+
+  it("rejects a body with neither value nor phase", async () => {
+    const { db } = buildFakeDb([secretRow("FOO")])
+    const app = buildApp(db)
+
+    const res = await app.fetch(
+      patchRequest("/app1/secrets/FOO?scope=shared&phase=runtime", {})
+    )
+
+    expect(res.status).toBe(400)
+  })
+
   it("updates the value of an existing key", async () => {
     const { db, rows, auditRows } = buildFakeDb([secretRow("FOO")])
     const app = buildApp(db)

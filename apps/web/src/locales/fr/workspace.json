@@ -347,6 +347,8 @@
     "phase": "Phase",
     "value": "Valeur",
     "newValue": "Nouvelle valeur",
+    "keepValueHint": "Laisser vide pour garder la valeur actuelle",
+    "phaseTaken": "{{key}} existe déjà pour la phase {{phase}}",
     "show": "Afficher",
     "hide": "Masquer",
     "placeholder": "Valeur du secret",

@@ -347,6 +347,8 @@
     "phase": "Phase",
     "value": "Value",
     "newValue": "New value",
+    "keepValueHint": "Leave empty to keep the current value",
+    "phaseTaken": "{{key}} already exists for the {{phase}} phase",
     "show": "Show",
     "hide": "Hide",
     "placeholder": "Secret value",

@@ -35,9 +35,14 @@ const CreateSecretBody = z.object({
   phase: PhaseEnum.optional().default("runtime"),
 })
 
-const UpdateSecretBody = z.object({
-  value: z.string().min(1),
-})
+const UpdateSecretBody = z
+  .object({
+    value: z.string().min(1).optional(),
+    phase: PhaseEnum.optional(),
+  })
+  .refine((body) => body.value !== undefined || body.phase !== undefined, {
+    message: "value or phase required",
+  })
 
 const ExportSecretBody = z.object({
   age_recipient: z.string().min(1),
@@ -254,7 +259,9 @@ export function createSecretsRouter(db: Db): Hono<any, any, any> {
     )
   })
 
-  // PATCH /:id/secrets/:key?scope=&phase= — update an existing secret value.
+  // PATCH /:id/secrets/:key?scope=&phase= — update the value and/or move the
+  // secret to another phase. The phase is part of the secret identity, so a
+  // move is refused when the target phase already holds the same key.
   router.patch("/:id/secrets/:key", async (c) => {
     const user = getUser(c)
     const appId = c.req.param("id")
@@ -354,12 +361,42 @@ export function createSecretsRouter(db: Db): Hono<any, any, any> {
       )
     }
 
-    const { enc, nonce } = await encryptSecret(body.value)
+    const nextPhase = body.phase ?? parsedPhase.data
+    if (nextPhase !== parsedPhase.data) {
+      const conflict = await db
+        .select({ id: secrets.id })
+        .from(secrets)
+        .where(
+          and(
+            eq(secrets.app_id, appId!),
+            eq(secrets.key, key!),
+            eq(secrets.scope, parsedScope.data),
+            eq(secrets.phase, nextPhase)
+          )
+        )
+        .limit(1)
+      if (conflict[0]) {
+        return c.json(
+          {
+            error: {
+              code: "SECRET_EXISTS",
+              message: `${key} already exists for the ${nextPhase} phase`,
+            },
+          },
+          409
+        )
+      }
+    }
+
+    const encrypted =
+      body.value !== undefined ? await encryptSecret(body.value) : null
     await db
       .update(secrets)
       .set({
-        value_ciphertext: enc,
-        nonce,
+        ...(encrypted
+          ? { value_ciphertext: encrypted.enc, nonce: encrypted.nonce }
+          : {}),
+        phase: nextPhase,
         created_at: new Date(),
       })
       .where(eq(secrets.id, row.id))
@@ -369,7 +406,7 @@ export function createSecretsRouter(db: Db): Hono<any, any, any> {
     return c.json({
       key,
       scope: parsedScope.data,
-      phase: parsedPhase.data,
+      phase: nextPhase,
     })
   })
 
