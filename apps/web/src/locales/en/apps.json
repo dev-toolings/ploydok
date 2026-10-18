@@ -819,7 +819,6 @@
     "timeout": "Timeout (seconds)",
     "saveFailed": "Could not save hooks",
     "updated": "Setting updated",
-    "notFound": "The application was not found.",
     "autoDeployDesc": "How pushes turn into deployments. Changes save instantly.",
     "deployOnPush": "Deploy on push",
     "deployOnPushDesc": "Trigger a deployment whenever the tracked branch receives a commit.",

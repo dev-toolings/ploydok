@@ -819,7 +819,6 @@
     "timeout": "Délai (secondes)",
     "saveFailed": "Impossible d'enregistrer les hooks",
     "updated": "Réglage mis à jour",
-    "notFound": "L'application est introuvable.",
     "autoDeployDesc": "Comment les push deviennent des déploiements. Les changements sont enregistrés immédiatement.",
     "deployOnPush": "Déployer au push",
     "deployOnPushDesc": "Déclencher un déploiement à chaque commit sur la branche suivie.",

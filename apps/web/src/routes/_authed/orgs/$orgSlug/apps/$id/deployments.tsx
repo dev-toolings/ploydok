@@ -142,6 +142,19 @@ function DeploymentLiveBanner({ appId }: { appId: string }): React.JSX.Element {
           ? t("deployments.liveReconnecting")
           : t("deployments.liveConnecting")
 
+  if (status === "connecting" && !latest) {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2"
+        aria-busy="true"
+        aria-label={label}
+      >
+        <span className="size-2 shrink-0 rounded-full skeleton-surface" />
+        <span className="h-2.5 w-24 rounded skeleton-surface" />
+      </div>
+    )
+  }
+
   return (
     <div
       className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
