@@ -11,6 +11,7 @@ import type {
   ServiceRollbackResponse,
   ServiceUpdateImageResponse,
   SwarmEnsureSingleNodeResponse,
+  SwarmServiceSpec,
   SwarmTaskSnapshot,
 } from "@ploydok/agent-proto"
 import { apps, builds, projects } from "@ploydok/db"
@@ -283,7 +284,7 @@ export async function runSwarmDeploy(
       PLOYDOK_SERVICE_NAME: serviceName,
     }
 
-    const spec = {
+    const spec: SwarmServiceSpec = {
       name: serviceName,
       image: imageRef,
       env: containerEnv,
@@ -318,6 +319,7 @@ export async function runSwarmDeploy(
       updateOrder: app.update_order ?? "start-first",
       failureAction: app.failure_action ?? "rollback",
       stopGracePeriodSeconds: app.stop_grace_period_s ?? 10,
+      restartCondition: "any",
     }
 
     if (!app.swarm_service_name) {
