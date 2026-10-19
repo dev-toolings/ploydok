@@ -82,6 +82,11 @@
     "label_other": "{{count}} builds en cours",
     "open": "Ouvrir le build en cours"
   },
+  "appActivity": {
+    "deleting": "Suppression en file…",
+    "stopping": "Arrêt en cours…",
+    "many": "{{count}} opérations en cours"
+  },
   "nav": {
     "workspace": "Espace de travail",
     "platform": "Plateforme",
