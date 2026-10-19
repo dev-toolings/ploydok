@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "bun:test"
 import { EventEmitter } from "node:events"
-import type { AgentClient, ListServiceTasksResponse, SwarmTaskSnapshot } from "@ploydok/agent-proto"
-import { describeTasks, taskForLogs, taskIsHealthy, waitForServiceHealthy } from "./swarm-runner"
+import type { AgentClient, ListContainersResponse, ListServiceTasksResponse, SwarmTaskSnapshot } from "@ploydok/agent-proto"
+import { describeTasks, taskForLogs, taskIsHealthy, waitForAppContainersGone, waitForServiceHealthy } from "./swarm-runner"
 
 function task(
   overrides: Partial<SwarmTaskSnapshot> = {}
@@ -210,5 +210,46 @@ describe("Swarm rollout convergence", () => {
   it("fails closed when the agent cannot report rollout status", async () => {
     const { agent } = agentFor([{ tasks: [healthy()] }])
     await expect(wait(agent)).rejects.toThrow("upgrade the agent")
+  })
+})
+
+describe("waitForAppContainersGone", () => {
+  function agentListing(snapshots: Array<Array<{ name: string; appId?: string }>>): Pick<AgentClient, "listContainers"> {
+    let call = 0
+    return {
+      listContainers: ((_req: unknown, cb: (err: Error | null, res: ListContainersResponse) => void) => {
+        const batch = snapshots[Math.min(call, snapshots.length - 1)] ?? []
+        call++
+        cb(null, {
+          containers: batch.map((c) => ({ id: c.name, name: c.name, appId: c.appId ?? "", kind: "app" })),
+        } as unknown as ListContainersResponse)
+      }) as unknown as AgentClient["listContainers"],
+    }
+  }
+
+  it("returns once the service task containers have disappeared", async () => {
+    const agent = agentListing([
+      [{ name: "ploydok-app-demo.1.task1", appId: "demo" }, { name: "ploydok-app-other.1.x", appId: "other" }],
+      [{ name: "ploydok-app-other.1.x", appId: "other" }],
+    ])
+    const result = await waitForAppContainersGone({
+      agent,
+      appId: "demo",
+      serviceNames: ["ploydok-app-demo"],
+      pollMs: 1,
+    })
+    expect(result).toEqual({ gone: true, remaining: [] })
+  })
+
+  it("reports the containers still present when the deadline passes", async () => {
+    const agent = agentListing([[{ name: "ploydok-app-demo.1.stuck" }]])
+    const result = await waitForAppContainersGone({
+      agent,
+      appId: "demo",
+      serviceNames: ["ploydok-app-demo"],
+      timeoutMs: 5,
+      pollMs: 1,
+    })
+    expect(result).toEqual({ gone: false, remaining: ["ploydok-app-demo.1.stuck"] })
   })
 })

@@ -72,6 +72,33 @@ function errToString(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+// Docker refuses to delete an image while a container still references it.
+// Swarm tasks and retained blue/green containers disappear shortly after the
+// stop step, so a bounded retry absorbs that window instead of leaving an
+// orphan image behind.
+const IMAGE_IN_USE = /being used by|must be forced|status code 409/i
+const IMAGE_REMOVE_ATTEMPTS = 5
+const IMAGE_REMOVE_RETRY_MS = Number(Bun.env["PLOYDOK_IMAGE_REMOVE_RETRY_MS"] ?? 2_000)
+
+async function removeImageWithRetry(image: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await getSharedAgent().imageRemove({ image, allTags: true })
+      return
+    } catch (err) {
+      if (attempt >= IMAGE_REMOVE_ATTEMPTS || !IMAGE_IN_USE.test(errToString(err))) throw err
+      log.info({ image, attempt }, "image still in use, retrying removal")
+      await new Promise((resolve) => setTimeout(resolve, IMAGE_REMOVE_RETRY_MS))
+    }
+  }
+}
+
+export function failedDeleteSteps(result: DeleteAppResult): string[] {
+  return Object.entries(result.steps)
+    .filter(([, step]) => !step.ok)
+    .map(([name]) => name)
+}
+
 /**
  * Handler for the `app.delete.requested` job (Wave 2 DB-anchored).
  * Payload: { jobId }.
@@ -79,7 +106,7 @@ function errToString(err: unknown): string {
 export async function handleDeleteApp(
   db: Db,
   job: { id: string; payload: unknown }
-): Promise<void> {
+): Promise<DeleteAppResult | undefined> {
   const rawPayload =
     typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload
   const payload = DeleteAppPayloadSchema.parse(rawPayload)
@@ -217,7 +244,7 @@ export async function handleDeleteApp(
         for (const registry of registries) {
           const image = `${registry}/${repository}`
           try {
-            await getSharedAgent().imageRemove({ image, allTags: true })
+            await removeImageWithRetry(image)
           } catch (err) {
             localErrors.push(`${image}: ${errToString(err)}`)
           }
@@ -311,16 +338,16 @@ export async function handleDeleteApp(
 
     log.info({ appId, result }, "delete-app cascade finished")
 
-    // Update the app_delete_job row with the final status.
-    const finalStatus = Object.values(result.steps).every((step) => step.ok)
-    ? "succeeded"
-    : "failed"
-    const errorMsg = Object.values(result.steps)
-      .filter((step) => step.error)
-      .map((step) => step.error)
+    // The app is deleted once its row is gone: leftover cleanup steps are
+    // warnings recorded on the job, not a failed deletion.
+    const finalStatus = result.steps.dbCascade.ok ? "succeeded" : "failed"
+    const errorMsg = Object.entries(result.steps)
+      .filter(([, step]) => step.error)
+      .map(([name, step]) => `[${name}] ${step.error}`)
       .join("; ")
 
     await finalize(finalStatus, errorMsg)
+    return result
   } catch (err) {
     await finalize("failed", errToString(err))
     throw err
