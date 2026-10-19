@@ -4,10 +4,15 @@ version = "0.1.0"
 edition = "2021"
 description = "Ploydok gRPC daemon — proxies Docker operations with allowlist enforcement"
 license = "AGPL-3.0-only"
+default-run = "ploydok-agent"
 
 [[bin]]
 name = "ploydok-agent"
 path = "src/main.rs"
+
+[[bin]]
+name = "ploydok-healthcheck"
+path = "src/bin/healthcheck.rs"
 
 [lib]
 name = "ploydok_agent"

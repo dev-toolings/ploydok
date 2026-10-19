@@ -62,7 +62,8 @@ RUN set -eux; \
       PKG_CONFIG_LIBDIR="/usr/lib/$triplet/pkgconfig:/usr/share/pkgconfig"; \
     cargo build --release --locked --target "$target" -p ploydok-agent; \
     install -D "target/$target/release/ploydok-agent" /out/ploydok-agent; \
-    file /out/ploydok-agent
+    install -D "target/$target/release/ploydok-healthcheck" /out/ploydok-healthcheck; \
+    file /out/ploydok-agent /out/ploydok-healthcheck
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -74,10 +75,17 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/ploydok-agent /usr/local/bin/ploydok-agent
+COPY --from=builder /out/ploydok-healthcheck /usr/local/bin/ploydok-healthcheck
 
 ENV PLOYDOK_AGENT_SOCKET=/run/ploydok/agent.sock \
     RUST_LOG=info
 
 EXPOSE 50051
+
+# Probes the listener (PLOYDOK_AGENT_ADDR or PLOYDOK_AGENT_SOCKET). Gives the
+# compose and Swarm descriptors a real readiness signal and lets Swarm replace
+# a wedged agent. The gRPC round trip stays in the API /health/ready check.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --start-interval=2s --retries=3 \
+  CMD ["/usr/local/bin/ploydok-healthcheck"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/ploydok-agent"]
