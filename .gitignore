@@ -33,9 +33,6 @@ npm-debug.log*
 .DS_Store
 *.pem
 
-# instant-grep index
-.ig/
-
 # Agent reports and shared scratch state
 .ai/
 
