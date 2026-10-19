@@ -22,9 +22,7 @@ import { mkdtemp, mkdir, writeFile, access, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-mock.module("../../caddy/attachment.js", () => ({
-  detachCaddyFromProjectNetwork: async () => {},
-}))
+import { resetCaddyIdCache } from "../../caddy/attachment"
 
 const stopSwarmAppMock = mock(async () => {})
 const stopAppMock = mock(async () => {})
@@ -41,6 +39,7 @@ function createMockDb(options?: {
   failDelete?: boolean
   appProjectId?: string
   projectNetworkName?: string | null
+  projectSwarmNetworkName?: string | null
   remainingAppIds?: string[]
   databaseIds?: string[]
   serviceIds?: string[]
@@ -65,7 +64,7 @@ function createMockDb(options?: {
 
           if (table === projects) {
             return options && "projectNetworkName" in options
-              ? [{ network_name: options.projectNetworkName }]
+              ? [{ network_name: options.projectNetworkName, swarm_network_name: options.projectSwarmNetworkName }]
               : []
           }
 
@@ -231,7 +230,7 @@ describe("handleDeleteApp", () => {
     expect(agent).not.toHaveBeenCalled()
   })
 
-  it("validates payload schema — throws on invalid JSON", async () => {
+  it("validates payload schema: throws on invalid JSON", async () => {
     const { handleDeleteApp } = await import("./delete-app")
     const fakeDb = createMockDb().db
     const job = {
@@ -255,7 +254,7 @@ describe("handleDeleteApp", () => {
 
     expect(auditSpy).toHaveBeenCalledTimes(1)
     expect(auditSpy.mock.calls[0]?.[0]).toMatchObject({
-      reason: "legacy payload format — drop after queue drain",
+      reason: "legacy payload format: drop after queue drain",
     })
     expect(claimSpy).not.toHaveBeenCalled()
   })
@@ -326,12 +325,39 @@ describe("handleDeleteApp", () => {
     ).toBeTrue()
   })
 
-  it("keeps the project network when a database still uses it", async () => {
+  it("removes the overlay and legacy bridge after deleting the last app", async () => {
+    resetCaddyIdCache()
+    const { handleDeleteApp } = await import("./delete-app")
+    const { db, updateCalls } = createMockDb({
+      appProjectId: "ABC", projectNetworkName: "bridge", projectSwarmNetworkName: null,
+    })
+    const events: string[] = []
+    spyOn(singletonsMod, "getSharedAgent").mockReturnValue({
+      ingressStatus: async () => ({ overlayInventoryComplete: true, projectOverlays: [{ name: "ploydok-swarm-proj-abc", hasWorkloads: false }] }),
+      listContainers: async () => ({ containers: [{ id: "caddy", name: "ploydok-caddy" }] }),
+      inspectContainerHealth: async () => ({ running: true }),
+      networkDisconnect: async ({ networkId }: any) => { events.push(`detach:${networkId}`) },
+      networkRemove: async ({ networkId }: any) => { events.push(`remove:${networkId}`) },
+    } as any)
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      app_id: "app", requested_by_user_id: "user", source: "api",
+      options: { deleteImages: false, dockerCleanup: true, deleteBuildArtifacts: false, deleteCaddyRoutes: false },
+    })
+    await handleDeleteApp(db, { id: "job", payload: { jobId: "job" } })
+    expect(events).toEqual(["detach:ploydok-swarm-proj-abc", "remove:ploydok-swarm-proj-abc", "detach:bridge", "remove:bridge"])
+    expect(updateCalls.filter(call => call.table === projects).map(call => call.values))
+      .toEqual([{ swarm_network_name: null }, { network_name: null }])
+    resetCaddyIdCache()
+  })
+
+  it.each(["database", "service", "app"])("keeps the project network when a %s still uses it", async (consumer) => {
     const { handleDeleteApp } = await import("./delete-app")
     const { db, updateCalls } = createMockDb({
       appProjectId: "project-1",
       projectNetworkName: "ploydok-proj-project-1",
-      databaseIds: ["db-1"],
+      databaseIds: consumer === "database" ? ["db-1"] : [],
+      serviceIds: consumer === "service" ? ["svc-1"] : [],
+      remainingAppIds: consumer === "app" ? ["app-2"] : [],
     })
     const claimed = {
       app_id: "app-1",

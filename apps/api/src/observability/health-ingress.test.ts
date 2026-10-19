@@ -13,7 +13,7 @@ test("ingress is degraded with typed network evidence even when all routes exist
     address: "10.0.8.2", conflictingEndpoint: "vip:app-service",
   }
   const report = await checkIngress(db,
-    async () => ({ containerId: "caddy", issues: [issue] }), async () => ({}))
+    async () => ({ containerId: "caddy", projectOverlays: [], overlayInventoryComplete: true, issues: [issue] }), async () => ({}))
   expect(report.status).toBe("degraded")
   expect(report.network_issues).toEqual([issue])
   expect(report.missing_http_routes).toEqual([])
@@ -28,7 +28,7 @@ test("ingress cannot be green when allocation inspection is unavailable", async 
 
 test("ingress is green with routes present and no address collision", async () => {
   const report = await checkIngress(db,
-    async () => ({ containerId: "caddy", issues: [] }), async () => ({}))
+    async () => ({ containerId: "caddy", projectOverlays: [], overlayInventoryComplete: true, issues: [] }), async () => ({}))
   expect(report.status).toBe("ok")
   expect(report.network_issues).toEqual([])
 })

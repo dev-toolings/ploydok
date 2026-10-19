@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Delete-app cascade handler — Coolify-style.
+ * Delete-app cascade handler: Coolify-style.
  *
  * Steps performed (each one best-effort, all errors collected and surfaced):
  *  1. Stop the Swarm service (if any) then leftover blue/green containers.
  *  2. Delete app registry manifests and local images. Scheduled GC reclaims blobs.
  *  3. Remove Caddy upstream/route for the app.
  *  4. Delete on-disk build workspaces (~/.ploydok-dev/builds/<appId>/).
- *  5. Delete the `apps` row — `builds`, `domains`, `env_vars` cascade via FK.
+ *  5. Delete the `apps` row: `builds`, `domains`, `env_vars` cascade via FK.
  *
  * Triggered by job `app.delete.requested`. Each option flag mirrors the
  * Coolify API (`delete_volumes`, `docker_cleanup`, `delete_configurations`,
@@ -15,16 +15,16 @@
  */
 import path from "node:path"
 import { rm } from "node:fs/promises"
-import { and, eq, ne } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import { z } from "zod"
-import { apps, databases, projects, services, app_delete_jobs } from "@ploydok/db"
+import { apps, app_delete_jobs } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { claimQueuedRow } from "../queue-claim"
 import { auditUnauthorized, auditClaimed } from "../queue-audit"
 import { env } from "../../env"
 import { workerLog as logger } from "../logger"
 import { CaddyClient } from "../../caddy/client.js"
-import { detachCaddyFromProjectNetwork } from "../../caddy/attachment.js"
+import { projectHasRemainingNetworkConsumers, removeProjectNetworks } from "../../caddy/attachment.js"
 import { getSharedAgent } from "../../debug/singletons.js"
 import { staticRootForApp } from "./build-static.js"
 import { deleteRepository } from "../registry.js"
@@ -72,40 +72,6 @@ function errToString(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-async function projectHasRemainingNetworkConsumers(
-  db: Db,
-  projectId: string,
-  deletingAppId: string
-): Promise<boolean> {
-  const siblingApps = await db
-    .select({ id: apps.id })
-    .from(apps)
-    .where(and(eq(apps.project_id, projectId), ne(apps.id, deletingAppId)))
-    .limit(1)
-
-  if (siblingApps.length > 0) {
-    return true
-  }
-
-  const projectDatabases = await db
-    .select({ id: databases.id })
-    .from(databases)
-    .where(eq(databases.project_id, projectId))
-    .limit(1)
-
-  if (projectDatabases.length > 0) {
-    return true
-  }
-
-  const projectServices = await db
-    .select({ id: services.id })
-    .from(services)
-    .where(eq(services.project_id, projectId))
-    .limit(1)
-
-  return projectServices.length > 0
-}
-
 /**
  * Handler for the `app.delete.requested` job (Wave 2 DB-anchored).
  * Payload: { jobId }.
@@ -124,7 +90,7 @@ export async function handleDeleteApp(
         jobName: "app.delete.requested",
         jobId: job.id,
         payload,
-        reason: "legacy payload format — drop after queue drain",
+        reason: "legacy payload format: drop after queue drain",
       })
       return
     }
@@ -267,7 +233,7 @@ export async function handleDeleteApp(
     }
 
     // 3. Caddy: delete upstream/route. (stopApp already calls removeUpstream
-    //    when dockerCleanup ran — this is the explicit fallback for the case
+    //    when dockerCleanup ran: this is the explicit fallback for the case
     //    where containers were skipped or stopApp failed before reaching it.)
     if (deleteCaddyRoutes && !dockerCleanup) {
       try {
@@ -307,11 +273,11 @@ export async function handleDeleteApp(
       log.warn({ appId, err }, "app-volumes cleanup failed (continuing)")
     }
 
-    // 4b. Per-project network cleanup (Phase 1.C).
+    // 4b. Remove both project networks after the last consumer leaves.
     //
     // Before deleting the `apps` row we check whether this is the last runtime
-    // consumer of its project. If so and the project has a network_name set,
-    // drop the Docker bridge network. Best-effort: failures are non-fatal.
+    // consumer of its project. Runtime endpoints also guard overlay removal.
+    // Overlay failures are retried by periodic ingress reconciliation.
     try {
       const [appRow] = await db
         .select({ project_id: apps.project_id })
@@ -327,38 +293,7 @@ export async function handleDeleteApp(
         )
 
         if (!hasRemainingConsumers) {
-          const [projRow] = await db
-            .select({ network_name: projects.network_name })
-            .from(projects)
-            .where(eq(projects.id, appRow.project_id))
-            .limit(1)
-
-          if (projRow?.network_name) {
-            try {
-              const agent = getSharedAgent()
-              // Caddy must leave the project network before Docker accepts to
-              // delete it (`network_remove` fails 403 while endpoints remain).
-              await detachCaddyFromProjectNetwork(agent, projRow.network_name)
-              await agent.networkRemove({ networkId: projRow.network_name })
-              await db
-                .update(projects)
-                .set({ network_name: null })
-                .where(eq(projects.id, appRow.project_id))
-              log.info(
-                {
-                  appId,
-                  projectId: appRow.project_id,
-                  network: projRow.network_name,
-                },
-                "project network removed (last app deleted)"
-              )
-            } catch (err) {
-              log.warn(
-                { appId, projectId: appRow.project_id, err },
-                "networkRemove failed (non-fatal)"
-              )
-            }
-          }
+          await removeProjectNetworks(getSharedAgent(), db, appRow.project_id)
         }
       }
     } catch (err) {

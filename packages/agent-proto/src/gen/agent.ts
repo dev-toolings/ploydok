@@ -98,7 +98,7 @@ export interface VolumeMount {
 export interface PortMapping {
   containerPort: number;
   hostPort: number;
-  /** "tcp" or "udp" — defaults to "tcp" if empty */
+  /** "tcp" or "udp": defaults to "tcp" if empty */
   proto: string;
   /**
    * Literal host IP to bind. Empty preserves legacy behavior for callers
@@ -137,7 +137,7 @@ export interface HealthcheckConfig {
 }
 
 export interface ContainerCreateRequest {
-  /** Container name — MUST match the ploydok-* allowlist enforced by the agent. */
+  /** Container name: MUST match the ploydok-* allowlist enforced by the agent. */
   name: string;
   /** Docker image reference (e.g. "nginx:1.25-alpine"). */
   image: string;
@@ -303,7 +303,7 @@ export interface BuildProgress {
 }
 
 export interface NetworkCreateRequest {
-  /** Network name — must match ploydok-* prefix. */
+  /** Network name: must match ploydok-* prefix. */
   name: string;
   /** Docker network driver (e.g. "bridge"). Defaults to "bridge" when empty. */
   driver: string;
@@ -371,11 +371,11 @@ export interface ContainerSnapshot {
   memBytes: number;
   memLimitBytes: number;
   restartCount: number;
-  /** Label "ploydok.kind" — "app" | "infra" | "agent" | "" (unknown) */
+  /** Label "ploydok.kind": "app" | "infra" | "agent" | "" (unknown) */
   kind: string;
   /** Label "ploydok.app_id" if kind=="app", empty otherwise */
   appId: string;
-  /** Label "ploydok.color" if kind=="app" — "blue"|"green"|"" */
+  /** Label "ploydok.color" if kind=="app": "blue"|"green"|"" */
   color: string;
   /** Last active ping result (filled only after PingContainer called); 0 if never */
   lastPingMs: number;
@@ -397,7 +397,7 @@ export interface ListContainersResponse {
 
 export interface PingContainerRequest {
   containerId: string;
-  /** e.g. "/health" — mandatory, max 256 chars */
+  /** e.g. "/health": mandatory, max 256 chars */
   path: string;
   /** Target port on the container (must match one of its exposed ports) */
   port: number;
@@ -453,9 +453,9 @@ export interface ExecFrame {
   ready?: ExecReady | undefined;
 }
 
-/** First frame sent by the client — initialises the exec session. */
+/** First frame sent by the client: initialises the exec session. */
 export interface ExecStart {
-  /** Container name or id — must match the ploydok-* allowlist. */
+  /** Container name or id: must match the ploydok-* allowlist. */
   containerId: string;
   /** Command to run inside the container (e.g. ["/bin/sh"]). */
   cmd: string[];
@@ -482,14 +482,14 @@ export interface ExecExit {
 
 /** Sent by the server once the exec session is ready (after create+start). */
 export interface ExecReady {
-  /** Docker exec id — useful for debugging / correlation. */
+  /** Docker exec id: useful for debugging / correlation. */
   execId: string;
 }
 
 export interface ListContainerFilesRequest {
-  /** Container name or id — must match the ploydok-* allowlist. */
+  /** Container name or id: must match the ploydok-* allowlist. */
   containerId: string;
-  /** Absolute path to list (must start with "/" — no ".."). */
+  /** Absolute path to list (must start with "/": no ".."). */
   path: string;
   /** Include dotfiles in the listing. */
   showHidden: boolean;
@@ -523,7 +523,7 @@ export interface ListContainerFilesResponse {
 }
 
 export interface ReadContainerFileRequest {
-  /** Container name or id — must match the ploydok-* allowlist. */
+  /** Container name or id: must match the ploydok-* allowlist. */
   containerId: string;
   /** Absolute path to read. */
   path: string;
@@ -559,7 +559,7 @@ export interface DumpChunk {
 }
 
 export interface RestoreChunk {
-  /** First frame sent by the client — must arrive before any data frames. */
+  /** First frame sent by the client: must arrive before any data frames. */
   header?: RestoreHeader | undefined;
   data?: Uint8Array | undefined;
 }
@@ -946,9 +946,18 @@ export interface IngressNetworkIssue {
   conflictingEndpoint: string;
 }
 
+/** Inventory includes all project overlays, including those without Caddy. */
+export interface IngressProjectOverlay {
+  name: string;
+  /** Excludes Caddy and Docker's load-balancer endpoint. Includes service references. */
+  hasWorkloads: boolean;
+}
+
 export interface IngressStatusResponse {
   containerId: string;
   issues: IngressNetworkIssue[];
+  projectOverlays: IngressProjectOverlay[];
+  overlayInventoryComplete: boolean;
 }
 
 function createBaseVolumeMount(): VolumeMount {
@@ -11601,8 +11610,88 @@ export const IngressNetworkIssue: MessageFns<IngressNetworkIssue> = {
   },
 };
 
+function createBaseIngressProjectOverlay(): IngressProjectOverlay {
+  return { name: "", hasWorkloads: false };
+}
+
+export const IngressProjectOverlay: MessageFns<IngressProjectOverlay> = {
+  encode(message: IngressProjectOverlay, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.hasWorkloads !== false) {
+      writer.uint32(16).bool(message.hasWorkloads);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): IngressProjectOverlay {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseIngressProjectOverlay();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.hasWorkloads = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): IngressProjectOverlay {
+    return {
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+      hasWorkloads: isSet(object.hasWorkloads)
+        ? globalThis.Boolean(object.hasWorkloads)
+        : isSet(object.has_workloads)
+        ? globalThis.Boolean(object.has_workloads)
+        : false,
+    };
+  },
+
+  toJSON(message: IngressProjectOverlay): unknown {
+    const obj: any = {};
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    if (message.hasWorkloads !== false) {
+      obj.hasWorkloads = message.hasWorkloads;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<IngressProjectOverlay>): IngressProjectOverlay {
+    return IngressProjectOverlay.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<IngressProjectOverlay>): IngressProjectOverlay {
+    const message = createBaseIngressProjectOverlay();
+    message.name = object.name ?? "";
+    message.hasWorkloads = object.hasWorkloads ?? false;
+    return message;
+  },
+};
+
 function createBaseIngressStatusResponse(): IngressStatusResponse {
-  return { containerId: "", issues: [] };
+  return { containerId: "", issues: [], projectOverlays: [], overlayInventoryComplete: false };
 }
 
 export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
@@ -11612,6 +11701,12 @@ export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
     }
     for (const v of message.issues) {
       IngressNetworkIssue.encode(v!, writer.uint32(18).fork()).join();
+    }
+    for (const v of message.projectOverlays) {
+      IngressProjectOverlay.encode(v!, writer.uint32(26).fork()).join();
+    }
+    if (message.overlayInventoryComplete !== false) {
+      writer.uint32(32).bool(message.overlayInventoryComplete);
     }
     return writer;
   },
@@ -11639,6 +11734,22 @@ export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
           message.issues.push(IngressNetworkIssue.decode(reader, reader.uint32()));
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.projectOverlays.push(IngressProjectOverlay.decode(reader, reader.uint32()));
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.overlayInventoryComplete = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -11658,6 +11769,16 @@ export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
       issues: globalThis.Array.isArray(object?.issues)
         ? object.issues.map((e: any) => IngressNetworkIssue.fromJSON(e))
         : [],
+      projectOverlays: globalThis.Array.isArray(object?.projectOverlays)
+        ? object.projectOverlays.map((e: any) => IngressProjectOverlay.fromJSON(e))
+        : globalThis.Array.isArray(object?.project_overlays)
+        ? object.project_overlays.map((e: any) => IngressProjectOverlay.fromJSON(e))
+        : [],
+      overlayInventoryComplete: isSet(object.overlayInventoryComplete)
+        ? globalThis.Boolean(object.overlayInventoryComplete)
+        : isSet(object.overlay_inventory_complete)
+        ? globalThis.Boolean(object.overlay_inventory_complete)
+        : false,
     };
   },
 
@@ -11669,6 +11790,12 @@ export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
     if (message.issues?.length) {
       obj.issues = message.issues.map((e) => IngressNetworkIssue.toJSON(e));
     }
+    if (message.projectOverlays?.length) {
+      obj.projectOverlays = message.projectOverlays.map((e) => IngressProjectOverlay.toJSON(e));
+    }
+    if (message.overlayInventoryComplete !== false) {
+      obj.overlayInventoryComplete = message.overlayInventoryComplete;
+    }
     return obj;
   },
 
@@ -11679,6 +11806,8 @@ export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
     const message = createBaseIngressStatusResponse();
     message.containerId = object.containerId ?? "";
     message.issues = object.issues?.map((e) => IngressNetworkIssue.fromPartial(e)) || [];
+    message.projectOverlays = object.projectOverlays?.map((e) => IngressProjectOverlay.fromPartial(e)) || [];
+    message.overlayInventoryComplete = object.overlayInventoryComplete ?? false;
     return message;
   },
 };
@@ -11907,7 +12036,7 @@ export const AgentService = {
     responseSerialize: (value: RestoreResult): Buffer => Buffer.from(RestoreResult.encode(value).finish()),
     responseDeserialize: (value: Buffer): RestoreResult => RestoreResult.decode(value),
   },
-  /** Host monitoring (VPS health — Sprint 6.6) */
+  /** Host monitoring (VPS health: Sprint 6.6) */
   hostStats: {
     path: "/ploydok.agent.v1.Agent/HostStats" as const,
     requestStream: false as const,
@@ -12138,7 +12267,7 @@ export interface AgentServer extends UntypedServiceImplementation {
   /** Database backup / restore (streaming) */
   dumpDatabase: handleServerStreamingCall<DumpRequest, DumpChunk>;
   restoreDatabase: handleClientStreamingCall<RestoreChunk, RestoreResult>;
-  /** Host monitoring (VPS health — Sprint 6.6) */
+  /** Host monitoring (VPS health: Sprint 6.6) */
   hostStats: handleUnaryCall<HostStatsRequest, HostStatsResponse>;
   /** Disk usage & image reclaim */
   imageDf: handleUnaryCall<ImageDfRequest, ImageDfResponse>;
@@ -12432,7 +12561,7 @@ export interface AgentClient extends Client {
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: RestoreResult) => void,
   ): ClientWritableStream<RestoreChunk>;
-  /** Host monitoring (VPS health — Sprint 6.6) */
+  /** Host monitoring (VPS health: Sprint 6.6) */
   hostStats(
     request: HostStatsRequest,
     callback: (error: ServiceError | null, response: HostStatsResponse) => void,

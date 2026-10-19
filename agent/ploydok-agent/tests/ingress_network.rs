@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 use bollard::models::{Network, Service};
 use ploydok_agent::service::caddy_runtime::{reconcile_locked, runtime_config};
-use ploydok_agent::service::ingress_network::{collision, reconcile, status, AttachmentState};
+use ploydok_agent::service::ingress_network::{
+    collision, has_workloads, reconcile, status, AttachmentState,
+};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -339,6 +341,9 @@ async fn existing_collision_is_rejected_on_idempotent_join_and_reported_read_onl
     assert_eq!(typed["state"], "address_collision");
     state.lock().unwrap().calls.clear();
     let report = status(&docker).await.unwrap();
+    assert!(report.overlay_inventory_complete);
+    assert_eq!(report.project_overlays[0].name, "ploydok-swarm-proj-test");
+    assert!(report.project_overlays[0].has_workloads);
     assert_eq!(report.issues[0].state, "address_collision");
     assert_eq!(report.issues[0].network, "ploydok-swarm-proj-test");
     assert_eq!(report.issues[0].address, "10.0.8.2");
@@ -385,4 +390,28 @@ async fn readiness_gates_runtime_image_convergence_without_mutation() {
         .iter()
         .all(|c| c.starts_with("GET ")));
     server.abort();
+}
+
+#[test]
+fn overlay_inventory_keeps_workloads_and_service_references_but_ignores_caddy_and_lb() {
+    let mut net: Network = serde_json::from_value(json!({
+        "Id": "overlay-id", "Name": "ploydok-swarm-proj-test", "Driver": "overlay",
+        "Containers": {
+            "runtime": {"Name": "ploydok-caddy"},
+            "lb-overlay-id": {"Name": "ploydok-swarm-proj-test-endpoint"}
+        }
+    }))
+    .unwrap();
+    assert!(!has_workloads(&net, "runtime", &[]));
+    assert!(has_workloads(&net, "runtime", &services()));
+    let pending: Vec<Service> = serde_json::from_value(json!([{
+        "Spec": {"Name": "app", "TaskTemplate": {"Networks": [{"Target": "overlay-id"}]}}
+    }]))
+    .unwrap();
+    assert!(has_workloads(&net, "runtime", &pending));
+    net.containers
+        .as_mut()
+        .unwrap()
+        .insert("workload".into(), Default::default());
+    assert!(has_workloads(&net, "runtime", &[]));
 }

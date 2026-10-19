@@ -27,16 +27,16 @@ import {
   reconcileServiceRoutes,
   type ReconcileResult,
 } from "../caddy/reconciler.js"
-import { reconcileCaddyAttachments } from "../caddy/attachment.js"
+import { reconcileCaddyAttachments, reconcileUnusedProjectOverlays } from "../caddy/attachment.js"
 
 export interface IngressReconcilePassResult {
   appRoutes: ReconcileResult
   serviceRoutes: ReconcileResult
   databaseProxies: ReconcileResult
   attachments: { attached: number; skipped: number; failed: number }
-  /** total non-zero `synced` across all categories — when > 0, we just self-healed drift */
+  /** total non-zero `synced` across all categories: when > 0, we just self-healed drift */
   totalSynced: number
-  /** total `failed` across all categories — when > 0, retry next tick */
+  /** total `failed` across all categories: when > 0, retry next tick */
   totalFailed: number
   /** all categories reached `bootstrapped: true` and no failures */
   ok: boolean
@@ -58,6 +58,13 @@ export async function reconcileIngressOnce(opts: {
   // Legacy task migration replaces Caddy once. Converge attachments before
   // restoring routes on the standalone runtime.
   const attachments = await reconcileCaddyAttachments(agent, db)
+  try {
+    const cleanup = await reconcileUnusedProjectOverlays(agent, db)
+    attachments.failed += cleanup.failed
+  } catch (err) {
+    attachments.failed++
+    logger.warn({ err }, "unused project overlay reconciliation failed")
+  }
   const [appRoutes, serviceRoutes, databaseProxies] =
     await Promise.all([
       reconcileCaddyRoutes({

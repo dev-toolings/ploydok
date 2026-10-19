@@ -12,6 +12,7 @@ mock.module("../caddy/reconciler.js", () => ({
   reconcileDatabaseTcpProxies: async () => { events.push("database-routes"); return result },
 }))
 mock.module("../caddy/attachment.js", () => ({
+  reconcileUnusedProjectOverlays: async () => ({ removed: 0, failed: 0 }),
   reconcileCaddyAttachments: async () => {
     events.push("attachment-start")
     await Promise.resolve()
