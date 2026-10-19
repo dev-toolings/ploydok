@@ -48,8 +48,10 @@ async function repairAppStatusAfterReap(db: Db, appId: string): Promise<void> {
 }
 
 /**
- * Finds `builds` rows with status in (pending, running) whose started_at is
- * older than STUCK_THRESHOLD_MS and marks them `cancelled`. Covers the
+ * Finds running builds whose started_at is older than STUCK_THRESHOLD_MS
+ * and marks them cancelled. Pending builds are owned by the queue-aware
+ * reconciliation in queue-deploy-reconciliation.ts, so delayed deployments
+ * are never cancelled just because they have waited a long time. Covers the
  * edge case where a deploy worker crashed / was restarted mid-flight and
  * left a build row stuck in "running" with no process driving it anywhere.
  * Without this, the UI shows a perpetually spinning deployment and the
@@ -73,19 +75,6 @@ export async function reapStuckBuilds(db: Db): Promise<{ reaped: string[] }> {
     reaped.push(row.id)
   }
 
-  const pending = await db
-    .select({ id: builds.id, app_id: builds.app_id })
-    .from(builds)
-    .where(and(lt(builds.created_at, threshold), eq(builds.status, "pending")))
-  for (const row of pending) {
-    await updateBuildStatus(db, row.id, "cancelled", {
-      finishedAt: new Date(),
-      errorMessage: "Build reaped: stuck in `pending` for > 30 min.",
-    })
-    await repairAppStatusAfterReap(db, row.app_id)
-    reaped.push(row.id)
-  }
-
   if (reaped.length > 0) {
     log.info({ reaped }, "reaped stuck builds")
   }
@@ -94,7 +83,7 @@ export async function reapStuckBuilds(db: Db): Promise<{ reaped: string[] }> {
 
 export function startReapStuckBuildsCron(db: Db): void {
   stopReapStuckBuildsCron()
-  // Run once immediately on boot — handles the common "dev `make dev`
+  // Run once immediately on boot: handles the common "dev `make dev`
   // restart left a running build stuck forever" scenario.
   void reapStuckBuilds(db).catch((err) => {
     log.error({ err }, "initial reap failed")

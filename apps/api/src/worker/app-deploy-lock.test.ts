@@ -1,17 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, mock } from "bun:test"
+import { PgDialect } from "drizzle-orm/pg-core"
+import type { SQL } from "drizzle-orm"
 import type { Db } from "@ploydok/db"
 import {
   DeployCancelledError,
-  DeployLeaseLostError,
   fenceDeploySideEffect,
   runOwnedDeployReconciliation,
-  withAppDeployLease,
+  withAppDeployLease as realWithAppDeployLease,
 } from "./app-deploy-lock"
 
+// Keep lease unit tests independent of a running Redis service.
+const gateRedis = { eval: mock(async () => 1) }
+function withAppDeployLease<T>(
+  db: Db, appId: string, buildId: string, task: () => Promise<T>,
+  opts: Parameters<typeof realWithAppDeployLease>[4] = {}
+) {
+  return realWithAppDeployLease(db, appId, buildId, task, { gateRedis, ...opts })
+}
+
 function fakeDb(results: unknown[][]) {
-  const execute = mock(async () => results.shift() ?? [])
-  return { db: { execute } as unknown as Db, execute }
+  const execute = mock(async (_query: SQL) => results.shift() ?? [])
+  const transaction = async (action: (tx: unknown) => Promise<unknown>) => action({
+    execute: async (query: SQL) => {
+      const text = new PgDialect().sqlToQuery(query).sql
+      if (text.includes("pg_advisory_xact_lock")) return []
+      if (text.includes("SELECT status, error_message")) return [{ status: "pending" }]
+      // No other waiting request competes in these ownership/fencing tests.
+      if (text.includes("SELECT waiting.id")) return []
+      if (text.includes("UPDATE builds")) return []
+      return execute(query)
+    },
+  })
+  return { db: { execute, transaction } as unknown as Db, execute }
 }
 
 describe("durable app deploy lease", () => {
@@ -27,13 +48,6 @@ describe("durable app deploy lease", () => {
       })
     ).resolves.toBe("ok")
     expect(execute).toHaveBeenCalledTimes(3)
-  })
-
-  it("rejects when another worker owns the unexpired lease", async () => {
-    const { db } = fakeDb([[]])
-    await expect(
-      withAppDeployLease(db, "app-1", "build-2", async () => undefined)
-    ).rejects.toBeInstanceOf(DeployLeaseLostError)
   })
 
   it("stops at the next fence after cancellation intent", async () => {

@@ -9,12 +9,14 @@ import {
 import { auditEnqueued } from "./queue-audit"
 import { workerLog } from "./logger"
 import type { QueuePublisher } from "./queue-enqueue"
+import { reconcileOrphanedPendingDeploys } from "./queue-deploy-reconciliation"
 
 const log = workerLog.child({ subsystem: "queue-outbox" })
 const POLL_MS = 2_000
 const QUEUE_ADD_TIMEOUT_MS = 10_000
 let timer: ReturnType<typeof setInterval> | null = null
 let running: Promise<void> | null = null
+let deployReconciliation: Promise<void> | null = null
 
 export type QueueOutboxDispatchResult =
   "idle" | "dispatched" | "retry" | "lease-lost"
@@ -148,7 +150,22 @@ export function startQueueOutboxDispatcher(
 ): void {
   if (timer) return
   const byName = new Map(queues.map((queue) => [queue.name, queue]))
+  let nextDeployReconciliation = 0
   const tick = () => {
+    const deploy = byName.get("deploy")
+    // Inspect Redis independently so a slow scan cannot delay outbox delivery.
+    if (deploy?.getJob && !deployReconciliation && Date.now() >= nextDeployReconciliation) {
+      nextDeployReconciliation = Date.now() + 60_000
+      deployReconciliation = reconcileOrphanedPendingDeploys(db, {
+        getJob: (id) => deploy.getJob!(id),
+      }).then((resolved) => {
+        if (resolved) log.warn({ resolved }, "orphaned pending deployments resolved")
+      }).catch((error) => {
+        log.warn({ error }, "pending deployment reconciliation failed")
+      }).finally(() => {
+        deployReconciliation = null
+      })
+    }
     if (running) return
     running = (async () => {
       try {
@@ -169,5 +186,5 @@ export function startQueueOutboxDispatcher(
 export async function stopQueueOutboxDispatcher(): Promise<void> {
   if (timer) clearInterval(timer)
   timer = null
-  await running
+  await Promise.all([running, deployReconciliation])
 }
