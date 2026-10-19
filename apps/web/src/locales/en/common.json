@@ -76,6 +76,11 @@
     "lightTheme": "Light theme",
     "darkTheme": "Dark theme"
   },
+  "buildActivity": {
+    "label_one": "Build in progress",
+    "label_other": "{{count}} builds in progress",
+    "open": "Open the running build"
+  },
   "nav": {
     "workspace": "Workspace",
     "platform": "Platform",
