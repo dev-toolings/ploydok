@@ -100,7 +100,11 @@ One-time setup on the staging instance:
 
 1. Create an app from the `dev-toolings/ploydok` repository, branch `develop`,
    root directory `scripts/deploy-shuttle/smoke-app`, build method Dockerfile,
-   runtime port 8080. Turn off deploy on push.
+   runtime port 8080. Turn off deploy on push. When the instance has no GitHub
+   installation covering `dev-toolings`, use a mirror of that folder that one
+   of its installations can read: staging VM 235 uses the private repository
+   `MakFly/ploydok-smoke-app` (root directory, branch `main`). Push any change
+   of `scripts/deploy-shuttle/smoke-app/` to the mirror as well.
 2. Add the variable `SMOKE_BUILD_TOKEN` (any value) with the phase `build`.
 3. Create an API token with the `apps:read` and `apps:deploy` scopes.
 4. On the operator machine, write `~/.config/ploydok/smoke.env` (mode 0600):
