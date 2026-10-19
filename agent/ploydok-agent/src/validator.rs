@@ -775,8 +775,9 @@ impl Validator for StrictValidator {
                 ));
             }
 
+            crate::service::http_probe::validate(&healthcheck.test).map_err(Box::new)?;
             let mode = healthcheck.test[0].as_str();
-            if !["CMD", "CMD-SHELL", "NONE"].contains(&mode) {
+            if !["CMD", "CMD-SHELL", "NONE", "PLOYDOK-HTTP"].contains(&mode) {
                 return Err(deny(
                     tonic::Code::InvalidArgument,
                     "healthcheck_mode_invalid",
@@ -1152,6 +1153,9 @@ impl Validator for StrictValidator {
 
     fn validate_service_create(&self, req: &SwarmServiceSpec) -> ValidatorResult {
         validate_service_name(&req.name)?;
+        if let Some(hc) = &req.healthcheck {
+            crate::service::http_probe::validate(&hc.test).map_err(Box::new)?;
+        }
         if !["", "none", "on-failure", "any"].contains(&req.restart_condition.as_str()) {
             return Err(deny(
                 tonic::Code::InvalidArgument,

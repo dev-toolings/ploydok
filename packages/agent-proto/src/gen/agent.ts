@@ -120,6 +120,9 @@ export interface ResourceLimits {
 /** Docker container healthcheck. */
 export interface HealthcheckConfig {
   /**
+   * Agent extension: ["PLOYDOK-HTTP", decimalPort, path].
+   * Validated and replaced with native Docker CMD plus a read-only probe volume.
+   * Requires an agent that supports this mode; never pass it directly to Docker.
    * Possible values mirror Docker:
    * - [] inherit from image
    * - ["NONE"] disable
@@ -763,6 +766,11 @@ export interface SwarmServiceMount {
 }
 
 export interface SwarmServiceHealthcheck {
+  /**
+   * Agent extension: ["PLOYDOK-HTTP", decimalPort, path].
+   * Validated and replaced with native Docker CMD plus a read-only probe volume.
+   * Requires an agent that supports this mode; never pass it directly to Docker.
+   */
   test: string[];
   intervalSeconds: number;
   timeoutSeconds: number;

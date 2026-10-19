@@ -59,10 +59,7 @@ import { buildEnvForDeploy } from "../secrets/resolver.js"
 import { purgeCloudflareForApp } from "../cloudflare/purge.js"
 import { listRuntimeAppVolumeMounts } from "../services/app-volumes.js"
 import { classifyAppDomainWithInstanceBase } from "../domains/app-domain.js"
-import {
-  healthcheckShell,
-  quotePosixShellLiteral,
-} from "./healthcheck-shell.js"
+import { healthcheckTest } from "./healthcheck-shell.js"
 import {
   currentDeployLease,
   currentDeployLeaseCondition,
@@ -233,7 +230,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Poll Docker's daemon-maintained `State.Health.Status` for a container.
  *
- * The runner injects a `HEALTHCHECK CMD-SHELL` on every container at create
+ * The agent supplies a static `HEALTHCHECK CMD` on every managed app at create
  * time (cf. `runBlueGreen` below), so Docker maintains the health state
  * authoritatively — and the probe runs *inside* the container, sidestepping
  * the per-project network isolation that prevents the agent (now a docker-
@@ -270,6 +267,7 @@ export async function pollHealthcheck(opts: {
     await sleep(opts.startPeriodMs)
   }
 
+  let lastProbeOutput = ""
   for (let attempt = 1; attempt <= opts.retries; attempt++) {
     await sleep(opts.intervalMs)
     const label = `[healthcheck ${attempt}/${opts.retries}]`
@@ -279,6 +277,7 @@ export async function pollHealthcheck(opts: {
         { containerId: opts.containerId }
       )
 
+      lastProbeOutput = resp.lastProbeOutput?.trim().slice(0, 4096) ?? ""
       if (resp.containerMissing) {
         logBus.publish(
           channel,
@@ -329,6 +328,9 @@ export async function pollHealthcheck(opts: {
       const msg = err instanceof Error ? err.message : String(err)
       logBus.publish(channel, `${label} error: ${msg}`)
     }
+  }
+  if (/healthcheck (?:impossible|failed):/.test(lastProbeOutput)) {
+    throw new Error(`Docker healthcheck failed: ${lastProbeOutput}`)
   }
   return false
 }
@@ -900,10 +902,7 @@ export async function runBlueGreen(
         // root path is not routable; users can set a custom healthcheck path
         // when they need stricter semantics.
         healthcheck: {
-          test: [
-            "CMD-SHELL",
-            healthcheckShell(hcPort, hcPath),
-          ],
+          test: healthcheckTest(hcPort, hcPath),
           intervalSeconds: hcIntervalS,
           timeoutSeconds: hcTimeoutS,
           retries: hcRetries,
@@ -1336,19 +1335,7 @@ export async function rollbackApp(
         command: [],
         user: "",
         healthcheck: {
-          test: [
-            "CMD-SHELL",
-            // Permissive liveness probe: any HTTP response (including 404)
-            // counts as "app alive". This matches the "always healthy
-            // whatever the stack" goal — Hono/Express/Fastify APIs often
-            // return 404 on `/`, but the TCP port listening + HTTP stack
-            // replying is enough evidence that the process is up. curl
-            // without `-f` exits 0 on any status; it only fails on
-            // connection refused or timeout.
-            `curl -sS -m 5 -o /dev/null ${quotePosixShellLiteral(
-              `http://127.0.0.1:${hcPort}${hcPath}`
-            )} || exit 1`,
-          ],
+          test: healthcheckTest(hcPort, hcPath),
           intervalSeconds: hcIntervalS,
           timeoutSeconds: hcTimeoutS,
           retries: hcRetries,

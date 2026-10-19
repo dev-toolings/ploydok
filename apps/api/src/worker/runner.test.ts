@@ -457,6 +457,27 @@ describe("CaddyClient upstream methods (M3.3)", () => {
 // ---------------------------------------------------------------------------
 
 describe("pollHealthcheck (Docker State.Health.Status)", () => {
+  test("includes the shell-less probe failure cause even while Docker reports starting", async () => {
+    const cause =
+      "healthcheck failed: image has no executable /bin/sh; native HTTP probe received no 2xx-4xx response on port 80 path /"
+    const { agent } = makeHealthMockAgent([
+      {
+        status: ContainerHealthStatus.CONTAINER_HEALTH_STATUS_STARTING,
+        lastProbeOutput: cause,
+      },
+    ])
+    await expect(
+      pollHealthcheck({
+        agent: agent as any,
+        containerId: "ploydok-app-test",
+        intervalMs: 1,
+        retries: 1,
+        startPeriodMs: 0,
+        appId: "test-app",
+        color: "blue",
+      })
+    ).rejects.toThrow(cause)
+  })
   test("resolves true on the first HEALTHY response", async () => {
     const { agent, callCount } = makeHealthMockAgent([
       { status: ContainerHealthStatus.CONTAINER_HEALTH_STATUS_HEALTHY },
