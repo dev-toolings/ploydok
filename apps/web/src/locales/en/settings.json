@@ -526,5 +526,54 @@
     "sessionsDevices": "{{count}} devices",
     "sessionsStrong": "No shadow logins to audit.",
     "sessionsWeak": "Review other devices and revoke anything unfamiliar."
+  },
+  "apiTokens": {
+    "title": "MCP & API tokens",
+    "description": "Connect an AI agent or harness (Claude Code, Codex, Cursor) to Ploydok through MCP to read logs and run deployments.",
+    "new": "New MCP token",
+    "empty": "No tokens yet",
+    "emptyHint": "Create an MCP token to let an AI agent read your apps' logs and, if you allow it, deploy them.",
+    "revoked": "Token revoked",
+    "form": {
+      "title": "New MCP token",
+      "hint": "The token only works on the MCP endpoint and only for the chosen organization.",
+      "name": "Name",
+      "namePlaceholder": "Claude Code on my laptop",
+      "organization": "Organization",
+      "expiry": "Expires after",
+      "days_one": "{{count}} day",
+      "days_other": "{{count}} days",
+      "allApps": "All apps of the organization",
+      "allAppsHint": "Turn off to pick specific apps. A token limited to apps cannot read services or databases.",
+      "noApps": "This organization has no apps yet.",
+      "allowDeploy": "Allow deployments",
+      "allowDeployHint": "Deploy, restart, stop, roll back and scale. Organization owners only.",
+      "required": "Name and organization are required",
+      "pickApps": "Pick at least one app",
+      "create": "Create token",
+      "creating": "Creating..."
+    },
+    "created": {
+      "title": "Your MCP token",
+      "description": "Copy it now: it will not be shown again.",
+      "token": "Token",
+      "url": "MCP endpoint",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "cursor": "Cursor (.cursor/mcp.json)"
+    },
+    "row": {
+      "apps_one": "{{count}} app",
+      "apps_other": "{{count}} apps",
+      "allApps": "All apps",
+      "canDeploy": "Can deploy",
+      "readOnly": "Read only",
+      "expires": "Expires {{date}}",
+      "noExpiry": "No expiry",
+      "lastUsed": "Last used {{date}}",
+      "neverUsed": "Never used",
+      "revoke": "Revoke",
+      "confirm": "Confirm"
+    }
   }
 }

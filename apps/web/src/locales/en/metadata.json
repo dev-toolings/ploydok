@@ -210,5 +210,9 @@
   "mock": {
     "title": "OpenShip preview",
     "description": "Explore the OpenShip interface preview."
+  },
+  "apiTokens": {
+    "title": "MCP & API tokens",
+    "description": "Connect AI agents to Ploydok through MCP."
   }
 }

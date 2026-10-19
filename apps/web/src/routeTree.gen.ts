@@ -25,6 +25,7 @@ import { Route as AuthedAppsSplatRouteImport } from './routes/_authed/apps.$'
 import { Route as AuthedDatabasesSplatRouteImport } from './routes/_authed/databases.$'
 import { Route as AuthedOrgsOrgSlugRouteImport } from './routes/_authed/orgs/$orgSlug'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed/settings/index'
+import { Route as AuthedSettingsApiTokensRouteImport } from './routes/_authed/settings/api-tokens'
 import { Route as AuthedSettingsNotificationsRouteImport } from './routes/_authed/settings/notifications'
 import { Route as AuthedSettingsRegistryRouteImport } from './routes/_authed/settings/registry'
 import { Route as AuthedSettingsSecurityRouteImport } from './routes/_authed/settings/security'
@@ -152,6 +153,11 @@ const AuthedOrgsOrgSlugRoute = AuthedOrgsOrgSlugRouteImport.update({
 const AuthedSettingsIndexRoute = AuthedSettingsIndexRouteImport.update({
   id: '/settings/',
   path: '/settings/',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedSettingsApiTokensRoute = AuthedSettingsApiTokensRouteImport.update({
+  id: '/settings/api-tokens',
+  path: '/settings/api-tokens',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedSettingsNotificationsRoute =
@@ -461,6 +467,7 @@ export interface FileRoutesByFullPath {
   '/apps/$': typeof AuthedAppsSplatRoute
   '/databases/$': typeof AuthedDatabasesSplatRoute
   '/orgs/$orgSlug': typeof AuthedOrgsOrgSlugRouteWithChildren
+  '/settings/api-tokens': typeof AuthedSettingsApiTokensRoute
   '/settings/notifications': typeof AuthedSettingsNotificationsRoute
   '/settings/registry': typeof AuthedSettingsRegistryRoute
   '/settings/security': typeof AuthedSettingsSecurityRouteWithChildren
@@ -526,6 +533,7 @@ export interface FileRoutesByTo {
   '/admin/disk': typeof AuthedAdminDiskRoute
   '/apps/$': typeof AuthedAppsSplatRoute
   '/databases/$': typeof AuthedDatabasesSplatRoute
+  '/settings/api-tokens': typeof AuthedSettingsApiTokensRoute
   '/settings/notifications': typeof AuthedSettingsNotificationsRoute
   '/settings/registry': typeof AuthedSettingsRegistryRoute
   '/invitations/accept': typeof PublicInvitationsAcceptRoute
@@ -592,6 +600,7 @@ export interface FileRoutesById {
   '/_authed/apps/$': typeof AuthedAppsSplatRoute
   '/_authed/databases/$': typeof AuthedDatabasesSplatRoute
   '/_authed/orgs/$orgSlug': typeof AuthedOrgsOrgSlugRouteWithChildren
+  '/_authed/settings/api-tokens': typeof AuthedSettingsApiTokensRoute
   '/_authed/settings/notifications': typeof AuthedSettingsNotificationsRoute
   '/_authed/settings/registry': typeof AuthedSettingsRegistryRoute
   '/_authed/settings/security': typeof AuthedSettingsSecurityRouteWithChildren
@@ -660,6 +669,7 @@ export interface FileRouteTypes {
     | '/apps/$'
     | '/databases/$'
     | '/orgs/$orgSlug'
+    | '/settings/api-tokens'
     | '/settings/notifications'
     | '/settings/registry'
     | '/settings/security'
@@ -725,6 +735,7 @@ export interface FileRouteTypes {
     | '/admin/disk'
     | '/apps/$'
     | '/databases/$'
+    | '/settings/api-tokens'
     | '/settings/notifications'
     | '/settings/registry'
     | '/invitations/accept'
@@ -790,6 +801,7 @@ export interface FileRouteTypes {
     | '/_authed/apps/$'
     | '/_authed/databases/$'
     | '/_authed/orgs/$orgSlug'
+    | '/_authed/settings/api-tokens'
     | '/_authed/settings/notifications'
     | '/_authed/settings/registry'
     | '/_authed/settings/security'
@@ -962,6 +974,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings/'
       preLoaderRoute: typeof AuthedSettingsIndexRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/settings/api-tokens': {
+      id: '/_authed/settings/api-tokens'
+      path: '/settings/api-tokens'
+      fullPath: '/settings/api-tokens'
+      preLoaderRoute: typeof AuthedSettingsApiTokensRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/settings/notifications': {
@@ -1460,6 +1479,7 @@ interface AuthedRouteChildren {
   AuthedAppsSplatRoute: typeof AuthedAppsSplatRoute
   AuthedDatabasesSplatRoute: typeof AuthedDatabasesSplatRoute
   AuthedOrgsOrgSlugRoute: typeof AuthedOrgsOrgSlugRouteWithChildren
+  AuthedSettingsApiTokensRoute: typeof AuthedSettingsApiTokensRoute
   AuthedSettingsNotificationsRoute: typeof AuthedSettingsNotificationsRoute
   AuthedSettingsRegistryRoute: typeof AuthedSettingsRegistryRoute
   AuthedSettingsSecurityRoute: typeof AuthedSettingsSecurityRouteWithChildren
@@ -1478,6 +1498,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAppsSplatRoute: AuthedAppsSplatRoute,
   AuthedDatabasesSplatRoute: AuthedDatabasesSplatRoute,
   AuthedOrgsOrgSlugRoute: AuthedOrgsOrgSlugRouteWithChildren,
+  AuthedSettingsApiTokensRoute: AuthedSettingsApiTokensRoute,
   AuthedSettingsNotificationsRoute: AuthedSettingsNotificationsRoute,
   AuthedSettingsRegistryRoute: AuthedSettingsRegistryRoute,
   AuthedSettingsSecurityRoute: AuthedSettingsSecurityRouteWithChildren,

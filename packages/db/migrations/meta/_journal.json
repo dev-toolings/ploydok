@@ -673,6 +673,13 @@
       "when": 1792152900000,
       "tag": "0096_storage_destination_local_folder",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1792420000000,
+      "tag": "0097_api_token_mcp",
+      "breakpoints": true
     }
   ]
 }

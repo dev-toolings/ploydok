@@ -13,6 +13,7 @@ import { createAuthRouter } from "./routes/auth"
 import { shouldUseSecureCookies } from "./auth/jwt"
 import { requireAuth, type AuthUser } from "./auth/middleware"
 import { createApiTokensRouter } from "./routes/api-tokens"
+import { createMcpHandler } from "./mcp/route"
 import { countActive } from "./auth/backup-codes"
 import { createDebugRouter } from "./debug/index.js"
 import { getSharedAgent, getSharedCaddy } from "./debug/singletons.js"
@@ -70,7 +71,11 @@ import {
 import { collectOperationalMetrics } from "./observability/operational-metrics"
 import { buildHealthReport, buildPublicStatus } from "./observability/health"
 import { createOpenApiDocument } from "./openapi"
-import { isStripeWebhookRequest } from "./security/csrf-exemptions"
+import {
+  isMcpRequest,
+  isStripeWebhookRequest,
+} from "./security/csrf-exemptions"
+import { getMcpPrincipal } from "./auth/mcp-principal"
 import {
   invitationOwnerRateLimit,
   invitationRegisterRateLimit,
@@ -204,6 +209,15 @@ app.use("*", async (c, next) => {
   // CI bypass: skip CSRF check for debug routes when auth bypass is active.
   // SECURITY: CI_AUTH_BYPASS is false in production (NODE_ENV === "prod").
   if (CI_AUTH_BYPASS && c.req.path.startsWith("/debug/")) {
+    return next()
+  }
+
+  // In-process call from an MCP tool: already authenticated, no browser.
+  if (getMcpPrincipal(c)) {
+    return next()
+  }
+
+  if (isMcpRequest(c.req.method, c.req.path, c.req.raw.headers)) {
     return next()
   }
 
@@ -411,6 +425,11 @@ app.route("/debug", debugRouter)
 app.use("/api-tokens", requireAuth(db))
 app.use("/api-tokens/*", requireAuth(db))
 app.route("/api-tokens", createApiTokensRouter(db))
+
+// MCP endpoint (Streamable HTTP). Public URL: /api/mcp behind the installer's
+// Caddy, which strips the /api prefix.
+app.use("/mcp", requireAuth(db))
+app.all("/mcp", createMcpHandler(db, app))
 
 // Host VPS stats (Sprint 6.6) — auth requise.
 app.use("/host-stats", requireAuth(db))
