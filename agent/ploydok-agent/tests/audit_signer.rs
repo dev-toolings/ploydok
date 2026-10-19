@@ -121,7 +121,7 @@ fn test_multiple_signings_produce_valid_signatures() {
 
         verifying_key
             .verify(&payload, &signature)
-            .expect(&format!("signature {} should verify", i));
+            .unwrap_or_else(|_| panic!("signature {} should verify", i));
     }
 }
 
