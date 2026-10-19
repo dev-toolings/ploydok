@@ -43,6 +43,32 @@ fn make_validator() -> StrictValidator {
     StrictValidator::new(ValidatorConfig::default())
 }
 
+#[test]
+fn managed_http_probes_validate_the_same_arguments_for_containers_and_swarm() {
+    let validator = make_validator();
+    for path in ["/ready path", "/\r\nInjected: header"] {
+        let test = vec!["PLOYDOK-HTTP".into(), "80".into(), path.into()];
+        let mut container = valid_create();
+        container.healthcheck = Some(HealthcheckConfig {
+            test: test.clone(),
+            ..Default::default()
+        });
+        let mut service = valid_swarm_service();
+        service.healthcheck = Some(ploydok_proto::agent::SwarmServiceHealthcheck {
+            test,
+            ..Default::default()
+        });
+        assert_eq!(
+            validator.validate_container_create(&container).is_ok(),
+            path == "/ready path"
+        );
+        assert_eq!(
+            validator.validate_service_create(&service).is_ok(),
+            path == "/ready path"
+        );
+    }
+}
+
 fn valid_swarm_service() -> SwarmServiceSpec {
     SwarmServiceSpec {
         name: "ploydok-app-test".to_string(),

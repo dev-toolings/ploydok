@@ -55,6 +55,7 @@ const agentInstance = {
     status: 3,
     containerMissing: false,
     failingStreak: 0,
+    lastProbeOutput: "",
   })),
   containerStop: mock(async () => ({})),
   containerRemove: mock(async () => ({})),
@@ -173,6 +174,30 @@ function makeDb(appOverrides: Record<string, unknown> = {}) {
 }
 
 describe("handlePreviewDeploy", () => {
+  it("surfaces the impossible healthcheck cause and keeps the previous preview route", async () => {
+    const cause = "healthcheck impossible: /bin/sh exists but no supported HTTP client is installed"
+    agentInstance.inspectContainerHealth.mockImplementationOnce(async () => ({
+      status: 2, containerMissing: false, failingStreak: 0, lastProbeOutput: cause,
+    }))
+    const originalSpawn = Bun.spawn
+    Bun.spawn = ((args: string[]) => ({
+      stdout: args.includes("rev-parse")
+        ? new Blob(["abcdef1234567890abcdef1234567890abcdef12"]).stream()
+        : new ReadableStream(),
+      stderr: new ReadableStream(), exited: Promise.resolve(0),
+    })) as typeof Bun.spawn
+    try {
+      const { handlePreviewDeploy } = await import("./preview-deploy")
+      await expect(handlePreviewDeploy(makeDb() as never, {
+        appId: "app-1", prNumber: 42,
+        headSha: "abcdef1234567890abcdef1234567890abcdef12",
+      })).rejects.toThrow(cause)
+      expect(caddyInstance.upsertRoute).not.toHaveBeenCalled()
+      expect(agentInstance.containerRemove).toHaveBeenCalled()
+    } finally {
+      Bun.spawn = originalSpawn
+    }
+  })
   beforeEach(() => {
     queryMocks.getPreviewDeployment.mockClear()
     queryMocks.getLastSucceededBuild.mockClear()
@@ -195,6 +220,7 @@ describe("handlePreviewDeploy", () => {
       status: 3,
       containerMissing: false,
       failingStreak: 0,
+      lastProbeOutput: "",
     }))
     agentInstance.containerStop.mockClear()
     agentInstance.containerRemove.mockClear()

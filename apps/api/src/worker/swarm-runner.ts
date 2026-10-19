@@ -36,7 +36,7 @@ import { buildEnvForDeploy } from "../secrets/resolver.js"
 import { classifyAppDomainWithInstanceBase } from "../domains/app-domain.js"
 import { PLANS } from "@ploydok/shared"
 import type { PlanName } from "@ploydok/shared"
-import { healthcheckShell } from "./healthcheck-shell.js"
+import { healthcheckTest } from "./healthcheck-shell.js"
 import {
   currentDeployLease,
   currentDeployLeaseCondition,
@@ -381,7 +381,7 @@ export async function runSwarmDeploy(
       command: [],
       user: "",
       healthcheck: {
-        test: ["CMD-SHELL", healthcheckShell(hcPort, hcPath)],
+        test: healthcheckTest(hcPort, hcPath),
         intervalSeconds: app.healthcheck_interval_s ?? 5,
         timeoutSeconds: app.healthcheck_timeout_s ?? 3,
         retries: app.healthcheck_retries ?? 6,

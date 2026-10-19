@@ -103,6 +103,7 @@ use crate::validator::{
 pub mod monitor;
 use monitor::Monitor;
 
+pub mod http_probe;
 pub mod ingress_network;
 
 async fn resolve_and_validate_workload_network(
@@ -234,7 +235,7 @@ fn swarm_healthcheck(
         test: if hc.test.is_empty() {
             None
         } else {
-            Some(hc.test.clone())
+            Some(http_probe::docker_test(&hc.test))
         },
         interval: healthcheck_nanos(hc.interval_seconds),
         timeout: healthcheck_nanos(hc.timeout_seconds),
@@ -691,7 +692,23 @@ impl Agent for AgentService {
             })
             .map_err(|s| *s)?;
 
+        if let Some(hc) = &req.healthcheck {
+            http_probe::validate(&hc.test)?;
+            http_probe::validate_mounts(
+                &hc.test,
+                req.volumes.iter().map(|v| v.container_path.as_str()),
+            )?;
+        }
         self.ensure_image_present(&req.image, None).await?;
+        let probe_volume = if req
+            .healthcheck
+            .as_ref()
+            .is_some_and(|hc| http_probe::is_managed(&hc.test))
+        {
+            Some(http_probe::ensure(&self.docker, &req.image).await?)
+        } else {
+            None
+        };
 
         // Build environment variables list.
         let env: Vec<String> = req.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -733,6 +750,9 @@ impl Agent for AgentService {
 
         // Resource limits
         let host_config = HostConfig {
+            mounts: probe_volume
+                .as_deref()
+                .map(|volume| vec![http_probe::mount(volume, true)]),
             binds: if binds.is_empty() { None } else { Some(binds) },
             port_bindings: if port_bindings.is_empty() {
                 None
@@ -776,7 +796,7 @@ impl Agent for AgentService {
             test: if hc.test.is_empty() {
                 None
             } else {
-                Some(hc.test.clone())
+                Some(http_probe::docker_test(&hc.test))
             },
             interval: healthcheck_nanos(hc.interval_seconds),
             timeout: healthcheck_nanos(hc.timeout_seconds),
@@ -2484,9 +2504,25 @@ impl Agent for AgentService {
         self.validator
             .validate_service_create(spec)
             .map_err(|e| *e)?;
+        if let Some(hc) = &spec.healthcheck {
+            http_probe::validate(&hc.test)?;
+            http_probe::validate_mounts(
+                &hc.test,
+                spec.mounts.iter().map(|v| v.container_path.as_str()),
+            )?;
+        }
         self.ensure_image_present(&spec.image, req.registry_auth.clone())
             .await?;
-        let service = build_swarm_service_spec(spec);
+        let mut service = build_swarm_service_spec(spec);
+        if spec
+            .healthcheck
+            .as_ref()
+            .is_some_and(|hc| http_probe::is_managed(&hc.test))
+        {
+            let volume = http_probe::ensure(&self.docker, &spec.image).await?;
+            http_probe::attach_service(&mut service, &volume);
+            http_probe::remember_service_healthcheck(&mut service);
+        }
         let credentials = registry_credentials(req.registry_auth.as_ref());
         let created = self
             .docker
@@ -2519,9 +2555,29 @@ impl Agent for AgentService {
             .map_err(|e| bollard_err("inspect_service", e))?;
         let version = current.version.and_then(|v| v.index).unwrap_or(0);
         let spec = if let Some(next_spec) = req.spec.as_ref() {
-            build_swarm_service_spec(next_spec)
+            if let Some(hc) = &next_spec.healthcheck {
+                http_probe::validate(&hc.test)?;
+                http_probe::validate_mounts(
+                    &hc.test,
+                    next_spec.mounts.iter().map(|v| v.container_path.as_str()),
+                )?;
+            }
+            self.ensure_image_present(&next_spec.image, req.registry_auth.clone())
+                .await?;
+            let mut spec = build_swarm_service_spec(next_spec);
+            if next_spec
+                .healthcheck
+                .as_ref()
+                .is_some_and(|hc| http_probe::is_managed(&hc.test))
+            {
+                let volume = http_probe::ensure(&self.docker, &next_spec.image).await?;
+                http_probe::attach_service(&mut spec, &volume);
+                http_probe::remember_service_healthcheck(&mut spec);
+            }
+            spec
         } else {
             let mut spec = current.spec.unwrap_or_default();
+            http_probe::restore_service_healthcheck(&mut spec)?;
             if let Some(mode) = spec.mode.as_mut() {
                 if let Some(replicated) = mode.replicated.as_mut() {
                     replicated.replicas = Some(req.replicas.max(1) as i64);
@@ -2582,6 +2638,7 @@ impl Agent for AgentService {
             .map_err(|e| bollard_err("inspect_service", e))?;
         let version = current.version.and_then(|v| v.index).unwrap_or(0);
         let mut spec = current.spec.unwrap_or_default();
+        http_probe::restore_service_healthcheck(&mut spec)?;
         if let Some(mode) = spec.mode.as_mut() {
             if let Some(replicated) = mode.replicated.as_mut() {
                 replicated.replicas = Some(req.replicas.max(1) as i64);
@@ -2771,7 +2828,18 @@ impl Agent for AgentService {
                     .get("com.docker.swarm.node.id")
                     .cloned()
                     .unwrap_or_default(),
-                error: String::new(),
+                error: if health_status != "healthy" {
+                    state
+                        .as_ref()
+                        .and_then(|state| state.health.as_ref())
+                        .and_then(|health| health.log.as_ref())
+                        .and_then(|logs| logs.last())
+                        .and_then(|log| log.output.as_ref())
+                        .map(|output| output.chars().take(4096).collect())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                },
                 running: Some(running),
                 exit_code: Some(exit_code),
                 health_status: Some(health_status),

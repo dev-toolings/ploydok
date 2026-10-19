@@ -57,7 +57,7 @@ import { ensureProjectNetwork, networksForApp } from "../../services/projects"
 import { isNotFound, toAgentError } from "../../agent"
 import { isSymfonyFlexWorkspace } from "./symfony-detect"
 import { FatalDeployError } from "../errors"
-import { healthcheckShell } from "../healthcheck-shell"
+import { healthcheckTest } from "../healthcheck-shell"
 
 const log = workerLog.child({ subsystem: "preview-deploy" })
 const STOP_TIMEOUT_S = 10
@@ -339,7 +339,7 @@ function healthcheckConfig(app: AppForPreview, runtimePort: number) {
     retries: app.healthcheck_retries ?? 6,
     startPeriodSeconds: app.healthcheck_start_period_s ?? 30,
     config: {
-      test: ["CMD-SHELL", healthcheckShell(hcPort, hcPath)],
+      test: healthcheckTest(hcPort, hcPath),
       intervalSeconds: app.healthcheck_interval_s ?? 5,
       timeoutSeconds: app.healthcheck_timeout_s ?? 3,
       retries: app.healthcheck_retries ?? 6,
@@ -381,11 +381,13 @@ async function waitForPreviewHealth(params: {
     await Bun.sleep(check.startPeriodSeconds * 1_000)
   }
 
+  let lastProbeOutput = ""
   for (let attempt = 1; attempt <= check.retries; attempt++) {
     await Bun.sleep(check.intervalSeconds * 1_000)
     const resp = await agent.inspectContainerHealth({
       containerId: params.containerId,
     })
+    lastProbeOutput = resp.lastProbeOutput?.trim().slice(0, 4096) ?? ""
     if (resp.containerMissing) {
       params.onLog("[preview] health failed: container disappeared")
       return false
@@ -404,6 +406,9 @@ async function waitForPreviewHealth(params: {
         params.onLog("[preview] health unavailable")
         return false
     }
+  }
+  if (/healthcheck (?:impossible|failed):/.test(lastProbeOutput)) {
+    throw new Error(`Preview healthcheck failed: ${lastProbeOutput}`)
   }
   return false
 }

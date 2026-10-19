@@ -42,6 +42,9 @@ message ResourceLimits {
 
 // Docker container healthcheck.
 message HealthcheckConfig {
+  // Agent extension: ["PLOYDOK-HTTP", decimalPort, path].
+  // Validated and replaced with native Docker CMD plus a read-only probe volume.
+  // Requires an agent that supports this mode; never pass it directly to Docker.
   // Possible values mirror Docker:
   // - [] inherit from image
   // - ["NONE"] disable
@@ -683,6 +686,9 @@ message SwarmServiceMount {
 }
 
 message SwarmServiceHealthcheck {
+  // Agent extension: ["PLOYDOK-HTTP", decimalPort, path].
+  // Validated and replaced with native Docker CMD plus a read-only probe volume.
+  // Requires an agent that supports this mode; never pass it directly to Docker.
   repeated string test = 1;
   int64 interval_seconds = 2;
   int64 timeout_seconds = 3;
