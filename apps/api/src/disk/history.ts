@@ -2,6 +2,7 @@
 import { recordHostDiskSample } from "@ploydok/db/queries"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
+import { logAgentDependentFailure } from "../agent/availability"
 import { diskHostKey } from "./host-key"
 import type { Db } from "@ploydok/db"
 import type { DiskSample, DiskInsightsResponse } from "@ploydok/shared"
@@ -30,7 +31,7 @@ export function startDiskHistorySampler(db: Db): void {
     try {
       await sampleHostDisk(db)
     } catch (err) {
-      log.warn({ err }, "disk history sample failed")
+      logAgentDependentFailure(log, err, {}, "disk history sample failed")
     } finally {
       running = false
     }

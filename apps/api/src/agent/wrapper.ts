@@ -64,6 +64,7 @@ import type {
 } from "@ploydok/agent-proto"
 import { createAgentClient, type AgentClientOptions } from "./client.js"
 import { AgentError, toAgentError } from "./errors.js"
+import { noteAgentReachable, noteAgentUnavailable } from "./availability.js"
 
 // ---------------------------------------------------------------------------
 // Logger
@@ -99,16 +100,18 @@ function callUnary<Req, Res>(
         if (err) {
           const agentErr = toAgentError(err)
           if (agentErr.isTransient && remaining > 0) {
-            log.warn(
+            log.debug(
               { code: agentErr.code, remaining },
               "appel gRPC échoué, nouvelle tentative"
             )
             // Retry immédiat — back-off plus sophistiqué peut être ajouté ici
             attempt(remaining - 1)
           } else {
+            if (agentErr.isTransient) noteAgentUnavailable(agentErr)
             reject(agentErr)
           }
         } else {
+          noteAgentReachable()
           resolve(res)
         }
       })

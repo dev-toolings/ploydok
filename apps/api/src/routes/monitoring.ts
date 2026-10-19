@@ -33,6 +33,7 @@ import { createDb } from "@ploydok/db"
 import { env } from "../env"
 import { childLogger } from "../logger"
 import { AgentError } from "../agent/errors"
+import { isAgentUnavailable } from "../agent/availability"
 import type { AuthUser } from "../auth/middleware"
 import type { Agent } from "../agent/wrapper"
 
@@ -507,8 +508,15 @@ export function startMonitoringLoop(db: ReturnType<typeof createDb>): void {
       })
       .catch((err) => {
         consecutiveFailures += 1
-        // Log niveau warn sur les 2 premiers échecs, puis debug pour éviter le spam.
-        if (consecutiveFailures <= 2) {
+        // Agent indisponible : la transition est déjà journalisée une fois par
+        // agent/availability. Autres erreurs : warn sur les 2 premiers échecs,
+        // puis debug pour éviter le spam.
+        if (isAgentUnavailable(err)) {
+          log.debug(
+            { consecutiveFailures, agent: "unavailable" },
+            "monitoring tick skipped"
+          )
+        } else if (consecutiveFailures <= 2) {
           log.warn({ err, consecutiveFailures }, "monitoring tick error")
         } else {
           log.debug(
