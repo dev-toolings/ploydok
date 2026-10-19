@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install update check dev stop dev-agent agent-restart agent-logs db-ensure-auth db-migrate reset db-seed infra-up infra-down infra-stop infra-logs build start test lint typecheck clean secrets-init dod
+.PHONY: help install update check dev stop dev-agent agent-restart agent-logs db-ensure-auth db-migrate reset db-seed infra-up infra-down infra-stop infra-logs build start test test-pg lint typecheck clean secrets-init dod
 
 # Ports locaux : API 3335, Web 5173, Caddy 8181/8543/2020, agent unix /tmp/ploydok/agent.sock
 
@@ -261,6 +261,9 @@ start: ## Demarre l'API
 
 test: ## Lance les tests via turbo
 	bunx turbo test
+
+test-pg: ## Lance les suites API Postgres (base ploydok_test creee au besoin)
+	@bun run scripts/test-pg.ts
 
 lint: ## Lance le lint via turbo
 	bunx turbo lint

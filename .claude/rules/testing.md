@@ -28,6 +28,23 @@ Tous verts ⇒ passage possible aux e2e.
 - Specs Sprint-3 qui spawn des containers : timeout `180_000` ms par `describe`, pas global.
 - Lancer : `bun --cwd apps/web exec playwright test` (ajouter `--ui` pour debug).
 
+## Suites Postgres (`make test-pg`)
+
+Les suites API qui lisent `PLOYDOK_TEST_PG_URL` (`*.pg.test.ts`, `*.e2e.test.ts`
+et les blocs `describe.skipIf` de `routes/*.test.ts`, `auth/*.test.ts`,
+`worker/*.test.ts`) sont **skippées en silence** quand la variable manque : un
+`bun test` vert sans elle ne prouve rien sur les leases, l'outbox ou le
+reconciler. Avant de dire "done" sur un changement DB/worker :
+
+```bash
+make test-pg   # cree ploydok_test sur le Postgres dev si besoin, puis 1 fichier = 1 process
+```
+
+Le script `scripts/test-pg.ts` dérive `PLOYDOK_TEST_PG_URL` (base
+`ploydok_test`) et `PLOYDOK_TEST_REDIS_URL` (db `15`) de `.env.local` ; les
+exporter à la main pour viser une autre base. Les migrations sont appliquées
+par `apps/api/src/test/db-helpers.ts`. Ne jamais pointer la base de dev.
+
 ## E2E API (server.e2e.test.ts)
 
 - `apps/api/src/server.e2e.test.ts` et `apps/api/src/auth/auth.e2e.test.ts` démarrent un vrai serveur Hono sur un port random — garder isolé du runner unit pour ne pas fuiter.
