@@ -3,8 +3,9 @@
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
-shuttle_bin="${SHUTTLE_BIN:-$HOME/.local/lib/ploydok-shuttle/shuttle}"
-[[ -x "$shuttle_bin" ]] || { echo "Shuttle with deploy existing-stack support is required: $shuttle_bin" >&2; exit 2; }
+shuttle_bin="${SHUTTLE_BIN:-$(command -v shuttle || true)}"
+[[ -n "$shuttle_bin" && -x "$shuttle_bin" ]] || { echo "shuttle is required on PATH (make install in deploy-shuttle)" >&2; exit 2; }
+"$shuttle_bin" deploy existing-stack --help >/dev/null 2>&1 || { echo "$shuttle_bin lacks deploy existing-stack" >&2; exit 2; }
 if [[ " ${*:-} " == *" --dry-run "* ]]; then
   exec "$shuttle_bin" deploy existing-stack --config deploy/shuttle-staging.json "$@"
 fi

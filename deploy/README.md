@@ -9,9 +9,9 @@ The configuration is `deploy/shuttle-staging.json`. Its ED25519 key was verified
 on 2026-10-15 using `pvecli vm agent exec 235` and matches the existing SSH target.
 No VPS credentials or application secrets are stored locally by this workflow.
 
-Use a Shuttle build containing `deploy existing-stack`. The task-specific binary
-lives at `~/.local/lib/ploydok-shuttle/shuttle`, keeping the normal `shuttle`
-installation available to other projects. `SHUTTLE_BIN` overrides that path.
+Use the `shuttle` on your PATH, installed with `make install` from a Shuttle
+checkout that contains `deploy existing-stack`. There is one Shuttle binary for
+every project; `SHUTTLE_BIN` overrides it for a one-off test build.
 
 ```bash
 bash scripts/deploy-shuttle.sh --dry-run
