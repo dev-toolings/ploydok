@@ -20,9 +20,13 @@ bash scripts/deploy-shuttle.sh
 
 Run from a clean, reviewed develop checkout. The wrapper keeps dated Trivy JSON
 reports under `~/.local/state/ploydok/shuttle-scans/` and refuses an image with a
-fixable critical vulnerability. It removes its scanner cache, newly pulled scanner
-image, temporary builder/cache and local application image tags after the run.
-It never prunes shared builders, services or unrelated images.
+fixable critical vulnerability. Between runs it keeps the pinned scanner image,
+the Trivy cache under `~/.cache/ploydok/trivy` (layer analysis dropped above
+4 GiB) and Shuttle's `shuttle-ploydok-existing` builder, whose BuildKit cache is
+capped at 20 GiB. An unchanged image keeps its running digest, so its service is
+not restarted: Caddy publishes host ports and cannot restart without dropping
+traffic. Local application image tags are removed after the run. It never prunes
+shared builders, services or unrelated images.
 
 The host must already contain the reviewed `installer/ploydok-cli`,
 `installer/migrate-stack-descriptor` at `/usr/local/lib/ploydok/migrate-stack-descriptor`,
