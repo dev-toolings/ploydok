@@ -82,6 +82,14 @@ Un deploy statique écrit dans `PLOYDOK_STATIC_ROOT` et publie
 ## Règles
 
 - **Ne pas** toucher aux ports 80/443/3000 (occupés par d'autres services sur la machine dev).
+- **Rien ne redémarre seul.** Tout workload local Ploydok (compose, builder
+  buildx `ploydok-dev`, apps Swarm dont les démos MCP `ploydok-app-mcp-demo-*`)
+  démarre par `make dev` et s'arrête par `make stop`. Le builder
+  `shuttle-ploydok-existing` ne vit que le temps de `scripts/deploy-shuttle.sh`.
+  Compose en `restart: "no"`, builders repinnés en `restart=no`
+  par `scripts/dev-workloads.sh buildx-pin` (`buildx create` et `shuttle`
+  imposent `unless-stopped`), services Swarm remis à 0 réplique par `quiesce`.
+  Jamais de `unless-stopped` ni `always` sur un container local.
 - **Ne pas** ajouter un service au compose sans mettre à jour `commands.md` + `make infra-up` → reste la source de vérité.
 - Tester `make infra-up && make infra-down` est idempotent avant de commiter une modif compose.
 - Secrets prod (mTLS certs, registry creds) : **jamais** dans le repo. Passer par env + secret manager.

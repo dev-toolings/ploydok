@@ -41,7 +41,8 @@ Si une vérif nécessite que le serveur tourne, d'abord **demander** si API:3335
 ```bash
 make install        # setup complet PUIS démarrage : deps + infra + auth + migrations + check + dev
 make check          # sonde toute la stack (TCP/HTTP/socket) + affiche l'URL /setup avec son token
-make dev            # turbo dev → web:5173 + api:3335
+make dev            # turbo dev → web:5173 + api:3335 (restaure aussi les workloads Swarm mis en veille)
+make stop           # arrête l'infra et le builder ploydok-dev, met à 0 les workloads Swarm ploydok-app-*/ploydok-db-*
 make dev-agent      # agent Rust (insecure, socket /tmp/ploydok/agent.sock)
 make db-ensure-auth # attend Postgres + réaligne le rôle si le volume a dérivé
 make db-migrate     # drizzle-kit migrate sur Postgres (DATABASE_URL de .env.local)
