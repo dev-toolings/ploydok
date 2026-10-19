@@ -5,8 +5,11 @@ import {
   timestamp,
   uniqueIndex,
   jsonb,
+  check,
 } from "drizzle-orm/pg-core"
+import { sql } from "drizzle-orm"
 import { users } from "./users"
+import { projects } from "./projects"
 
 export const api_tokens = pgTable(
   "api_tokens",
@@ -35,8 +38,21 @@ export const api_tokens = pgTable(
     }).notNull(),
     expires_at: timestamp("expires_at", { withTimezone: true, mode: "date" }),
     revoked_at: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    /** `mcp` tokens authenticate only on /mcp and are bound to `org_id`. */
+    kind: text("kind").$type<"api" | "mcp">().notNull().default("api"),
+    org_id: text("org_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    /** NULL = every app of `org_id`. */
+    app_ids: jsonb("app_ids").$type<string[]>(),
   },
-  (table) => [uniqueIndex("api_tokens_token_hash_unique").on(table.token_hash)]
+  (table) => [
+    uniqueIndex("api_tokens_token_hash_unique").on(table.token_hash),
+    check(
+      "api_tokens_kind_check",
+      sql`${table.kind} IN ('api', 'mcp') AND (${table.kind} = 'api' OR ${table.org_id} IS NOT NULL)`
+    ),
+  ]
 )
 
 export type ApiTokenRow = typeof api_tokens.$inferSelect
