@@ -12,7 +12,7 @@
 | Caddy admin               | `http://127.0.0.1:2020/config/`                 |
 | BuildKit                  | builder buildx `ploydok-dev` (`buildx://ploydok-dev`, réseau `ploydok_ploydok`) |
 | Registry v2               | `http://127.0.0.1:5000/v2/`                     |
-| Agent Rust                | `unix:///tmp/ploydok-agent.sock`                |
+| Agent Rust                | `unix:///tmp/ploydok/agent.sock`                |
 
 ## Domaine des apps en dev
 
@@ -42,7 +42,7 @@ Si une vérif nécessite que le serveur tourne, d'abord **demander** si API:3335
 make install        # setup complet PUIS démarrage : deps + infra + auth + migrations + check + dev
 make check          # sonde toute la stack (TCP/HTTP/socket) + affiche l'URL /setup avec son token
 make dev            # turbo dev → web:5173 + api:3335
-make dev-agent      # agent Rust (insecure, socket /tmp/ploydok-agent.sock)
+make dev-agent      # agent Rust (insecure, socket /tmp/ploydok/agent.sock)
 make db-ensure-auth # attend Postgres + réaligne le rôle si le volume a dérivé
 make db-migrate     # drizzle-kit migrate sur Postgres (DATABASE_URL de .env.local)
 make reset          # wipe containers runtime + schemas Postgres + Redis, puis réapplique les migrations

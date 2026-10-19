@@ -69,7 +69,7 @@ git clone --depth 1 https://github.com/coollabsio/coolify.git /tmp/coolify
   - API: `3335`
   - Web: `5173`
   - Caddy: `8181`, `8543`, `2020`
-- Agent socket: `/tmp/ploydok-agent.sock`
+- Agent socket: `/tmp/ploydok/agent.sock`
 - Do not touch ports `80`, `443`, or `3000` on this machine.
 - Local dev secrets live in `apps/api/.env.local`.
 - Do not regenerate local auth secrets unless the user explicitly asks; that invalidates active JWTs/sessions.
