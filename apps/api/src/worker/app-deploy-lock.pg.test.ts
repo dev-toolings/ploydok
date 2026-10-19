@@ -16,7 +16,7 @@ import {
 
 const skip = !TEST_PG_URL
 if (skip)
-  console.log("[app-deploy-lock.pg] PLOYDOK_TEST_PG_URL not set — skipping")
+  console.log("[app-deploy-lock.pg] PLOYDOK_TEST_PG_URL not set: skipping")
 
 describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
   let db: Db
@@ -77,15 +77,28 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 20))
     await expect(
+      withAppDeployLease(db, appId, build1, async () => undefined)
+    ).rejects.toBeInstanceOf(DeployCancelledError)
+    const [active] = await db.select().from(builds).where(eq(builds.id, build1))
+    expect(active?.status).toBe("pending")
+    expect(active?.finished_at).toBeNull()
+    await expect(
       withAppDeployLease(db, appId, build2, async () => undefined, {
         token: "worker-two",
       })
-    ).rejects.toBeInstanceOf(DeployLeaseLostError)
+    ).rejects.toBeInstanceOf(DeployCancelledError)
+    const [cancelled] = await db.select().from(builds).where(eq(builds.id, build2))
+    expect(cancelled?.status).toBe("cancelled")
+    expect(cancelled?.finished_at).toBeInstanceOf(Date)
+    expect(cancelled?.error_message).toContain("another worker owns")
     release()
     await first
   })
 
   it("reclaims an expired lease and fences the stale owner", async () => {
+    await db.update(builds)
+      .set({ status: "pending", finished_at: null, error_message: null })
+      .where(eq(builds.id, build2))
     let checkStale!: () => void
     const checkGate = new Promise<void>((resolve) => {
       checkStale = resolve

@@ -41,6 +41,7 @@ export function deterministicQueueJobId(
 
 export interface QueuePublisher {
   readonly name: string
+  getJob?(id: string): Promise<{ getState(): Promise<string> } | undefined | null>
   add(
     name: string,
     data: unknown,

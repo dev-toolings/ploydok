@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm"
 import type { Db } from "@ploydok/db"
 import { createRedis } from "@ploydok/db"
 import { env } from "../env"
-import { acquireGate } from "./build-cleanup-gate"
+import { acquireGate, type GateRedis } from "./build-cleanup-gate"
 
 const dockerCleanupGate = createRedis(env.REDIS_URL)
 
@@ -159,19 +159,42 @@ export async function withAppDeployLease<T>(
   appId: string,
   buildId: string,
   task: () => Promise<T>,
-  opts: { leaseMs?: number; heartbeatMs?: number; token?: string } = {}
+  opts: {
+    leaseMs?: number
+    heartbeatMs?: number
+    token?: string
+    gateRedis?: GateRedis
+  } = {}
 ): Promise<T> {
+  const cancelBeforeStart = async (reason: string): Promise<never> => {
+    // Only the unclaimed request is ours to cancel. A duplicate delivery must
+    // never cancel the build already held by a worker, even before its claim.
+    await db.execute(sql`
+      UPDATE builds SET status = 'cancelled', finished_at = now(),
+        error_message = ${reason}
+      WHERE id = ${buildId} AND app_id = ${appId} AND status = 'pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM app_deploy_leases
+          WHERE build_id = ${buildId} AND lease_until > now()
+        )
+    `)
+    throw new DeployCancelledError(reason)
+  }
   // Cleanup takes this gate before its build snapshot. A deployment cannot
   // enter the lifecycle while that destructive cache/image sweep owns it.
-  const gate = await acquireGate(dockerCleanupGate, "reader")
-  if (!gate) throw new DeployLeaseLostError("Docker cleanup owns the build lifecycle gate")
+  const gate = await acquireGate(opts.gateRedis ?? dockerCleanupGate, "reader")
+  if (!gate) {
+    return cancelBeforeStart(
+      "Deployment cancelled: Docker cleanup owns the build lifecycle gate. Request a new deployment after cleanup finishes."
+    )
+  }
   try {
     const token = opts.token ?? crypto.randomUUID()
     const leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS
     const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
     if (!(await acquire(db, appId, buildId, token, leaseMs))) {
-      throw new DeployLeaseLostError(
-        "another worker owns the app deployment lease"
+      return await cancelBeforeStart(
+        "Deployment superseded: another worker owns the app deployment lease. Request a new deployment after it finishes."
       )
     }
 
