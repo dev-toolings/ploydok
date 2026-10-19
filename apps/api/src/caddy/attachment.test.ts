@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "bun:test"
 import {
   ensureCaddyOnProjectNetwork,
+  CaddyAttachmentError,
   isCaddyIngressContainer,
   networksToAttachForRunningApps,
   pickCaddyIngressContainer,
@@ -53,6 +54,25 @@ describe("pickCaddyIngressContainer", () => {
 
 describe("ensureCaddyOnProjectNetwork cache", () => {
   afterEach(() => resetCaddyIdCache())
+
+  it.each([
+    { state: "address_collision", network: "overlay", address: "10.0.8.2", conflicting_endpoint: "vip:app" },
+    { state: "attachment_pending", network: "overlay" },
+  ])("preserves the agent's typed $state failure", async (attachment) => {
+    const agent = {
+      listContainers: async () => ({ containers: [{ id: "caddy", name: "ploydok_caddy.1.task", status: "running" }] }),
+      networkConnect: async () => {
+        throw { code: 9, details: JSON.stringify(attachment) }
+      },
+    }
+    try {
+      await ensureCaddyOnProjectNetwork(agent as any, "overlay")
+      throw new Error("expected attachment to fail")
+    } catch (err) {
+      expect(err).toBeInstanceOf(CaddyAttachmentError)
+      expect((err as CaddyAttachmentError).attachment).toEqual(attachment)
+    }
+  })
 
   it("reuses a cached running container after validating its runtime state", async () => {
     let listCalls = 0

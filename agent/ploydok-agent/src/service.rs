@@ -103,6 +103,8 @@ use crate::validator::{
 pub mod monitor;
 use monitor::Monitor;
 
+pub mod ingress_network;
+
 async fn resolve_and_validate_workload_network(
     docker: &bollard::Docker,
     network_id_or_name: &str,
@@ -1776,6 +1778,13 @@ impl Agent for AgentService {
             return Err(error);
         }
 
+        if ingress_network::reconcile(&self.docker, &req.container_id, &req.network_id, true)
+            .await?
+        {
+            audit("network_connect", &target, Ok(()));
+            return Ok(Response::new(NetworkConnectResponse {}));
+        }
+
         let endpoint_config = EndpointSettings {
             aliases: if req.aliases.is_empty() {
                 None
@@ -1816,6 +1825,13 @@ impl Agent for AgentService {
         {
             audit("network_disconnect", &target, Err(error.message()));
             return Err(error);
+        }
+
+        if ingress_network::reconcile(&self.docker, &req.container_id, &req.network_id, false)
+            .await?
+        {
+            audit("network_disconnect", &target, Ok(()));
+            return Ok(Response::new(NetworkDisconnectResponse {}));
         }
 
         let opts = DisconnectNetworkOptions {

@@ -28,6 +28,29 @@ not restarted: Caddy publishes host ports and cannot restart without dropping
 traffic. Local application image tags are removed after the run. It never prunes
 shared builders, services or unrelated images.
 
+Project overlay attachments are owned by the `ploydok_caddy` Swarm service
+spec. Never run `docker network connect` on a Caddy task: managed containers
+skip Docker's manager-side attach allocation, so a locally allocated address
+can duplicate a service VIP or task address. Changing upstream DNS to
+`tasks.<service>` does not correct that allocation path.
+
+The agent updates only service network membership, preserves the existing
+host ports and rollout policy, and waits for a running task with a managed
+endpoint. A new or removed overlay requires a Caddy task restart and a brief
+ingress interruption. Repeated reconciliation does not restart it. API boot
+and the 60-second ingress reconciliation migrate existing manual attachments
+automatically, including after a stack deployment resets dynamic memberships.
+All attachments converge before reconciliation restores routes on the new
+task. Attachment failures expose `address_collision` or `attachment_pending`
+states; collision checks compare Caddy's address with service VIPs and local
+task endpoints on the same overlay (the supported single-node Swarm topology).
+When an individual deploy adds an overlay, other dynamic routes can need the
+next reconciliation tick to recover from the restart (up to 60 seconds).
+
+The same agent binary handles installer production stacks and staging.
+See Docker's [managed-container attachment path](https://github.com/moby/moby/blob/a5b58c9/daemon/container_operations.go#L269-L325)
+at the staging engine's reported source revision.
+
 The host must already contain the reviewed `installer/ploydok-cli`,
 `installer/migrate-stack-descriptor` at `/usr/local/lib/ploydok/migrate-stack-descriptor`,
 `installer/verify-release-images` at `/usr/local/lib/ploydok/verify-release-images`,

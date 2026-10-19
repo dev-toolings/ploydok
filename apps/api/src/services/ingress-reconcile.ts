@@ -55,7 +55,10 @@ export async function reconcileIngressOnce(opts: {
     fetchRunningServicesForCaddy(db),
     fetchPublicDatabaseProxiesForCaddy(db),
   ])
-  const [appRoutes, serviceRoutes, databaseProxies, attachments] =
+  // Swarm attachment changes can roll Caddy. Restore routes on the new task,
+  // after every attachment has converged, rather than writing to the old one.
+  const attachments = await reconcileCaddyAttachments(agent, db)
+  const [appRoutes, serviceRoutes, databaseProxies] =
     await Promise.all([
       reconcileCaddyRoutes({
         caddy,
@@ -67,7 +70,6 @@ export async function reconcileIngressOnce(opts: {
       }),
       reconcileServiceRoutes({ caddy, logger, services }),
       reconcileDatabaseTcpProxies({ caddy, logger, databases }),
-      reconcileCaddyAttachments(agent, db),
     ])
 
   // Canonical hosts also include extra domains. This restores logger state after

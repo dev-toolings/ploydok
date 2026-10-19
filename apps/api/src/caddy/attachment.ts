@@ -23,6 +23,31 @@ const log = childLogger("caddy-attach")
 
 const CADDY_COMPOSE_NAMES = new Set(["ploydok-caddy", "ploydok-caddy-1"])
 
+export type CaddyAttachmentState =
+  | { state: "address_collision"; network: string; address: string; conflicting_endpoint: string }
+  | { state: "attachment_pending"; network: string }
+
+export class CaddyAttachmentError extends Error {
+  constructor(readonly attachment: CaddyAttachmentState, cause: unknown) {
+    super(`Caddy network ${attachment.network}: ${attachment.state}`, { cause })
+    this.name = "CaddyAttachmentError"
+  }
+}
+
+function attachmentError(err: unknown): unknown {
+  const details = toAgentError(err).details
+  try {
+    const state = JSON.parse(details) as CaddyAttachmentState
+    if (typeof state.network === "string" && (
+      state.state === "attachment_pending" || (
+        state.state === "address_collision" && typeof state.address === "string" &&
+        typeof state.conflicting_endpoint === "string"
+      )
+    )) return new CaddyAttachmentError(state, err)
+  } catch { /* Other agent failures keep their original type. */ }
+  return err
+}
+
 export type CaddyContainerLite = {
   id: string
   name: string
@@ -128,7 +153,9 @@ async function resolveCaddyContainerId(agent: Agent): Promise<string> {
 
 /**
  * Ensure Caddy is attached to `projectNetwork`. Idempotent: treats Docker's
- * 409 "already exists" as success. Safe to call on every deploy.
+ * 409 "already exists" as success for standalone containers. For Swarm tasks
+ * the agent updates the service spec and verifies the managed endpoint instead
+ * of calling container-level connect. This can roll Caddy's host-port task.
  */
 export async function ensureCaddyOnProjectNetwork(
   agent: Agent,
@@ -153,15 +180,19 @@ export async function ensureCaddyOnProjectNetwork(
     if (isNotFound(agentErr) && /container/i.test(agentErr.details)) {
       resetCaddyIdCache()
       const freshId = await resolveCaddyContainerId(agent)
-      await agent.networkConnect({
-        networkId: projectNetwork,
-        containerId: freshId,
-        aliases: [],
-      })
+      try {
+        await agent.networkConnect({
+          networkId: projectNetwork,
+          containerId: freshId,
+          aliases: [],
+        })
+      } catch (freshError) {
+        throw attachmentError(freshError)
+      }
       log.info({ projectNetwork, caddyId: freshId }, "caddy re-attached after cache refresh")
       return
     }
-    throw err
+    throw attachmentError(err)
   }
 }
 
@@ -245,7 +276,10 @@ export async function reconcileCaddyAttachments(
       await ensureCaddyOnProjectNetwork(agent, name)
       result.attached++
     } catch (err) {
-      log.warn({ err, projectNetwork: name }, "reconcile: caddy attach failed")
+      log.warn({
+        err, projectNetwork: name,
+        attachment: err instanceof CaddyAttachmentError ? err.attachment : undefined,
+      }, "reconcile: caddy attach failed")
       result.failed++
     }
   }
