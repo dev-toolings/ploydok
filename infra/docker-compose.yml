@@ -166,12 +166,32 @@ services:
       - agent-cargo-registry:/usr/local/cargo/registry
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/ploydok:/run/ploydok
+    # Same as the Dockerfile CMD, repeated so an image built before
+    # ploydok-healthcheck existed still builds it without `compose build`.
+    command:
+      [
+        "cargo",
+        "watch",
+        "--why",
+        "-w",
+        "ploydok-agent/src",
+        "-w",
+        "crates",
+        "-x",
+        "build --release -p ploydok-agent --bins",
+        "-x",
+        "run --release -p ploydok-agent",
+      ]
+    # A separate probe binary connects to the socket: a stale socket file
+    # fails, unlike `test -S`. A cold release build takes minutes, hence the
+    # long start period; start_interval reports healthy as soon as it binds.
     healthcheck:
-      test: ["CMD-SHELL", "test -S /run/ploydok/agent.sock"]
+      test: ["CMD", "/workspace/target/release/ploydok-healthcheck"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 120s
+      retries: 3
+      start_period: 600s
+      start_interval: 2s
     # Limits dimensionnées pour le DEV : cargo-watch rebuild en release mode
     # peut peaker à ~1.5 GB pendant le link/codegen. Le binaire à l'arrêt
     # consomme ~30-60 MB. En prod (binaire pré-buildé sans cargo dans l'image),

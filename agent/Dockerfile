@@ -19,4 +19,5 @@ ENV CARGO_TARGET_DIR=/workspace/target \
     PLOYDOK_AGENT_INSECURE=1 \
     PLOYDOK_VALIDATOR_CONFIG=/workspace/config/dev-validator.toml
 
-CMD ["cargo", "watch", "--why", "-w", "ploydok-agent/src", "-w", "crates", "-x", "run --release -p ploydok-agent"]
+# Builds every package binary (agent + ploydok-healthcheck) before running.
+CMD ["cargo", "watch", "--why", "-w", "ploydok-agent/src", "-w", "crates", "-x", "build --release -p ploydok-agent --bins", "-x", "run --release -p ploydok-agent"]
