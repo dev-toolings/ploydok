@@ -57,3 +57,6 @@ infra/caddy/config/
 # local git worktrees
 .claude/worktrees/
 config.bat
+
+# Project MCP servers written by scripts/mcp/seed.sh (live tokens)
+.mcp.json
