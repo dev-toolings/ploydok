@@ -22,10 +22,12 @@ function queryResult<T>(rows: T[]) {
 
 function fakeDb(selectRows: Array<Array<Record<string, unknown>>>) {
   const updates: Array<Record<string, unknown>> = []
+  let selectCalls = 0
 
   return {
     db: {
       select() {
+        selectCalls += 1
         const rows = selectRows.shift() ?? []
         return queryResult(rows)
       },
@@ -43,10 +45,18 @@ function fakeDb(selectRows: Array<Array<Record<string, unknown>>>) {
       },
     } as unknown as Db,
     updates,
+    selectCount: () => selectCalls,
   }
 }
 
 describe("reapStuckBuilds", () => {
+  it("leaves pending build recovery to the queue-aware reconciler", async () => {
+    const h = fakeDb([[], [{ id: "deferred-build", app_id: "app-1" }]])
+    expect(await reapStuckBuilds(h.db)).toEqual({ reaped: [] })
+    expect(h.selectCount()).toBe(1)
+    expect(h.updates).toEqual([])
+  })
+
   it("marks a building app failed when its last running build is reaped", async () => {
     const { db, updates } = fakeDb([
       [{ id: "build-1", app_id: "app-1", status: "running" }],

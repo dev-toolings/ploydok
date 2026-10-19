@@ -9,6 +9,7 @@ import { makeTestDb, TEST_PG_URL } from "../test/db-helpers"
 import {
   DeployCancelledError,
   DeployLeaseLostError,
+  DeployDeferredError,
   fenceDeploySideEffect,
   runOwnedDeployReconciliation,
   withAppDeployLease,
@@ -53,10 +54,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
       created_at: now,
       updated_at: now,
     })
-    await db.insert(builds).values([
-      { id: build1, app_id: appId },
-      { id: build2, app_id: appId },
-    ])
+    await db.insert(builds).values({ id: build1, app_id: appId })
   })
 
   afterAll(async () => {
@@ -67,38 +65,45 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
     await cleanup()
   })
 
-  it("serializes concurrent workers across processes", async () => {
+  it("defers a second build until the active deployment releases its lease", async () => {
     let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const first = withAppDeployLease(db, appId, build1, () => gate, {
-      token: "worker-one",
-    })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const entered = new Promise<void>((resolve) => { started = resolve })
+    const first = withAppDeployLease(db, appId, build1, async () => {
+      started()
+      await gate
+      await db.update(builds).set({ status: "succeeded" }).where(eq(builds.id, build1))
+    }, { token: "worker-one" })
+    await entered
+    await db.insert(builds).values({ id: build2, app_id: appId })
     await expect(
       withAppDeployLease(db, appId, build1, async () => undefined)
-    ).rejects.toBeInstanceOf(DeployCancelledError)
+    ).rejects.toBeInstanceOf(DeployDeferredError)
     const [active] = await db.select().from(builds).where(eq(builds.id, build1))
     expect(active?.status).toBe("pending")
     expect(active?.finished_at).toBeNull()
     await expect(
-      withAppDeployLease(db, appId, build2, async () => undefined, {
-        token: "worker-two",
-      })
-    ).rejects.toBeInstanceOf(DeployCancelledError)
-    const [cancelled] = await db.select().from(builds).where(eq(builds.id, build2))
-    expect(cancelled?.status).toBe("cancelled")
-    expect(cancelled?.finished_at).toBeInstanceOf(Date)
-    expect(cancelled?.error_message).toContain("another worker owns")
+      withAppDeployLease(db, appId, build2, async () => undefined)
+    ).rejects.toBeInstanceOf(DeployDeferredError)
+    const [waiting] = await db.select().from(builds).where(eq(builds.id, build2))
+    expect(waiting?.status).toBe("pending")
+    expect(waiting?.finished_at).toBeNull()
+    expect(waiting?.error_message).toContain("waiting for the active app deployment")
     release()
     await first
+    await withAppDeployLease(db, appId, build2, async () => {
+      await db.update(builds).set({ status: "succeeded" }).where(eq(builds.id, build2))
+    })
+    const [executed] = await db.select().from(builds).where(eq(builds.id, build2))
+    expect(executed?.status).toBe("succeeded")
+    expect(executed?.error_message).toBeNull()
   })
 
   it("reclaims an expired lease and fences the stale owner", async () => {
     await db.update(builds)
       .set({ status: "pending", finished_at: null, error_message: null })
-      .where(eq(builds.id, build2))
+      .where(eq(builds.id, build1))
     let checkStale!: () => void
     const checkGate = new Promise<void>((resolve) => {
       checkStale = resolve
@@ -125,6 +130,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
     const successorGate = new Promise<void>((resolve) => {
       releaseSuccessor = resolve
     })
+    await db.update(builds).set({ status: "pending" }).where(eq(builds.id, build2))
     const successor = withAppDeployLease(
       db,
       appId,

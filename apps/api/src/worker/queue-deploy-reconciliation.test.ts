@@ -9,6 +9,16 @@ const now = new Date("2026-10-19T12:00:00Z")
 const dialect = new PgDialect()
 
 describe("pending deploy reconciliation", () => {
+  it("preserves an old deferred build while its BullMQ job is delayed", async () => {
+    const execute = mock(async (_query: SQL) => [{ id: "deferred-build" }])
+    const getJob = mock(async () => ({ getState: async () => "delayed" }))
+    expect(await reconcileOrphanedPendingDeploys(
+      { execute } as unknown as Db, { getJob }, now
+    )).toBe(0)
+    expect(getJob).toHaveBeenCalledWith("deferred-build")
+    // The only SQL statement is the scan. No terminal update is issued.
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
   it("resolves old orphans, preserves live jobs and rechecks durable ownership", async () => {
     const states: Record<string, string | null> = {
       absent: null, failed: "failed", completed: "completed", removed: "unknown",

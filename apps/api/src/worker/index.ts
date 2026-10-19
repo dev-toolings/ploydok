@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { rm } from "node:fs/promises"
 import path from "node:path"
-import { Worker, UnrecoverableError } from "bullmq"
+import { Worker, UnrecoverableError, DelayedError } from "bullmq"
 import {
   createRedis,
   apps,
@@ -108,7 +108,8 @@ import {
 } from "./jobs/image-update-watch"
 import { handleArchiveBuildLog } from "./handlers/archive-build-log"
 import type { ArchiveBuildLogPayload } from "./handlers/archive-build-log"
-import { DeployCancelledError, withAppDeployLease } from "./app-deploy-lock"
+import { DeployCancelledError } from "./app-deploy-lock"
+import { runQueuedDeployWithLease } from "./queue-deploy-lease"
 import { handleImageScan } from "./handlers/scan-image"
 import {
   startOutboxDispatcher,
@@ -169,7 +170,7 @@ export async function handleGcRegistryJob(
       jobName: "gc.registry.requested",
       jobId: job.id ?? "",
       payload: job.data,
-      reason: "legacy payload (no jobId) — drop after queue drain",
+      reason: "legacy payload (no jobId): drop after queue drain",
     })
     return
   }
@@ -269,7 +270,7 @@ export function startWorker(
   const workers: Worker[] = [
     new Worker(
       "deploy",
-      async (job) => {
+      async (job, token) => {
         const attempt = job.attemptsMade + 1
         const maxAttempts = job.opts.attempts ?? 1
         logger.info(
@@ -288,11 +289,17 @@ export function startWorker(
           const buildId =
             typeof job.data?.buildId === "string" ? job.data.buildId : null
           if (appId && buildId) {
-            await withAppDeployLease(db, appId, buildId, runDeploy)
+            await runQueuedDeployWithLease(db, appId, buildId, runDeploy, job, token, {
+              retryFailed: attempt > 1,
+            })
           } else {
             await runDeploy()
           }
         } catch (err) {
+          if (err instanceof DelayedError) {
+            logger.info({ jobId: job.id }, "deploy deferred")
+            throw err
+          }
           if (err instanceof DeployCancelledError) {
             logger.info({ jobId: job.id }, "deploy cancelled")
             throw new UnrecoverableError(err.message)
@@ -300,13 +307,13 @@ export function startWorker(
           if (err instanceof FatalDeployError) {
             logger.error(
               { jobId: job.id, err, kind: "fatal", attempt, maxAttempts },
-              "deploy.failed kind=fatal — skipping retries"
+              "deploy.failed kind=fatal: skipping retries"
             )
             throw new UnrecoverableError(err.message)
           }
           logger.warn(
             { jobId: job.id, err, kind: "transient", attempt, maxAttempts },
-            "deploy.failed kind=transient — will retry"
+            "deploy.failed kind=transient: will retry"
           )
           throw err
         }

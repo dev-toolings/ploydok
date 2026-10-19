@@ -18,6 +18,13 @@ export class DeployLeaseLostError extends Error {
   }
 }
 
+export class DeployDeferredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "DeployDeferredError"
+  }
+}
+
 export class DeployCancelledError extends Error {
   constructor(message = "deployment cancelled") {
     super(message)
@@ -164,39 +171,87 @@ export async function withAppDeployLease<T>(
     heartbeatMs?: number
     token?: string
     gateRedis?: GateRedis
+    retryFailed?: boolean
   } = {}
 ): Promise<T> {
-  const cancelBeforeStart = async (reason: string): Promise<never> => {
-    // Only the unclaimed request is ours to cancel. A duplicate delivery must
-    // never cancel the build already held by a worker, even before its claim.
-    await db.execute(sql`
-      UPDATE builds SET status = 'cancelled', finished_at = now(),
-        error_message = ${reason}
-      WHERE id = ${buildId} AND app_id = ${appId} AND status = 'pending'
-        AND NOT EXISTS (
-          SELECT 1 FROM app_deploy_leases
-          WHERE build_id = ${buildId} AND lease_until > now()
-        )
-    `)
-    throw new DeployCancelledError(reason)
-  }
-  // Cleanup takes this gate before its build snapshot. A deployment cannot
-  // enter the lifecycle while that destructive cache/image sweep owns it.
+  // Cleanup takes this gate before its destructive snapshot. No deployment
+  // lifecycle side effects may start until both the gate and app lease exist.
   const gate = await acquireGate(opts.gateRedis ?? dockerCleanupGate, "reader")
-  if (!gate) {
-    return cancelBeforeStart(
-      "Deployment cancelled: Docker cleanup owns the build lifecycle gate. Request a new deployment after cleanup finishes."
-    )
-  }
   try {
     const token = opts.token ?? crypto.randomUUID()
     const leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS
     const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
-    if (!(await acquire(db, appId, buildId, token, leaseMs))) {
-      return await cancelBeforeStart(
-        "Deployment superseded: another worker owns the app deployment lease. Request a new deployment after it finishes."
+    const entry = await db.transaction(async (tx) => {
+      // Serialize selection and lease acquisition across API processes. A newer
+      // request can supersede only builds that have not entered the lifecycle.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${appId}, 0))`)
+      const [current] = rowsOf<{ status: string; error_message: string | null }>(
+        await tx.execute(sql`SELECT status, error_message FROM builds
+          WHERE id = ${buildId} AND app_id = ${appId}`)
       )
-    }
+      if (!current || !["pending", "failed", "running"].includes(current.status)) {
+        return { kind: "cancelled", reason: current?.error_message ?? "Deployment is no longer queued" }
+      }
+      if (current.status === "failed") {
+        if (!opts.retryFailed) return { kind: "cancelled", reason: current.error_message ?? "Deployment already failed" }
+        await tx.execute(sql`UPDATE builds SET status = 'pending', finished_at = NULL
+          WHERE id = ${buildId} AND status = 'failed'`)
+        current.status = "pending"
+      }
+      const [newest] = rowsOf<{ id: string }>(await tx.execute(sql`
+        SELECT waiting.id FROM builds waiting
+        WHERE waiting.app_id = ${appId} AND waiting.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM app_deploy_leases lease
+            WHERE lease.build_id = waiting.id AND lease.lease_until > now()
+          )
+        ORDER BY waiting.queued_at DESC, waiting.created_at DESC, waiting.id DESC
+        LIMIT 1
+      `))
+      if (newest) {
+        await tx.execute(sql`
+          UPDATE builds SET status = 'cancelled', finished_at = now(),
+            error_message = ${`superseded by a newer deploy request ${newest.id}`}
+          WHERE app_id = ${appId} AND status = 'pending' AND id <> ${newest.id}
+            AND (builds.queued_at, builds.created_at, builds.id) < (
+              SELECT newer.queued_at, newer.created_at, newer.id
+              FROM builds newer WHERE newer.id = ${newest.id}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM app_deploy_leases lease
+              WHERE lease.build_id = builds.id AND lease.lease_until > now()
+            )
+        `)
+        if (current.status === "pending" && newest.id !== buildId) {
+          // An active lease can still own a pending row before the handler's
+          // claim. That duplicate delivery must defer instead of cancelling it.
+          const [owned] = rowsOf<{ owned: boolean }>(await tx.execute(sql`
+            SELECT true AS owned FROM app_deploy_leases
+            WHERE build_id = ${buildId} AND lease_until > now()
+          `))
+          if (!owned) return { kind: "cancelled", reason: `superseded by a newer deploy request ${newest.id}` }
+        }
+      }
+      const acquired = gate && await acquire(tx as unknown as Db, appId, buildId, token, leaseMs)
+      if (!acquired) {
+        const reason = gate
+          ? "Deployment queued: waiting for the active app deployment to finish"
+          : "Deployment queued: waiting for Docker cleanup to finish"
+        await tx.execute(sql`UPDATE builds SET error_message = ${reason}
+          WHERE id = ${buildId} AND status = 'pending'
+            AND NOT EXISTS (
+              SELECT 1 FROM app_deploy_leases lease
+              WHERE lease.build_id = builds.id AND lease.lease_until > now()
+            )`)
+        return { kind: "deferred", reason }
+      }
+      await tx.execute(sql`UPDATE builds SET error_message = NULL
+        WHERE id = ${buildId} AND error_message LIKE 'Deployment queued:%'`)
+      return { kind: "acquired", reason: "" }
+    })
+    // Throw only after committing coalescing and the durable waiting reason.
+    if (entry.kind === "cancelled") throw new DeployCancelledError(entry.reason)
+    if (entry.kind === "deferred" || !gate) throw new DeployDeferredError(entry.reason)
 
   const controller = new AbortController()
   const ctx: LeaseContext = {
@@ -238,7 +293,7 @@ export async function withAppDeployLease<T>(
     await gate.release()
   }
   } catch (error) {
-    await gate.release()
+    await gate?.release()
     throw error
   }
 }

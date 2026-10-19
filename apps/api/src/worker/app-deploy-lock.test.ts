@@ -21,7 +21,18 @@ function withAppDeployLease<T>(
 
 function fakeDb(results: unknown[][]) {
   const execute = mock(async (_query: SQL) => results.shift() ?? [])
-  return { db: { execute } as unknown as Db, execute }
+  const transaction = async (action: (tx: unknown) => Promise<unknown>) => action({
+    execute: async (query: SQL) => {
+      const text = new PgDialect().sqlToQuery(query).sql
+      if (text.includes("pg_advisory_xact_lock")) return []
+      if (text.includes("SELECT status, error_message")) return [{ status: "pending" }]
+      // No other waiting request competes in these ownership/fencing tests.
+      if (text.includes("SELECT waiting.id")) return []
+      if (text.includes("UPDATE builds")) return []
+      return execute(query)
+    },
+  })
+  return { db: { execute, transaction } as unknown as Db, execute }
 }
 
 describe("durable app deploy lease", () => {
@@ -37,38 +48,6 @@ describe("durable app deploy lease", () => {
       })
     ).resolves.toBe("ok")
     expect(execute).toHaveBeenCalledTimes(3)
-  })
-
-  it("cancels the second deployment with a reason before running its task", async () => {
-    const { db, execute } = fakeDb([[], [{ id: "build-2" }]])
-    const task = mock(async () => undefined)
-    await expect(
-      withAppDeployLease(db, "app-1", "build-2", task)
-    ).rejects.toBeInstanceOf(DeployCancelledError)
-    expect(task).not.toHaveBeenCalled()
-    const update = new PgDialect().sqlToQuery(execute.mock.calls[1]![0] as SQL)
-    expect(update.sql).toContain("status = 'cancelled'")
-    expect(update.sql).toContain("finished_at = now()")
-    expect(update.sql).toContain("status = 'pending'")
-    expect(update.sql).toContain("NOT EXISTS")
-    expect(update.params).toContain("build-2")
-    expect(update.params[0]).toContain("another worker owns the app deployment lease")
-  })
-
-  it("cancels a pending deployment blocked by Docker cleanup", async () => {
-    const { db, execute } = fakeDb([[{ id: "build-2" }]])
-    const task = mock(async () => undefined)
-    await expect(
-      withAppDeployLease(db, "app-1", "build-2", task, {
-        gateRedis: { eval: mock(async () => 0) },
-      })
-    ).rejects.toBeInstanceOf(DeployCancelledError)
-    expect(task).not.toHaveBeenCalled()
-    expect(execute).toHaveBeenCalledTimes(1)
-    const update = new PgDialect().sqlToQuery(execute.mock.calls[0]![0] as SQL)
-    expect(update.sql).toContain("status = 'cancelled'")
-    expect(update.sql).toContain("finished_at = now()")
-    expect(update.params[0]).toContain("Docker cleanup owns the build lifecycle gate")
   })
 
   it("stops at the next fence after cancellation intent", async () => {
