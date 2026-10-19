@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, test, expect, beforeEach } from "bun:test"
+import { describe, test, expect, beforeEach, mock } from "bun:test"
 import { Hono } from "hono"
 import { nanoid } from "nanoid"
 import { users } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { makeTestDb as makePgTestDb, TEST_PG_URL } from "../test/db-helpers"
 import { signAccessToken, ACCESS_COOKIE } from "../auth/jwt"
+import { createSession } from "../auth/sessions"
 import { requireAuth } from "../auth/middleware"
 import { eventBus } from "../worker/event-bus"
-import { eventsRouter } from "./events"
+import { env } from "../env"
+
+// The router owns a DB connection, so configure it before importing the router.
+const testEnv = { ...env, DATABASE_URL: TEST_PG_URL ?? env.DATABASE_URL }
+mock.module("../env", () => ({ env: testEnv }))
+const { eventsRouter } = await import("./events")
 
 // ---------------------------------------------------------------------------
 // Test DB helper — in-memory SQLite with the users table only
@@ -53,8 +59,9 @@ function buildTestApp(db: TestDb) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function makeAuthCookie(userId: string, email: string): Promise<string> {
-  const token = await signAccessToken({ userId, email, sessionId: `sess-${userId}` })
+async function makeAuthCookie(db: TestDb, userId: string, email: string): Promise<string> {
+  const { sessionId } = await createSession(db, { userId, userAgent: "test", ip: "127.0.0.1" })
+  const token = await signAccessToken({ userId, email, sessionId })
   return `${ACCESS_COOKIE}=${encodeURIComponent(token)}`
 }
 
@@ -117,7 +124,7 @@ describe.skipIf(skip)("GET /events", () => {
   // -------------------------------------------------------------------------
   test("returns 200 with text/event-stream content-type for valid cookie", async () => {
     const { id: uid, email } = await createTestUser(db)
-    const cookie = await makeAuthCookie(uid, email)
+    const cookie = await makeAuthCookie(db, uid, email)
 
     const app = buildTestApp(db)
 
@@ -141,7 +148,7 @@ describe.skipIf(skip)("GET /events", () => {
   test("replays events published before connection", async () => {
     const { id: uid, email } = await createTestUser(db)
     const channel = `user:${uid}`
-    const cookie = await makeAuthCookie(uid, email)
+    const cookie = await makeAuthCookie(db, uid, email)
 
     // Publish 2 events before connecting
     eventBus.publish(channel, { type: "build.started", appId: "app-1", message: "Build started" })
@@ -177,7 +184,7 @@ describe.skipIf(skip)("GET /events", () => {
   test("delivers live events published after connection", async () => {
     const { id: uid, email } = await createTestUser(db)
     const channel = `user:${uid}`
-    const cookie = await makeAuthCookie(uid, email)
+    const cookie = await makeAuthCookie(db, uid, email)
 
     const app = buildTestApp(db)
     const res = await app.request("/events", { headers: { cookie } })

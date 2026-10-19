@@ -150,6 +150,8 @@ import { createRateLimiter } from "../webhooks/rate-limit"
 import { runtimeContainerNameCandidates } from "../services/runtime-containers"
 import {
   DeployLeaseLostError,
+  DeployDeferredError,
+  DeployCancelledError,
   currentDeployLease,
   fenceDeploySideEffect,
   withAppDeployLease,
@@ -921,9 +923,13 @@ async function withRoutingDeployLease<T>(opts: {
   const buildId = await currentRoutingBuildId(opts.db, opts.app)
   if (!buildId) return null
   try {
-    return await withAppDeployLease(opts.db, opts.app.id, buildId, opts.task)
+    return await withAppDeployLease(opts.db, opts.app.id, buildId, opts.task, { purpose: "routing" })
   } catch (error) {
-    if (error instanceof DeployLeaseLostError) return null
+    if (
+      error instanceof DeployLeaseLostError ||
+      error instanceof DeployDeferredError ||
+      error instanceof DeployCancelledError
+    ) return null
     throw error
   }
 }

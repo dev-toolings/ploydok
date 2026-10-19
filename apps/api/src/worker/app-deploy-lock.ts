@@ -172,6 +172,7 @@ export async function withAppDeployLease<T>(
     token?: string
     gateRedis?: GateRedis
     retryFailed?: boolean
+    purpose?: "deploy" | "routing"
   } = {}
 ): Promise<T> {
   // Cleanup takes this gate before its destructive snapshot. No deployment
@@ -189,6 +190,16 @@ export async function withAppDeployLease<T>(
         await tx.execute(sql`SELECT status, error_message FROM builds
           WHERE id = ${buildId} AND app_id = ${appId}`)
       )
+      // Routing operations lock an already deployed build without changing the queue.
+      if (opts.purpose === "routing") {
+        if (!current || !["succeeded", "succeeded_with_warning"].includes(current.status)) {
+          return { kind: "cancelled", reason: "The deployed build is no longer successful" }
+        }
+        const acquired = gate && await acquire(tx as unknown as Db, appId, buildId, token, leaseMs)
+        return acquired
+          ? { kind: "acquired", reason: "" }
+          : { kind: "deferred", reason: "Routing is waiting for the active deployment or Docker cleanup" }
+      }
       if (!current || !["pending", "failed", "running"].includes(current.status)) {
         return { kind: "cancelled", reason: current?.error_message ?? "Deployment is no longer queued" }
       }

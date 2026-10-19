@@ -4,7 +4,7 @@ import { createDb, services, type Db } from "@ploydok/db"
 import { eq, sql } from "drizzle-orm"
 import { protectServiceSecrets, resolveServiceCompose, maskServiceSecrets, migrateServiceSecrets } from "./service-secrets"
 
-test("generated secrets are absent from persisted columns and resolve at deployment", async () => {
+test.skipIf(!process.env.DATABASE_URL)("generated secrets are absent from persisted columns and resolve at deployment", async () => {
   const db = createDb(process.env.DATABASE_URL!)
   try {
     await db.transaction(async tx => {
@@ -25,7 +25,7 @@ test("generated secrets are absent from persisted columns and resolve at deploym
   } finally { await db.$client.end() }
 })
 
-test("legacy migration encrypts both columns atomically and is idempotent", async () => {
+test.skipIf(!process.env.DATABASE_URL)("legacy migration encrypts both columns atomically and is idempotent", async () => {
   const db = createDb(process.env.DATABASE_URL!)
   try {
     await db.transaction(async tx => {

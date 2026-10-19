@@ -5,9 +5,10 @@ import { nanoid } from "nanoid"
 import { users, projects, apps, memberships, passkeys, services } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { createAppsDomainsRouter } from "./apps-domains"
-import type { AuthUser } from "../auth/middleware"
+import { requireAuth, type AuthUser } from "../auth/middleware"
 import { makeTestDb as makePgTestDb, TEST_PG_URL } from "../test/db-helpers"
 
+const domainSuffix = `${nanoid().replace(/[^a-z0-9]/gi, "a").toLowerCase()}.example.com`
 const skip = !TEST_PG_URL
 if (skip) console.log("[apps-domains.test] PLOYDOK_TEST_PG_URL not set — skipping")
 
@@ -135,6 +136,8 @@ function buildTestApp(db: TestDb, authedUser?: AuthUser): Hono {
     if (authedUser) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(c as any).set("user", authedUser)
+    } else {
+      return requireAuth(db)(c, next)
     }
     return next()
   })
@@ -197,10 +200,7 @@ describe.skipIf(skip)("GET /apps/:id/domains", () => {
   it("returns 401 when no auth user", async () => {
     const honoApp = buildTestApp(db)
     const res = await honoApp.request(`/apps/${appId}/domains`)
-    // No user set → getUser returns undefined → cast throws. The router should 404/500.
-    // In practice the app.use middleware in production does requireAuth which returns 401.
-    // Without auth middleware in tests, we get a 500 (cast fails). We verify not 200.
-    expect(res.status).not.toBe(200)
+    expect(res.status).toBe(401)
   })
 
   it("returns 404 when app belongs to another user", async () => {
@@ -251,11 +251,11 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     const res = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "custom.example.com" }),
+      body: JSON.stringify({ hostname: `custom.${domainSuffix}` }),
     })
     expect(res.status).toBe(201)
     const body = await res.json() as { domain: { id: string; hostname: string; tlsStatus: string } }
-    expect(body.domain.hostname).toBe("custom.example.com")
+    expect(body.domain.hostname).toBe(`custom.${domainSuffix}`)
     expect(body.domain.tlsStatus).toBe("pending")
     expect(body.domain.id).toBeString()
   })
@@ -266,7 +266,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        hostname: "wild.example.com",
+        hostname: `wild.${domainSuffix}`,
         tls_mode: "dns01",
         dns01_provider: "cloudflare",
         wildcard: true,
@@ -276,7 +276,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     const body = await res.json() as {
       domain: { hostname: string; tlsMode: string; dns01Provider: string }
     }
-    expect(body.domain.hostname).toBe("*.wild.example.com")
+    expect(body.domain.hostname).toBe(`*.wild.${domainSuffix}`)
     expect(body.domain.tlsMode).toBe("dns01")
     expect(body.domain.dns01Provider).toBe("cloudflare")
   })
@@ -287,7 +287,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        hostname: "*.wild-http.example.com",
+        hostname: `*.wild-http.${domainSuffix}`,
         tls_mode: "http01",
       }),
     })
@@ -302,11 +302,11 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     const res = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "UPPER.Example.COM" }),
+      body: JSON.stringify({ hostname: `UPPER.${domainSuffix}` }),
     })
     expect(res.status).toBe(201)
     const body = await res.json() as { domain: { hostname: string } }
-    expect(body.domain.hostname).toBe("upper.example.com")
+    expect(body.domain.hostname).toBe(`upper.${domainSuffix}`)
   })
 
   it("rejects an invalid hostname → 400", async () => {
@@ -338,14 +338,14 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "dupe.example.com" }),
+      body: JSON.stringify({ hostname: `dupe.${domainSuffix}` }),
     })
 
     // Second insert on same hostname (even same app) → 409.
     const res = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "dupe.example.com" }),
+      body: JSON.stringify({ hostname: `dupe.${domainSuffix}` }),
     })
     expect(res.status).toBe(409)
     const body = await res.json() as { error: { code: string } }
@@ -362,13 +362,13 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "cross.example.com" }),
+      body: JSON.stringify({ hostname: `cross.${domainSuffix}` }),
     })
 
     const res = await honoApp.request(`/apps/${app2.id}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "cross.example.com" }),
+      body: JSON.stringify({ hostname: `cross.${domainSuffix}` }),
     })
     expect(res.status).toBe(409)
   })
@@ -388,7 +388,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     const first = await ownerApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "Tenant-Collision.Example.com" }),
+      body: JSON.stringify({ hostname: `Tenant-Collision.${domainSuffix}` }),
     })
     expect(first.status).toBe(201)
 
@@ -397,7 +397,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ hostname: "tenant-collision.example.com" }),
+        body: JSON.stringify({ hostname: `tenant-collision.${domainSuffix}` }),
       }
     )
     expect(second.status).toBe(409)
@@ -408,13 +408,13 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
   it("rejects a case-insensitive collision with a service hostname", async () => {
     const other = await createTestUser(db)
     const otherProject = await createTestProject(db, other.id)
-    await createTestService(db, otherProject.id, "Service-Collision.Example.com")
+    await createTestService(db, otherProject.id, `Service-Collision.${domainSuffix}`)
 
     const ownerApp = buildTestApp(db, fakeUser(userId))
     const response = await ownerApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "service-collision.example.com" }),
+      body: JSON.stringify({ hostname: `service-collision.${domainSuffix}` }),
     })
 
     expect(response.status).toBe(409)
@@ -437,7 +437,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     const first = await ownerApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "other.example.com" }),
+      body: JSON.stringify({ hostname: `other.${domainSuffix}` }),
     })
     expect(first.status).toBe(201)
 
@@ -446,7 +446,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ hostname: "api.example.com" }),
+        body: JSON.stringify({ hostname: `api.${domainSuffix}` }),
       }
     )
     expect(sibling.status).toBe(201)
@@ -468,7 +468,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        hostname: "collision-wild.example.com",
+        hostname: `collision-wild.${domainSuffix}`,
         wildcard: true,
         tls_mode: "dns01",
         dns01_provider: "cloudflare",
@@ -481,7 +481,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ hostname: "api.collision-wild.example.com" }),
+        body: JSON.stringify({ hostname: `api.collision-wild.${domainSuffix}` }),
       }
     )
     expect(child.status).toBe(409)
@@ -495,7 +495,7 @@ describe.skipIf(skip)("POST /apps/:id/domains", () => {
     const res = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "valid.example.com" }),
+      body: JSON.stringify({ hostname: `valid.${domainSuffix}` }),
     })
     expect(res.status).toBe(404)
   })
@@ -527,7 +527,7 @@ describe.skipIf(skip)("DELETE /apps/:id/domains/:domainId", () => {
     const addRes = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "to-delete.example.com" }),
+      body: JSON.stringify({ hostname: `to-delete.${domainSuffix}` }),
     })
     const { domain } = await addRes.json() as { domain: { id: string } }
 
@@ -554,7 +554,7 @@ describe.skipIf(skip)("DELETE /apps/:id/domains/:domainId", () => {
     const addRes = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "app1.example.com" }),
+      body: JSON.stringify({ hostname: `app1.${domainSuffix}` }),
     })
     const { domain } = await addRes.json() as { domain: { id: string } }
 
@@ -591,7 +591,7 @@ describe.skipIf(skip)("POST /apps/:id/domains/:domainId/recheck", () => {
     const addRes = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "recheck.example.com" }),
+      body: JSON.stringify({ hostname: `recheck.${domainSuffix}` }),
     })
     const { domain } = await addRes.json() as { domain: { id: string } }
 
@@ -654,7 +654,7 @@ describe.skipIf(skip)("domains mutations require second factor", () => {
     {
       method: "POST",
       path: (id) => `/apps/${id}/domains`,
-      body: { hostname: "sf-test.example.com" },
+      body: { hostname: `sf-test.${domainSuffix}` },
     },
     {
       method: "DELETE",
@@ -692,7 +692,7 @@ describe.skipIf(skip)("domains mutations require second factor", () => {
     await db.insert(passkeys).values({
       id: nanoid(),
       user_id: userId,
-      credential_id: "cred-dom-sf-second",
+      credential_id: `cred-dom-sf-second-${userId}`,
       public_key: Buffer.from("pk2"),
       counter: 0,
       transports: "[]",
@@ -705,7 +705,7 @@ describe.skipIf(skip)("domains mutations require second factor", () => {
     const res = await honoApp.request(`/apps/${appId}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname: "happy-path.example.com" }),
+      body: JSON.stringify({ hostname: `happy-path.${domainSuffix}` }),
     })
     expect(res.status).toBe(201)
   })

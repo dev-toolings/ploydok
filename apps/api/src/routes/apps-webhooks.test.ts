@@ -5,6 +5,7 @@ import { nanoid } from "nanoid"
 import {
   users,
   projects,
+  memberships,
   apps,
   audit_log,
   webhook_deliveries,
@@ -109,6 +110,14 @@ async function createTestProject(db: TestDb, ownerId: string) {
     name: `Project ${id}`,
     slug: `proj-${id}`,
     created_at: now,
+  })
+  await db.insert(memberships).values({
+    id: nanoid(),
+    org_id: id,
+    user_id: ownerId,
+    role: "owner",
+    invited_at: now,
+    accepted_at: now,
   })
   return { id }
 }

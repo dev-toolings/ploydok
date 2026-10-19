@@ -33,17 +33,19 @@ async function createTestUser(db: TestDb) {
     recovery_token_hash: null,
     recovery_expires_at: null,
   })
-  await db.insert(passkeys).values({
-    id: nanoid(),
-    user_id: id,
-    credential_id: `cred-${id}`,
-    public_key: Buffer.from("test-public-key"),
-    counter: 0,
-    transports: "[]",
-    device_name: "Test passkey",
-    created_at: now,
-    last_used_at: now,
-  })
+  for (let index = 0; index < 2; index++) {
+    await db.insert(passkeys).values({
+      id: nanoid(),
+      user_id: id,
+      credential_id: `cred-${id}-${index}`,
+      public_key: Buffer.from("test-public-key"),
+      counter: 0,
+      transports: "[]",
+      device_name: "Test passkey",
+      created_at: now,
+      last_used_at: now,
+    })
+  }
   return { id, email: `user-${id}@test.com` }
 }
 
