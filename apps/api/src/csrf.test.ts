@@ -79,4 +79,37 @@ describe("CSRF", () => {
       error: { code: "CSRF_MISMATCH" },
     })
   })
+
+  describe("POST /mcp", () => {
+    it("passes CSRF for a Bearer client without session cookie", async () => {
+      // A non-token Bearer reaches the auth stage without a DB lookup.
+      const res = await app.request("/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer test" },
+      })
+      expect(res.status).toBe(401)
+    })
+
+    it("keeps CSRF when a session cookie rides along", async () => {
+      const res = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test",
+          cookie: "ploydok_access=session",
+        },
+      })
+      expect(res.status).toBe(403)
+      expect(await res.json()).toMatchObject({
+        error: { code: "CSRF_MISMATCH" },
+      })
+    })
+
+    it("does not exempt Bearer mutations on other paths", async () => {
+      const res = await app.request("/apps/a1/deploy", {
+        method: "POST",
+        headers: { authorization: "Bearer test" },
+      })
+      expect(res.status).toBe(403)
+    })
+  })
 })

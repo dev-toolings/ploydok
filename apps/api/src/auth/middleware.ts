@@ -6,6 +6,7 @@ import { verifyAccessToken, ACCESS_COOKIE } from "./jwt"
 import { countActive } from "./backup-codes"
 import type { Db } from "@ploydok/db"
 import { authenticatePat } from "./pat"
+import { getMcpPrincipal } from "./mcp-principal"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,6 +42,11 @@ export interface AuthUser {
    * id du PAT utilisé (présent uniquement si l'auth vient d'un Bearer plk_/ploy_).
    */
   pat_id?: string
+  /** `mcp` tokens authenticate only on /mcp, bound to `token_org_id`. */
+  token_kind?: "api" | "mcp"
+  token_org_id?: string
+  /** Undefined = every app of `token_org_id`. */
+  token_app_ids?: string[]
 }
 
 // Hono context variable types
@@ -73,6 +79,14 @@ export interface AppVariables {
  */
 export function requireAuth(db: Db) {
   return async (c: Context, next: Next) => {
+    const mcpPrincipal = getMcpPrincipal(c)
+    if (mcpPrincipal) {
+      c.set("user", mcpPrincipal)
+      c.set("session_id", mcpPrincipal.session_id)
+      c.set("access_exp", 0)
+      return next()
+    }
+
     const patResult = await authenticatePat(c, db)
     if (patResult.kind === "invalid") {
       return c.json(

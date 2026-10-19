@@ -20,6 +20,7 @@
     "@aws-sdk/lib-storage": "^3.1112.0",
     "@azure/storage-blob": "^12.34.0",
     "@grpc/grpc-js": "^1.14.6",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@ploydok/agent-proto": "workspace:*",
     "@ploydok/app-auditor": "workspace:*",
     "@ploydok/db": "workspace:*",

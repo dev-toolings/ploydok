@@ -14,6 +14,8 @@ import type { AuthUser } from "./middleware"
 
 const log = childLogger("pat")
 
+export const MCP_PATH = "/mcp"
+
 export type PatAuthResult =
   | { kind: "not_applicable" }
   | { kind: "invalid" }
@@ -52,6 +54,12 @@ export async function authenticatePat(
     return { kind: "invalid" }
   }
 
+  // MCP tokens carry their org/app allowlist, which only the /mcp tool layer
+  // enforces: anywhere else they would act as unrestricted user tokens.
+  if (activeToken.kind === "mcp" && c.req.path !== MCP_PATH) {
+    return { kind: "invalid" }
+  }
+
   const user = await getUser(db, activeToken.user_id)
   if (!user) {
     return { kind: "invalid" }
@@ -64,6 +72,9 @@ export async function authenticatePat(
     session_id: activeToken.id,
     token_scopes: activeToken.scopes ?? ["admin:*"],
     pat_id: activeToken.id,
+    token_kind: activeToken.kind,
+    ...(activeToken.org_id ? { token_org_id: activeToken.org_id } : {}),
+    ...(activeToken.app_ids ? { token_app_ids: activeToken.app_ids } : {}),
   }
 
   await updateTokenLastUsed(db, activeToken.id, new Date())
