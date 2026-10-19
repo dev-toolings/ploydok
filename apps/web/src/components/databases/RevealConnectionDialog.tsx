@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "../i18n/dialog"
 import { useRevealDatabase } from "../../lib/databases"
-import { copyToClipboard } from "../../lib/clipboard"
+import { copyToClipboard, notifyCopyFailed } from "../../lib/clipboard"
 
 const AUTO_HIDE_MS = 30_000
 
@@ -88,6 +88,7 @@ export function RevealConnectionDialog({
     if (!connString) return
     copyToClipboard(connString)
       .then(() => toast.success(t("reveal.copied")))
+      .catch(notifyCopyFailed)
   }
 
   const isOpen = Boolean(databaseId)

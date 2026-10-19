@@ -17,7 +17,7 @@ import {
   lineLevel,
   useLogStream,
 } from "../../lib/hooks/use-log-stream"
-import { copyToClipboard } from "../../lib/clipboard"
+import { copyToClipboard, notifyCopyFailed } from "../../lib/clipboard"
 import { LogFilters, useLogFilters } from "./LogFilters"
 import { LogLine } from "./LogLine"
 import type {
@@ -577,8 +577,8 @@ function LogViewerContent({
     const content = filtered.map((l) => l.text).join("\n")
     try {
       await copyToClipboard(content)
-    } catch (err) {
-      console.error("Copy error:", err)
+    } catch {
+      notifyCopyFailed()
     }
   }, [filtered])
 

@@ -22,7 +22,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../i18n/sheet"
-import { copyToClipboard } from "../../lib/clipboard"
+import { copyToClipboard, notifyCopyFailed } from "../../lib/clipboard"
 import { BuildLogViewer } from "./BuildLogViewer"
 import type { Build, BuildStatus } from "@ploydok/shared"
 
@@ -127,7 +127,7 @@ function CommitChip({
       setCopied(true)
       setTimeout(() => setCopied(false), 1200)
     } catch {
-      /* clipboard unavailable */
+      notifyCopyFailed()
     }
   }, [sha])
 

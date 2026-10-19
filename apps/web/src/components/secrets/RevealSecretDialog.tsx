@@ -19,7 +19,8 @@ import {
 } from "../i18n/dialog"
 import { useRevealSecret } from "../../lib/secrets"
 import { useMe } from "../../lib/auth"
-import { copyToClipboard } from "../../lib/clipboard"
+import i18n from "../../lib/i18n"
+import { copyToClipboard, notifyCopyFailed } from "../../lib/clipboard"
 import type { SecretPhase, SecretScope } from "../../lib/secrets"
 
 const AUTO_HIDE_MS = 30_000
@@ -105,7 +106,8 @@ export function RevealSecretDialog({
   function handleCopy() {
     if (revealedValue) {
       copyToClipboard(revealedValue)
-        .then(() => toast.success("Copied!"))
+        .then(() => toast.success(i18n.t("common:copied")))
+        .catch(notifyCopyFailed)
     }
   }
 

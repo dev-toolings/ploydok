@@ -38,6 +38,7 @@ import {
   DialogTitle,
 } from "../i18n/dialog"
 import { useTotpStatus } from "../../lib/totp"
+import i18n from "../../lib/i18n"
 import { copyToClipboard } from "../../lib/clipboard"
 import { rotateWebhookSecret } from "../../lib/webhooks"
 import type { ApiError } from "../../lib/api"
@@ -115,10 +116,10 @@ export function RotateSecretDialog({
     try {
       await copyToClipboard(newSecret)
       setCopied(true)
-      toast.success("Secret copied to clipboard")
+      toast.success(i18n.t("workspace:deliveries.copiedClipboard"))
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error("Failed to copy secret")
+      toast.error(i18n.t("workspace:deliveries.copyFailed"))
     }
   }
 
