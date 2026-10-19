@@ -9,12 +9,31 @@
 //      before upgrade — Hono will respond with a non-101 when the WS
 //      upgrade middleware cannot proceed).
 //   2. Smoke: wsRouter is exported and has the expected routes registered.
+//   3. Build authorization rejects another app's build before log delivery.
 //
 // End-to-end WS tests (replay + live stream) live in the log-bus.test.ts
 // which tests the LogBus independently, and in future E2E Playwright specs.
 
-import { describe, it, expect } from "bun:test"
-import { wsRouter } from "./ws"
+import { describe, it, expect, mock, spyOn } from "bun:test"
+import * as database from "@ploydok/db"
+import * as queries from "@ploydok/db/queries"
+import type { BunWebSocketData } from "hono/bun"
+import { WSContext } from "hono/ws"
+import { ACCESS_COOKIE, signAccessToken } from "../auth/jwt"
+import { logBus } from "../worker/log-bus"
+
+const ownerQuery = {
+  from: () => ownerQuery,
+  innerJoin: () => ownerQuery,
+  where: () => ownerQuery,
+  limit: async () => [{ id: "owned-project" }],
+}
+mock.module("@ploydok/db", () => ({
+  ...database,
+  createDb: () => ({ select: () => ownerQuery }),
+}))
+
+const { wsRouter } = await import("./ws")
 
 const wsEnv = { server: { upgrade: () => false } }
 
@@ -45,6 +64,64 @@ describe("wsRouter shape", () => {
 // ---------------------------------------------------------------------------
 
 describe("wsRouter auth", () => {
+  it("refuses a build belonging to another app before replaying or subscribing", async () => {
+    const foreignBuild = {
+      id: "foreign-build",
+      app_id: "other-app",
+      status: "building" as const,
+    }
+    const buildQuery = spyOn(queries, "getBuildForApp").mockImplementation(
+      async (_db, buildId, appId) =>
+        foreignBuild.id === buildId && foreignBuild.app_id === appId
+          ? foreignBuild
+          : null
+    )
+    const replay = spyOn(logBus, "replay")
+    const subscribe = spyOn(logBus, "subscribe")
+    const close = mock(() => {})
+    const send = mock(() => {})
+    let events: BunWebSocketData["events"] | undefined
+    const ws = new WSContext({ send, close, readyState: 1 })
+
+    try {
+      const token = await signAccessToken({
+        userId: "owner",
+        email: "owner@example.test",
+        sessionId: "session-1",
+      })
+      await wsRouter.fetch(
+        new Request("http://localhost/apps/owned-app/build/foreign-build", {
+          headers: { upgrade: "websocket", cookie: `${ACCESS_COOKIE}=${token}` },
+        }),
+        {
+          server: {
+            upgrade: (_request: Request, options: { data: BunWebSocketData }) => {
+              events = options.data.events
+              return false
+            },
+          },
+        }
+      )
+      expect(events?.onOpen).toBeDefined()
+      await events!.onOpen!(new Event("open"), ws)
+
+      expect(close).toHaveBeenCalledWith(4001, "unauthorized")
+      expect(buildQuery).toHaveBeenCalledWith(
+        expect.anything(),
+        foreignBuild.id,
+        "owned-app"
+      )
+      expect(send).not.toHaveBeenCalled()
+      expect(replay).not.toHaveBeenCalled()
+      expect(subscribe).not.toHaveBeenCalled()
+    } finally {
+      events?.onClose?.(new CloseEvent("close"), ws)
+      buildQuery.mockRestore()
+      replay.mockRestore()
+      subscribe.mockRestore()
+    }
+  })
+
   it("/apps/:id/build/:buildId — plain GET without cookie returns non-200", async () => {
     const res = await wsRouter.fetch(
       new Request("http://localhost/apps/app-1/build/build-1"),

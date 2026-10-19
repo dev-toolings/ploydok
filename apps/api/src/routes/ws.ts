@@ -27,7 +27,7 @@ import { Hono } from "hono"
 import { createBunWebSocket } from "hono/bun"
 import { eq, and, isNotNull } from "drizzle-orm"
 import { createDb, apps, projects, memberships, databases } from "@ploydok/db"
-import { getServiceForUser } from "@ploydok/db/queries"
+import { getBuildForApp, getServiceForUser } from "@ploydok/db/queries"
 import { verifyAccessToken, ACCESS_COOKIE } from "../auth/jwt"
 import { logBus } from "../worker/log-bus"
 import { getRequestLogs, runtimeLogSource } from "../services/request-logs"
@@ -458,6 +458,9 @@ wsRouter.get(
 
     const owned = await userOwnsApp(appId, userId)
     if (!owned) return null
+
+    const build = await getBuildForApp(db, buildId, appId)
+    if (!build) return null
 
     return { channel: `build:${buildId}`, userId }
   })
