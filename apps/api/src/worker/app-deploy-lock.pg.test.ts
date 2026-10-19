@@ -100,6 +100,37 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
     expect(executed?.error_message).toBeNull()
   })
 
+  it("locks a successful routing build without redeploying it or coalescing queued builds", async () => {
+    const deployedId = nanoid()
+    const pendingIds = [nanoid(), nanoid()]
+    await db.insert(builds).values([
+      { id: deployedId, app_id: appId, status: "succeeded" },
+      ...pendingIds.map((id) => ({ id, app_id: appId, status: "pending" as const })),
+    ])
+    try {
+      await expect(
+        withAppDeployLease(db, appId, deployedId, async () => undefined)
+      ).rejects.toBeInstanceOf(DeployCancelledError)
+      let called = false
+      await withAppDeployLease(db, appId, deployedId, async () => {
+        await fenceDeploySideEffect()
+        called = true
+      }, { purpose: "routing" })
+      expect(called).toBe(true)
+      const [deployed] = await db.select().from(builds).where(eq(builds.id, deployedId))
+      expect(deployed?.status).toBe("succeeded")
+      for (const id of pendingIds) {
+        const [pending] = await db.select().from(builds).where(eq(builds.id, id))
+        expect(pending?.status).toBe("pending")
+        expect(pending?.error_message).toBeNull()
+      }
+    } finally {
+      for (const id of [deployedId, ...pendingIds]) {
+        await db.delete(builds).where(eq(builds.id, id))
+      }
+    }
+  })
+
   it("reclaims an expired lease and fences the stale owner", async () => {
     await db.update(builds)
       .set({ status: "pending", finished_at: null, error_message: null })
