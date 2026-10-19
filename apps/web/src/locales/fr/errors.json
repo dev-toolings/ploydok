@@ -32,6 +32,7 @@
     "INVALID_DOMAIN": "Saisissez un nom d'hôte valide sans chemin, port ni identifiants.",
     "DOMAIN_CONFLICT": "Ce nom d'hôte est déjà utilisé par une autre ressource.",
     "CONFLICT": "Cette action entre en conflit avec une ressource existante.",
+    "ORGANIZATION_NOT_EMPTY": "Supprimez toutes les apps, services et bases de données de cet espace de travail avant de le supprimer.",
     "VALIDATION_ERROR": "Certaines valeurs sont invalides. Vérifiez le formulaire et réessayez.",
     "rate_limited": "Trop de requêtes. Réessayez dans un instant.",
     "replay_limit_reached": "Cette livraison a atteint sa limite de rejeu.",
