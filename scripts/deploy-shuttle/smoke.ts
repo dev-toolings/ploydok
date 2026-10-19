@@ -4,8 +4,16 @@
 // answer. Configuration lives on the operator machine only, in
 // ~/.config/ploydok/smoke.env (mode 0600) or the environment, which wins:
 //   PLOYDOK_SMOKE_URL      instance origin, e.g. http://192-168-1-235.sslip.io
-//   PLOYDOK_SMOKE_APP_ID   id of the app deployed from scripts/deploy-shuttle/smoke-app
 //   PLOYDOK_SMOKE_TOKEN    API token with apps:read and apps:deploy
+//   PLOYDOK_SMOKE_APP_ID   id of the app deployed from scripts/deploy-shuttle/smoke-app
+// The smoke app is a normal app that anyone can delete from the UI. With the
+// keys below (and apps:write on the token) the script finds it by name in the
+// organization and recreates it when it is gone, instead of failing on 404:
+//   PLOYDOK_SMOKE_ORG_ID            organization that owns the smoke app
+//   PLOYDOK_SMOKE_REPO              owner/repo holding the reference app
+//   PLOYDOK_SMOKE_INSTALLATION_ID   GitHub installation id that can read it
+//   PLOYDOK_SMOKE_BRANCH            default main
+//   PLOYDOK_SMOKE_ROOT_DIR          default repository root
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -38,11 +46,22 @@ export function buildOutcome(status: string): BuildOutcome {
   return "pending"
 }
 
+export interface SmokeProvision {
+  orgId: string
+  repo: string
+  installationId: string
+  branch: string
+  rootDir?: string
+}
+
 export interface SmokeConfig {
   origin: string
-  appId: string
   token: string
+  appId?: string
+  provision?: SmokeProvision
 }
+
+export const SMOKE_APP_NAME = "ploydok-smoke"
 
 /** KEY=VALUE lines; blank lines and # comments are ignored. */
 export function parseEnvFile(content: string): Record<string, string> {
@@ -71,14 +90,45 @@ export function readConfig(
   const origin = values.PLOYDOK_SMOKE_URL?.replace(/\/+$/, "")
   const appId = values.PLOYDOK_SMOKE_APP_ID
   const token = values.PLOYDOK_SMOKE_TOKEN
-  if (!origin || !appId || !token) return null
-  return { origin, appId, token }
+  if (!origin || !token) return null
+  const orgId = values.PLOYDOK_SMOKE_ORG_ID
+  const repo = values.PLOYDOK_SMOKE_REPO
+  const installationId = values.PLOYDOK_SMOKE_INSTALLATION_ID
+  const provision: SmokeProvision | undefined =
+    orgId && repo && installationId
+      ? {
+          orgId,
+          repo,
+          installationId,
+          branch: values.PLOYDOK_SMOKE_BRANCH || "main",
+          ...(values.PLOYDOK_SMOKE_ROOT_DIR
+            ? { rootDir: values.PLOYDOK_SMOKE_ROOT_DIR }
+            : {}),
+        }
+      : undefined
+  if (!appId && !provision) return null
+  return {
+    origin,
+    token,
+    ...(appId ? { appId } : {}),
+    ...(provision ? { provision } : {}),
+  }
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
 }
 
 async function api<T>(
   config: SmokeConfig,
-  method: "GET" | "POST",
-  path: string
+  method: "GET" | "POST" | "PATCH",
+  path: string,
+  body?: unknown
 ): Promise<T> {
   // A non-browser client satisfies the double-submit CSRF check itself.
   const csrf = crypto.randomUUID()
@@ -88,12 +138,68 @@ async function api<T>(
       authorization: `Bearer ${config.token}`,
       cookie: `csrf=${csrf}`,
       "x-csrf-token": csrf,
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
     },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   })
   if (!response.ok) {
-    throw new Error(`${method} ${path} -> HTTP ${response.status}`)
+    throw new HttpError(
+      response.status,
+      `${method} ${path} -> HTTP ${response.status}`
+    )
   }
   return (await response.json()) as T
+}
+
+async function createSmokeApp(
+  config: SmokeConfig,
+  provision: SmokeProvision
+): Promise<string> {
+  const { app } = await api<{ app: { id: string } }>(config, "POST", "/apps", {
+    name: SMOKE_APP_NAME,
+    organizationId: provision.orgId,
+    gitProvider: "github",
+    repoFullName: provision.repo,
+    branch: provision.branch,
+    installationId: provision.installationId,
+    ...(provision.rootDir ? { rootDir: provision.rootDir } : {}),
+    buildMethod: "dockerfile",
+    runtimePort: 8080,
+    initialSecrets: [
+      { key: "SMOKE_BUILD_TOKEN", value: "staging-smoke", phase: "build" },
+    ],
+  })
+  await api(config, "PATCH", `/apps/${app.id}`, { auto_deploy_enabled: false })
+  console.log(`[smoke] created ${SMOKE_APP_NAME} (${app.id})`)
+  return app.id
+}
+
+/** The configured app, or the app named ploydok-smoke in the organization, created when missing. */
+async function resolveSmokeApp(config: SmokeConfig): Promise<string> {
+  if (config.appId) {
+    try {
+      await api(config, "GET", `/apps/${config.appId}`)
+      return config.appId
+    } catch (error) {
+      if (
+        !(error instanceof HttpError && error.status === 404) ||
+        !config.provision
+      ) {
+        throw error
+      }
+      console.warn(
+        `[smoke] app ${config.appId} no longer exists, recreating it`
+      )
+    }
+  }
+  const provision = config.provision!
+  const { apps } = await api<{ apps: Array<{ id: string; name: string }> }>(
+    config,
+    "GET",
+    `/apps?organizationId=${encodeURIComponent(provision.orgId)}`
+  )
+  const existing = apps.find((candidate) => candidate.name === SMOKE_APP_NAME)
+  return existing ? existing.id : createSmokeApp(config, provision)
 }
 
 async function main(): Promise<number> {
@@ -105,9 +211,10 @@ async function main(): Promise<number> {
     return 0
   }
   const timeoutMs = Number(process.env.PLOYDOK_SMOKE_TIMEOUT_MS ?? 600_000)
+  const appId = await resolveSmokeApp(config)
   const requestedAt = Date.now() - 5_000
-  await api(config, "POST", `/apps/${config.appId}/deploy`)
-  console.log(`[smoke] deploy requested for app ${config.appId}`)
+  await api(config, "POST", `/apps/${appId}/deploy`)
+  console.log(`[smoke] deploy requested for app ${appId}`)
 
   const deadline = Date.now() + timeoutMs
   let build: SmokeBuild | undefined
@@ -115,7 +222,7 @@ async function main(): Promise<number> {
     const { builds } = await api<{ builds: SmokeBuild[] }>(
       config,
       "GET",
-      `/apps/${config.appId}/builds?limit=10`
+      `/apps/${appId}/builds?limit=10`
     )
     build = pickBuild(builds, requestedAt)
     const outcome = build ? buildOutcome(build.status) : "pending"
@@ -136,7 +243,7 @@ async function main(): Promise<number> {
   const { app } = await api<{ app: { publicUrl?: string } }>(
     config,
     "GET",
-    `/apps/${config.appId}`
+    `/apps/${appId}`
   )
   if (!app.publicUrl) {
     console.error("[smoke] FAILED: the smoke app has no public URL")

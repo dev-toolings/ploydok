@@ -56,6 +56,28 @@ describe("readConfig", () => {
       })
     ).toEqual({ origin: "http://staging.test", appId: "app1", token: "plk_x" })
   })
+
+  test("accepts provisioning keys instead of an app id", () => {
+    expect(
+      readConfig({
+        PLOYDOK_SMOKE_URL: "http://staging.test",
+        PLOYDOK_SMOKE_TOKEN: "plk_x",
+        PLOYDOK_SMOKE_ORG_ID: "org1",
+        PLOYDOK_SMOKE_REPO: "owner/smoke",
+        PLOYDOK_SMOKE_INSTALLATION_ID: "42",
+        PLOYDOK_SMOKE_ENV_FILE: "/nonexistent",
+      })
+    ).toEqual({
+      origin: "http://staging.test",
+      token: "plk_x",
+      provision: {
+        orgId: "org1",
+        repo: "owner/smoke",
+        installationId: "42",
+        branch: "main",
+      },
+    })
+  })
 })
 
 describe("smoke.env", () => {

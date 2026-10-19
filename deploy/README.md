@@ -106,14 +106,23 @@ One-time setup on the staging instance:
    `MakFly/ploydok-smoke-app` (root directory, branch `main`). Push any change
    of `scripts/deploy-shuttle/smoke-app/` to the mirror as well.
 2. Add the variable `SMOKE_BUILD_TOKEN` (any value) with the phase `build`.
-3. Create an API token with the `apps:read` and `apps:deploy` scopes.
+3. Create an API token with the `apps:read` and `apps:deploy` scopes
+   (`apps:write` as well for the self-provisioning keys below).
 4. On the operator machine, write `~/.config/ploydok/smoke.env` (mode 0600):
 
    ```bash
    PLOYDOK_SMOKE_URL=http://192-168-1-235.sslip.io
    PLOYDOK_SMOKE_APP_ID=<id of the smoke app>
    PLOYDOK_SMOKE_TOKEN=<API token>
+   # Optional: recreate the app when someone deletes it from the UI.
+   PLOYDOK_SMOKE_ORG_ID=<organization id>
+   PLOYDOK_SMOKE_REPO=MakFly/ploydok-smoke-app
+   PLOYDOK_SMOKE_INSTALLATION_ID=<GitHub installation id>
+   PLOYDOK_SMOKE_BRANCH=main
    ```
 
 Without this file the wrapper prints a warning and skips the smoke test.
-Environment variables with the same names override the file.
+Environment variables with the same names override the file. With the
+optional keys, the script looks the app up by its name `ploydok-smoke` in the
+organization and creates it (steps 1 and 2) when it is missing, so deleting
+the smoke app from the UI no longer fails the next deploy.
