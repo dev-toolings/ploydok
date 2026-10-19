@@ -23,6 +23,9 @@ cleanup() {
   if (($(du -sb "$PLOYDOK_SHUTTLE_SCAN_CACHE" | cut -f1) > scan_cache_max_bytes)); then
     rm -rf -- "$PLOYDOK_SHUTTLE_SCAN_CACHE/fanal"
   fi
+  # shuttle creates its builder with unless-stopped: a dockerd restart would
+  # bring it back outside any deploy.
+  sh "$root/scripts/dev-workloads.sh" buildx-pin
   printf '[ploydok] Scan evidence: %s\n' "$PLOYDOK_SHUTTLE_SCAN_REPORTS"
   df -B1 "$root"
   exit "$status"

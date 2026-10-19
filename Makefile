@@ -234,6 +234,7 @@ infra-up: secrets-init ## Demarre les services infra du projet
 
 infra-down: ## Arrete et supprime les containers et reseaux du projet
 	@sh scripts/dev-workloads.sh quiesce
+	@sh scripts/dev-workloads.sh buildx-pin
 	-docker buildx stop $(BUILDX_BUILDER)
 	-docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml down --timeout 10
 	-docker network rm ploydok-public 2>/dev/null
@@ -241,6 +242,7 @@ infra-down: ## Arrete et supprime les containers et reseaux du projet
 
 infra-stop: ## Arrete l'infra, le builder buildx et les workloads Swarm locaux
 	@sh scripts/dev-workloads.sh quiesce
+	@sh scripts/dev-workloads.sh buildx-pin
 	docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml stop --timeout 15
 	-docker buildx stop $(BUILDX_BUILDER)
 

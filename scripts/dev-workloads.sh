@@ -7,12 +7,15 @@
 # the desired replica count and scales those services to 0. `restore`
 # runs from `make dev`, before the API boots, so the boot reconciler
 # sees the app already live and does not start a second runtime.
-# `buildx-pin` forces the dev builder to restart "no" after bootstrap.
+# `buildx-pin` forces every local Ploydok builder to restart "no": the
+# dev builder after bootstrap, and the Deploy Shuttle builder, which is
+# created on demand by `shuttle` with unless-stopped as well.
 
 set -eu
 
 snapshot="${HOME}/.ploydok-dev/swarm-scale.list"
 builder="${BUILDX_BUILDER:-ploydok-dev}"
+shuttle_builder="${SHUTTLE_BUILDER:-shuttle-ploydok-existing}"
 
 is_workload() {
   case "$1" in
@@ -29,7 +32,9 @@ is_replicas() {
 }
 
 pin_buildx() {
-  docker update --restart=no "buildx_buildkit_${builder}0" >/dev/null 2>&1 || true
+  for name in "$builder" "$shuttle_builder"; do
+    docker update --restart=no "buildx_buildkit_${name}0" >/dev/null 2>&1 || true
+  done
 }
 
 quiesce() {
