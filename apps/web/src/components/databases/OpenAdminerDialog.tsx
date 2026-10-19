@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "../i18n/dialog"
 import { apiBaseUrl } from "../../lib/api/base"
+import { copyToClipboard } from "../../lib/clipboard"
 import {
   useCreateAdminerSession,
   useRevealDatabaseCredentials,
@@ -72,35 +73,6 @@ function extractPassword(connectionString: string): string {
     throw new Error(i18n.t("databases:toasts.passwordMissing"))
   }
   return password
-}
-
-async function copyTextToClipboard(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value)
-      return
-    } catch {
-      // Fall back to the legacy path below for plain HTTP/IP origins.
-    }
-  }
-
-  const textarea = document.createElement("textarea")
-  textarea.value = value
-  textarea.setAttribute("readonly", "")
-  textarea.style.position = "fixed"
-  textarea.style.left = "-9999px"
-  textarea.style.top = "0"
-
-  document.body.appendChild(textarea)
-  textarea.focus()
-  textarea.select()
-
-  try {
-    const copied = document.execCommand("copy")
-    if (!copied) throw new Error(i18n.t("databases:toasts.copyFailed"))
-  } finally {
-    textarea.remove()
-  }
 }
 
 export function OpenAdminerDialog({
@@ -190,7 +162,7 @@ export function OpenAdminerDialog({
 
   function handleCopyPassword() {
     if (!revealedPassword) return
-    void copyTextToClipboard(revealedPassword)
+    void copyToClipboard(revealedPassword)
       .then(() => toast.success(t("toasts.passwordCopied")))
       .catch(() => {
         toast.error(t("toasts.clipboardUnavailable"), {

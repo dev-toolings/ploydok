@@ -325,7 +325,6 @@
     "schemeMissing": "Le schéma de la chaîne de connexion est manquant",
     "credentialsMissing": "Les identifiants de la chaîne de connexion sont manquants",
     "passwordMissing": "Le mot de passe de la chaîne de connexion est manquant",
-    "copyFailed": "La copie a échoué",
     "passwordRevealed": "Mot de passe de la base révélé",
     "passwordExtractFailed": "Impossible d'extraire le mot de passe de la chaîne de connexion",
     "passwordCopied": "Mot de passe de la base copié",

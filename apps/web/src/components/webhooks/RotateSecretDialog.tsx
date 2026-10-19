@@ -38,6 +38,7 @@ import {
   DialogTitle,
 } from "../i18n/dialog"
 import { useTotpStatus } from "../../lib/totp"
+import { copyToClipboard } from "../../lib/clipboard"
 import { rotateWebhookSecret } from "../../lib/webhooks"
 import type { ApiError } from "../../lib/api"
 
@@ -112,7 +113,7 @@ export function RotateSecretDialog({
 
   const handleCopy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(newSecret)
+      await copyToClipboard(newSecret)
       setCopied(true)
       toast.success("Secret copied to clipboard")
       setTimeout(() => setCopied(false), 2000)

@@ -22,6 +22,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../i18n/sheet"
+import { copyToClipboard } from "../../lib/clipboard"
 import { BuildLogViewer } from "./BuildLogViewer"
 import type { Build, BuildStatus } from "@ploydok/shared"
 
@@ -122,7 +123,7 @@ function CommitChip({
   const [copied, setCopied] = React.useState(false)
   const handleCopy = React.useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(sha)
+      await copyToClipboard(sha)
       setCopied(true)
       setTimeout(() => setCopied(false), 1200)
     } catch {

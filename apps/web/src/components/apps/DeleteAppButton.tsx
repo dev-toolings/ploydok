@@ -18,6 +18,7 @@ import { useDeleteApp } from "../../lib/apps-mutations"
 import { useMe } from "../../lib/auth"
 import { useCurrentOrganizationSlug } from "../../lib/organizations"
 import { usePendingAction } from "../../lib/hooks/use-pending-action"
+import { copyToClipboard } from "../../lib/clipboard"
 import type { AppDetail } from "../../lib/apps"
 
 interface DeleteAppButtonProps {
@@ -73,7 +74,7 @@ export function DeleteAppButton({
     setCopying(true)
     setActionError(null)
     try {
-      await navigator.clipboard.writeText(app.name)
+      await copyToClipboard(app.name)
       setCopied(true)
       confirmInput.current?.focus()
     } catch {

@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next"
 import { SetupAdminFormSchema, fieldErrors } from "@ploydok/shared"
 import { createPageHead } from "../../lib/page-metadata"
 import i18n from "../../lib/i18n"
+import { copyToClipboard } from "../../lib/clipboard"
 import { apiFetch } from "../../lib/api"
 import { ApiError } from "../../lib/api/errors"
 import { usePendingAction } from "../../lib/hooks/use-pending-action"
@@ -284,7 +285,7 @@ function SetupPage(): React.JSX.Element {
   const handleCopyTotpSecret = async (): Promise<void> => {
     if (!totpData) return
     try {
-      await navigator.clipboard.writeText(totpData.secret)
+      await copyToClipboard(totpData.secret)
       setTotpCopied(true)
       setTimeout(() => setTotpCopied(false), 2000)
     } catch {
@@ -623,7 +624,7 @@ function downloadBackupCodes(codes: Array<string>, email: string): void {
 
 async function copyBackupCodes(codes: Array<string>): Promise<void> {
   try {
-    await navigator.clipboard.writeText(codes.join("\n"))
+    await copyToClipboard(codes.join("\n"))
     toast.success(i18n.t("auth:setup.codes.copied"))
   } catch {
     toast.error(i18n.t("auth:setup.codes.clipboardUnavailable"))

@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "../i18n/dialog"
 import { useRevealDatabase } from "../../lib/databases"
+import { copyToClipboard } from "../../lib/clipboard"
 
 const AUTO_HIDE_MS = 30_000
 
@@ -85,8 +86,7 @@ export function RevealConnectionDialog({
 
   function handleCopy() {
     if (!connString) return
-    navigator.clipboard
-      .writeText(connString)
+    copyToClipboard(connString)
       .then(() => toast.success(t("reveal.copied")))
   }
 
