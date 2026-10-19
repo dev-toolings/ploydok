@@ -14,9 +14,13 @@ import {
 const gateRedis = { eval: mock(async () => 1) }
 function withAppDeployLease<T>(
   db: Db, appId: string, buildId: string, task: () => Promise<T>,
-  opts: Parameters<typeof realWithAppDeployLease>[4] = {}
+  opts: Partial<Parameters<typeof realWithAppDeployLease>[4]> = {}
 ) {
-  return realWithAppDeployLease(db, appId, buildId, task, { gateRedis, ...opts })
+  return realWithAppDeployLease(db, appId, buildId, task, {
+    gateRedis,
+    purpose: "deploy",
+    ...opts,
+  })
 }
 
 function fakeDb(results: unknown[][]) {
@@ -43,7 +47,7 @@ describe("durable app deploy lease", () => {
       [],
     ])
     await expect(
-      withAppDeployLease(db, "app-1", "build-1", async () => "ok", {
+      withAppDeployLease(db, "app-1", "build-1", async () => "ok", { purpose: "deploy",
         token: "token-1",
       })
     ).resolves.toBe("ok")
@@ -70,7 +74,7 @@ describe("durable app deploy lease", () => {
         async () => {
           await fenceDeploySideEffect()
         },
-        { token: "token-1" }
+        { purpose: "deploy", token: "token-1" }
       )
     ).rejects.toBeInstanceOf(DeployCancelledError)
   })
@@ -90,7 +94,7 @@ describe("durable app deploy lease", () => {
       async () => {
         await expect(runOwnedDeployReconciliation(cleanup)).resolves.toBe(false)
       },
-      { token: "stale-token" }
+      { purpose: "deploy", token: "stale-token" }
     )
     expect(cleanup).not.toHaveBeenCalled()
   })
@@ -110,7 +114,7 @@ describe("durable app deploy lease", () => {
       async () => {
         await expect(runOwnedDeployReconciliation(cleanup)).resolves.toBe(true)
       },
-      { token: "cancel-token" }
+      { purpose: "deploy", token: "cancel-token" }
     )
     expect(cleanup).toHaveBeenCalledTimes(1)
   })

@@ -42,9 +42,8 @@ import {
   type RuntimeContainerColor,
 } from "../services/runtime-containers.js"
 import {
-  DeployLeaseLostError,
   fenceDeploySideEffect,
-  withAppDeployLease,
+  withRoutingDeployLease,
 } from "../worker/app-deploy-lock.js"
 export { applyCdnHandlers, type CdnAppConfig } from "./cdn.js"
 
@@ -402,17 +401,12 @@ async function withReconcileDeployLease<T>(opts: {
     )
     return null
   }
-  try {
-    return await withAppDeployLease(
-      opts.db,
-      opts.app.id,
-      opts.app.current_build_id,
-      opts.task
-    )
-  } catch (error) {
-    if (error instanceof DeployLeaseLostError) return null
-    throw error
-  }
+  return withRoutingDeployLease(
+    opts.db,
+    opts.app.id,
+    opts.app.current_build_id,
+    opts.task
+  )
 }
 
 async function reconcileSnapshotIsCurrent(

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { DelayedError } from "bullmq"
 import type { Db } from "@ploydok/db"
-import { DeployDeferredError, withAppDeployLease } from "./app-deploy-lock"
+import {
+  DeployDeferredError,
+  withAppDeployLease,
+  type DeployLeaseOptions,
+} from "./app-deploy-lock"
 
 /** Keep the same live job, independently of its configured failure attempts. */
 export async function runQueuedDeployWithLease(
@@ -11,10 +15,13 @@ export async function runQueuedDeployWithLease(
   task: () => Promise<void>,
   job: { moveToDelayed(timestamp: number, token?: string): Promise<void> },
   token: string | undefined,
-  leaseOptions: Parameters<typeof withAppDeployLease>[4] = {}
+  leaseOptions: Omit<DeployLeaseOptions, "purpose"> = {}
 ): Promise<void> {
   try {
-    await withAppDeployLease(db, appId, buildId, task, leaseOptions)
+    await withAppDeployLease(db, appId, buildId, task, {
+      ...leaseOptions,
+      purpose: "deploy",
+    })
   } catch (error) {
     if (!(error instanceof DeployDeferredError)) throw error
     await job.moveToDelayed(Date.now() + 5_000, token)
