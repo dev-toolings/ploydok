@@ -199,6 +199,38 @@ pub async fn reconcile(
     Ok(true)
 }
 
+/// Treat unknown endpoints and service references as live consumers. Single-node
+/// Swarm is enforced elsewhere, so inspect covers all workload endpoints.
+pub fn has_workloads(network: &Network, caddy_id: &str, services: &[Service]) -> bool {
+    let name = network.name.as_deref().unwrap_or_default();
+    let lb_name = format!("{name}-endpoint");
+    network.containers.as_ref().is_some_and(|endpoints| {
+        endpoints.iter().any(|(id, endpoint)| {
+            id != caddy_id && !(id.starts_with("lb-") && endpoint.name.as_deref() == Some(&lb_name))
+        })
+    }) || services.iter().any(|service| {
+        if service.spec.as_ref().and_then(|spec| spec.name.as_deref()) == Some("ploydok_caddy") {
+            return false;
+        }
+        let has_vip = service
+            .endpoint
+            .as_ref()
+            .and_then(|endpoint| endpoint.virtual_ips.as_ref())
+            .is_some_and(|vips| vips.iter().any(|vip| vip.network_id == network.id));
+        has_vip
+            || service.spec.as_ref().is_some_and(|spec| {
+                spec.task_template
+                    .as_ref()
+                    .and_then(|task| task.networks.as_ref())
+                    .is_some_and(|networks| {
+                        networks
+                            .iter()
+                            .any(|n| n.target == network.id || n.target.as_deref() == Some(name))
+                    })
+            })
+    })
+}
+
 /// Read-only, uncached inspection of every project overlay joined by Caddy.
 /// No repair or lifecycle operation is permitted on this readiness path.
 pub async fn status(
@@ -206,7 +238,7 @@ pub async fn status(
 ) -> Result<ploydok_proto::agent::IngressStatusResponse, Status> {
     use bollard::container::ListContainersOptions;
     use bollard::network::ListNetworksOptions;
-    use ploydok_proto::agent::{IngressNetworkIssue, IngressStatusResponse};
+    use ploydok_proto::agent::{IngressNetworkIssue, IngressProjectOverlay, IngressStatusResponse};
     use std::collections::HashMap;
     let containers = docker
         .list_containers(Some(ListContainersOptions::<String> {
@@ -241,6 +273,7 @@ pub async fn status(
         Vec::new()
     };
     let mut issues = Vec::new();
+    let mut project_overlays = Vec::new();
     for network in &networks {
         if network.driver.as_deref() != Some("overlay")
             || !network
@@ -255,6 +288,10 @@ pub async fn status(
             .as_deref()
             .ok_or_else(|| Status::failed_precondition("ingress_network_name_missing"))?;
         let actual = inspect_network(docker, name).await?;
+        project_overlays.push(IngressProjectOverlay {
+            name: name.into(),
+            has_workloads: has_workloads(&actual, id, &services),
+        });
         if let Some(AttachmentState::AddressCollision {
             network,
             address,
@@ -291,5 +328,7 @@ pub async fn status(
     Ok(IngressStatusResponse {
         container_id: id.into(),
         issues,
+        project_overlays,
+        overlay_inventory_complete: true,
     })
 }

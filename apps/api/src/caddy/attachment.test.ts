@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { databases } from "@ploydok/db"
 import { afterEach, describe, expect, it } from "bun:test"
 import {
   ensureCaddyOnProjectNetwork,
@@ -250,3 +251,116 @@ it.each([
     expect(picked?.status).toBe(expectedStatus)
   }
 )
+
+describe("unused project overlay reconciliation", () => {
+  afterEach(() => resetCaddyIdCache())
+
+  function fixture(
+    hasWorkloads = false,
+    projectRows: unknown[] = [],
+    consumerRows: unknown[] = []
+  ) {
+    const events: string[] = []
+    const name = "ploydok-swarm-proj-deleted"
+    const agent = {
+      ingressStatus: async () => ({
+        overlayInventoryComplete: true,
+        projectOverlays: [{ name, hasWorkloads }],
+      }),
+      listContainers: async () => ({
+        containers: [{ id: "caddy", name: "ploydok-caddy" }],
+      }),
+      networkDisconnect: async () => {
+        events.push("detach")
+      },
+      networkRemove: async () => {
+        events.push("remove")
+      },
+    }
+    const db = {
+      select: () => ({
+        from: (table: unknown) => ({
+          then: (resolve: any) => Promise.resolve(projectRows).then(resolve),
+          where: () => ({
+            limit: async () => (table === databases ? consumerRows : []),
+          }),
+        }),
+      }),
+    }
+    return { agent, db, events }
+  }
+
+  it("detaches Caddy and removes an orphan overlay without workloads", async () => {
+    const { reconcileUnusedProjectOverlays } = await import("./attachment")
+    const { agent, db, events } = fixture()
+    expect(
+      await reconcileUnusedProjectOverlays(agent as any, db as any)
+    ).toEqual({ removed: 1, failed: 0 })
+    expect(events).toEqual(["detach", "remove"])
+  })
+
+  it("keeps orphan overlays with workload endpoints without detaching Caddy", async () => {
+    const { reconcileUnusedProjectOverlays } = await import("./attachment")
+    const { agent, db, events } = fixture(true)
+    expect(
+      await reconcileUnusedProjectOverlays(agent as any, db as any)
+    ).toEqual({ removed: 0, failed: 0 })
+    expect(events).toEqual([])
+  })
+
+  it("keeps overlays with active database consumers even without runtime endpoints", async () => {
+    const { reconcileUnusedProjectOverlays } = await import("./attachment")
+    const { agent, db, events } = fixture(
+      false,
+      [{ id: "deleted", swarm_network_name: null }],
+      [{ id: "consumer" }]
+    )
+    expect(
+      await reconcileUnusedProjectOverlays(agent as any, db as any)
+    ).toEqual({ removed: 0, failed: 0 })
+    expect(events).toEqual([])
+  })
+
+  it("cleans an existing project with no active consumers, clears names and converges idempotently", async () => {
+    const { reconcileUnusedProjectOverlays } = await import("./attachment")
+    const { agent, db, events } = fixture(false, [
+      { id: "deleted", swarm_network_name: null },
+    ])
+    const updates: unknown[] = []
+    const writableDb = {
+      ...db,
+      update: () => ({
+        set: (patch: unknown) => ({
+          where: async () => {
+            updates.push(patch)
+          },
+        }),
+      }),
+    }
+    expect(
+      await reconcileUnusedProjectOverlays(agent as any, writableDb as any)
+    ).toEqual({ removed: 1, failed: 0 })
+    expect(updates).toEqual([{ swarm_network_name: null }])
+    agent.ingressStatus = async () => ({
+      overlayInventoryComplete: true,
+      projectOverlays: [],
+    })
+    expect(
+      await reconcileUnusedProjectOverlays(agent as any, writableDb as any)
+    ).toEqual({ removed: 0, failed: 0 })
+    expect(events).toEqual(["detach", "remove"])
+  })
+
+  it("fails closed for agents without overlay inventory support", async () => {
+    const { reconcileUnusedProjectOverlays } = await import("./attachment")
+    const { agent, db, events } = fixture()
+    agent.ingressStatus = async () => ({
+      overlayInventoryComplete: false,
+      projectOverlays: [],
+    })
+    await expect(
+      reconcileUnusedProjectOverlays(agent as any, db as any)
+    ).rejects.toThrow("inventory unavailable")
+    expect(events).toEqual([])
+  })
+})

@@ -13,6 +13,8 @@ import {
   sso_configs,
 } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
+import { projectHasRemainingNetworkConsumers, removeProjectNetworks } from "../caddy/attachment.js"
+import { getSharedAgent } from "../debug/singletons.js"
 import { setOrgSubscription } from "@ploydok/db/queries"
 
 /**
@@ -239,7 +241,7 @@ export async function listOrganizationsForUser(
     if (rows.length > 0) return rows.map((r) => toSummary(r.projects))
   } catch {
     // memberships table missing (migration not yet applied) or transient DB
-    // issue — fall through to legacy owner_id path below.
+    // issue: fall through to legacy owner_id path below.
   }
 
   // Legacy fallback : shows the user their projects via owner_id when the
@@ -460,7 +462,7 @@ export async function getOrganizationBySlugForUser(
 
     if (rows[0]) return toSummary(rows[0].projects)
   } catch {
-    // memberships table missing — fall through to owner_id lookup below.
+    // memberships table missing: fall through to owner_id lookup below.
   }
 
   // Backfill safety : if the user is the owner_id of this slug but has no
@@ -492,15 +494,15 @@ export async function getDefaultOrganizationForUser(
 
 export type DeleteOrganizationResult =
   | { ok: true }
-  | { ok: false; reason: "not_found" | "forbidden" }
+  | { ok: false; reason: "not_found" | "forbidden" | "not_empty" }
 
 /**
  * Hard-delete a workspace (project) the user owns.
  *
  * Authorization: the user must either be the project's `owner_id` or hold an
- * `owner` membership. Cascade deletes are wired in the schema so apps,
- * databases, env vars, etc. go with it. Caller is expected to redirect to
- * another workspace afterwards (or `/dashboard`, which lazily provisions a
+ * `owner` membership. Refuse deletion while runtime resources exist: schema
+ * cascades cannot remove Docker resources. Empty workspaces tear down networks.
+ * Caller is expected to redirect to another workspace afterwards (or `/dashboard`, which lazily provisions a
  * default).
  */
 export async function deleteOrganizationForUser(
@@ -532,11 +534,21 @@ export async function deleteOrganizationForUser(
         .limit(1)
       isOwnerMember = member[0]?.role === "owner"
     } catch {
-      // memberships table missing — owner_id check above already failed.
+      // memberships table missing: owner_id check above already failed.
     }
     if (!isOwnerMember) return { ok: false, reason: "forbidden" }
   }
 
-  await db.delete(projects).where(eq(projects.id, project.id))
-  return { ok: true }
+  return db.transaction(async (tx): Promise<DeleteOrganizationResult> => {
+    // A project row lock also blocks new resource FK inserts until deletion commits.
+    const [locked] = await tx.select({ id: projects.id }).from(projects)
+      .where(eq(projects.id, project.id)).for("update")
+    if (!locked) return { ok: false, reason: "not_found" }
+    if (await projectHasRemainingNetworkConsumers(tx, project.id)) {
+      return { ok: false, reason: "not_empty" }
+    }
+    await removeProjectNetworks(getSharedAgent(), tx, project.id)
+    await tx.delete(projects).where(eq(projects.id, project.id))
+    return { ok: true }
+  })
 }

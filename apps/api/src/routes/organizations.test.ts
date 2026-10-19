@@ -10,6 +10,8 @@ const fakeUser = {
   session_id: "session-1",
 }
 
+let deleteImpl: () => Promise<Record<string, unknown>> = async () => ({ ok: true })
+
 let createCalls = 0
 let createOrganizationImpl: (
   db: Db,
@@ -43,7 +45,7 @@ mock.module("../services/organizations", () => ({
     created_at: new Date().toISOString(),
   }),
   getOrganizationBySlugForUser: async () => null,
-  deleteOrganizationForUser: async () => ({ ok: true }),
+  deleteOrganizationForUser: async () => deleteImpl(),
   renameOrganizationForUser: async (
     _db: Db,
     slug: string,
@@ -283,4 +285,15 @@ describe("PATCH /organizations/:slug", () => {
 
     expect(res.status).toBe(404)
   })
+})
+
+
+it("returns 409 when deleting an organization that still has runtime resources", async () => {
+  membershipRole = "owner"
+  deleteImpl = async () => ({ ok: false, reason: "not_empty" })
+  const { createOrganizationsRouter } = await import("./organizations")
+  const app = buildApp(createOrganizationsRouter({} as Db))
+  const response = await app.request("/organizations/test-user", { method: "DELETE" })
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ error: { code: "CONFLICT" } })
 })

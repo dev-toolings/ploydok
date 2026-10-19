@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 import type { Db } from "@ploydok/db"
 import {
+  deleteOrganizationForUser,
   createOrganizationForUser,
   ensureDefaultOrganizationForUser,
   ensureFreeOrgSubscription,
 } from "./organizations"
+
+import { projects } from "@ploydok/db"
+import { getTableName } from "drizzle-orm"
+import * as singletons from "../debug/singletons"
+import { resetCaddyIdCache } from "../caddy/attachment"
 
 type InsertCall = { table: unknown; values: Record<string, unknown> }
 
@@ -165,4 +171,89 @@ describe("ensureDefaultOrganizationForUser", () => {
     expect(matching[0]?.values.plan_slug).toBe("free")
     expect(matching[0]?.values.status).toBe("active")
   })
+})
+
+describe("deleteOrganizationForUser runtime cleanup", () => {
+  function deletionDb(resources: string[] = []) {
+    const project = {
+      id: "org",
+      owner_id: "owner",
+      network_name: "bridge",
+      swarm_network_name: "ploydok-swarm-proj-org",
+    }
+    const events: string[] = []
+    const db: any = {
+      select: () => ({
+        from: (table: any) => {
+          const rows =
+            table === projects
+              ? [project]
+              : resources.includes(getTableName(table))
+                ? [{ id: "resource" }]
+                : []
+          return {
+            where: () => ({ limit: async () => rows, for: async () => rows }),
+          }
+        },
+      }),
+      update: () => ({ set: () => ({ where: async () => {} }) }),
+      delete: () => ({
+        where: async () => {
+          events.push("delete-project")
+        },
+      }),
+      transaction: async (fn: any) => fn(db),
+    }
+    return { db, events }
+  }
+
+  it("removes the overlay and bridge before deleting an empty organization", async () => {
+    resetCaddyIdCache()
+    const { db, events } = deletionDb()
+    const agent = spyOn(singletons, "getSharedAgent").mockReturnValue({
+      ingressStatus: async () => ({
+        overlayInventoryComplete: true,
+        projectOverlays: [
+          { name: "ploydok-swarm-proj-org", hasWorkloads: false },
+        ],
+      }),
+      listContainers: async () => ({
+        containers: [{ id: "caddy", name: "ploydok-caddy" }],
+      }),
+      inspectContainerHealth: async () => ({ running: true }),
+      networkDisconnect: async ({ networkId }: any) => {
+        events.push(`detach:${networkId}`)
+      },
+      networkRemove: async ({ networkId }: any) => {
+        events.push(`remove:${networkId}`)
+      },
+    } as any)
+    try {
+      expect(await deleteOrganizationForUser(db, "owner", "org")).toEqual({
+        ok: true,
+      })
+      expect(events).toEqual([
+        "detach:ploydok-swarm-proj-org",
+        "remove:ploydok-swarm-proj-org",
+        "detach:bridge",
+        "remove:bridge",
+        "delete-project",
+      ])
+    } finally {
+      agent.mockRestore()
+      resetCaddyIdCache()
+    }
+  })
+
+  it.each(["apps", "databases", "services"])(
+    "refuses organization deletion while %s exist",
+    async (table) => {
+      const { db, events } = deletionDb([table])
+      expect(await deleteOrganizationForUser(db, "owner", "org")).toEqual({
+        ok: false,
+        reason: "not_empty",
+      })
+      expect(events).toEqual([])
+    }
+  )
 })

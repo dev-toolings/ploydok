@@ -138,6 +138,12 @@ export function createOrganizationsRouter(db: Db): Hono {
       c.req.param("slug")!
     )
     if (!result.ok) {
+      if (result.reason === "not_empty") {
+        return c.json(
+          { error: { code: "CONFLICT", message: "Delete all apps, services and databases before deleting the organization" } },
+          409
+        )
+      }
       if (result.reason === "not_found") {
         return c.json(
           { error: { code: "NOT_FOUND", message: "Organization not found" } },

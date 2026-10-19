@@ -7,17 +7,13 @@
 // upstreams by container id or Swarm DNS while remaining the only ingress.
 // Projects never share a data-plane network.
 
-import { and, eq, inArray, isNotNull } from "drizzle-orm"
-import { apps as appsTable, projects as projectsTable, services as servicesTable } from "@ploydok/db"
+import { and, eq, inArray, isNotNull, ne } from "drizzle-orm"
+import { apps as appsTable, projects as projectsTable, services as servicesTable, databases } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { Agent } from "../agent"
 import { isAlreadyExists, isNotFound, toAgentError } from "../agent/index.js"
 import { childLogger } from "../logger"
-import { projectNetworkName } from "../services/projects.js"
-
-function overlayNameForProject(projectId: string): string {
-  return `ploydok-swarm-proj-${projectId.toLowerCase()}`
-}
+import { projectNetworkName, projectSwarmNetworkName } from "../services/projects.js"
 
 const log = childLogger("caddy-attach")
 
@@ -106,7 +102,7 @@ export function networksToAttachForRunningApps(
     if (!["running", "restarting"].includes(row.status ?? "")) continue
     if (row.runtime_mode === "swarm") {
       networks.add(
-        row.swarm_network_name ?? overlayNameForProject(row.project_id)
+        row.swarm_network_name ?? projectSwarmNetworkName(row.project_id)
       )
       continue
     }
@@ -209,7 +205,7 @@ export async function detachCaddyFromProjectNetwork(
   try {
     caddyId = await resolveCaddyContainerId(agent)
   } catch {
-    // Caddy itself is gone — nothing to do.
+    // Caddy itself is gone: nothing to do.
     return
   }
   try {
@@ -221,7 +217,7 @@ export async function detachCaddyFromProjectNetwork(
     log.info({ projectNetwork, caddyId }, "caddy detached from project network")
   } catch (err) {
     if (isNotFound(toAgentError(err))) {
-      log.debug({ projectNetwork }, "caddy not on project network — nothing to detach")
+      log.debug({ projectNetwork }, "caddy not on project network: nothing to detach")
       return
     }
     throw err
@@ -262,7 +258,7 @@ export async function reconcileCaddyAttachments(
     ...publicServices.map(row =>
       row.runtime_mode === "docker"
         ? row.network_name ?? projectNetworkName(row.project_id)
-        : row.swarm_network_name ?? overlayNameForProject(row.project_id)
+        : row.swarm_network_name ?? projectSwarmNetworkName(row.project_id)
     ),
   ])]
   const result = { attached: 0, skipped: 0, failed: 0 }
@@ -284,5 +280,189 @@ export async function reconcileCaddyAttachments(
     }
   }
   log.info(result, "caddy attachments reconciled")
+  return result
+}
+
+export async function projectHasRemainingNetworkConsumers(
+  db: Pick<Db, "select">,
+  projectId: string,
+  deletingAppId?: string,
+  activeOnly = false
+): Promise<boolean> {
+  const siblingApps = await db
+    .select({ id: appsTable.id })
+    .from(appsTable)
+    .where(
+      and(
+        eq(appsTable.project_id, projectId),
+        deletingAppId ? ne(appsTable.id, deletingAppId) : undefined,
+        activeOnly
+          ? inArray(appsTable.status, [
+              "pending",
+              "building",
+              "running",
+              "serving",
+              "restarting",
+              "deleting",
+            ])
+          : undefined
+      )
+    )
+    .limit(1)
+
+  if (siblingApps.length > 0) {
+    return true
+  }
+
+  const projectDatabases = await db
+    .select({ id: databases.id })
+    .from(databases)
+    .where(
+      and(
+        eq(databases.project_id, projectId),
+        activeOnly
+          ? inArray(databases.status, [
+              "creating",
+              "starting",
+              "running",
+              "degraded",
+            ])
+          : undefined
+      )
+    )
+    .limit(1)
+
+  if (projectDatabases.length > 0) {
+    return true
+  }
+
+  const projectServices = await db
+    .select({ id: servicesTable.id })
+    .from(servicesTable)
+    .where(
+      and(
+        eq(servicesTable.project_id, projectId),
+        activeOnly
+          ? inArray(servicesTable.status, ["pending", "running", "deleting"])
+          : undefined
+      )
+    )
+    .limit(1)
+
+  return projectServices.length > 0
+}
+
+/** Remove only idle overlays. Docker remains the final guard against endpoint races. */
+async function removeOverlay(agent: Agent, name: string): Promise<boolean> {
+  // Fetch immediately before detaching: a deployment may have started since the
+  // database consumer check. Old agents omit the inventory: fail closed.
+  const inventory = await agent.ingressStatus()
+  if (!inventory.overlayInventoryComplete)
+    throw new Error("Agent overlay inventory unavailable")
+  const overlay = inventory.projectOverlays.find((row) => row.name === name)
+  if (overlay?.hasWorkloads) return false
+  if (!overlay) return true
+  await detachCaddyFromProjectNetwork(agent, name)
+  try {
+    await agent.networkRemove({ networkId: name })
+  } catch (err) {
+    if (!isNotFound(toAgentError(err))) throw err
+  }
+  log.info({ projectNetwork: name }, "unused project overlay removed")
+  return true
+}
+
+async function clearOverlayNames(
+  db: Pick<Db, "update">,
+  projectId: string
+): Promise<void> {
+  await db
+    .update(projectsTable)
+    .set({ swarm_network_name: null })
+    .where(eq(projectsTable.id, projectId))
+}
+
+/** Last-consumer and organization deletion share the same teardown contract. */
+export async function removeProjectNetworks(
+  agent: Agent,
+  db: Pick<Db, "select" | "update">,
+  projectId: string
+): Promise<void> {
+  const [project] = await db
+    .select({
+      network_name: projectsTable.network_name,
+      swarm_network_name: projectsTable.swarm_network_name,
+    })
+    .from(projectsTable)
+    .where(eq(projectsTable.id, projectId))
+    .limit(1)
+  if (!project) return
+  const overlay =
+    project.swarm_network_name ?? projectSwarmNetworkName(projectId)
+  if (!(await removeOverlay(agent, overlay)))
+    throw new Error(`Project overlay still has workloads: ${overlay}`)
+  await clearOverlayNames(db, projectId)
+  if (project.network_name) {
+    await detachCaddyFromProjectNetwork(agent, project.network_name)
+    try {
+      await agent.networkRemove({ networkId: project.network_name })
+    } catch (err) {
+      if (!isNotFound(toAgentError(err))) throw err
+    }
+    await db
+      .update(projectsTable)
+      .set({ network_name: null })
+      .where(eq(projectsTable.id, projectId))
+  }
+}
+
+/** Periodic repair includes overlays left behind by already-deleted projects. */
+export async function reconcileUnusedProjectOverlays(
+  agent: Agent,
+  db: Db
+): Promise<{ removed: number; failed: number }> {
+  const result = { removed: 0, failed: 0 }
+  const inventory = await agent.ingressStatus()
+  // Compatibility with older agents must never turn missing inventory into permission to delete.
+  if (!inventory.overlayInventoryComplete)
+    throw new Error("Agent overlay inventory unavailable")
+  const projects = await db
+    .select({
+      id: projectsTable.id,
+      swarm_network_name: projectsTable.swarm_network_name,
+    })
+    .from(projectsTable)
+  for (const overlay of inventory.projectOverlays) {
+    if (!overlay.name.startsWith("ploydok-swarm-proj-") || overlay.hasWorkloads)
+      continue
+    try {
+      const project = projects.find(
+        (row) =>
+          row.swarm_network_name === overlay.name ||
+          projectSwarmNetworkName(row.id) === overlay.name
+      )
+      // Retain networks during deploy/start transitions. Actual workload
+      // endpoints protect stopped or failed resources still attached to Docker.
+      if (
+        project &&
+        (await projectHasRemainingNetworkConsumers(
+          db,
+          project.id,
+          undefined,
+          true
+        ))
+      )
+        continue
+      if (!(await removeOverlay(agent, overlay.name))) continue
+      if (project) await clearOverlayNames(db, project.id)
+      result.removed++
+    } catch (err) {
+      result.failed++
+      log.warn(
+        { err, projectNetwork: overlay.name },
+        "unused project overlay cleanup failed"
+      )
+    }
+  }
   return result
 }

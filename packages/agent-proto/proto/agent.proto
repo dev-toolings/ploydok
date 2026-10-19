@@ -23,7 +23,7 @@ message VolumeMount {
 message PortMapping {
   uint32 container_port = 1;
   uint32 host_port = 2;
-  // "tcp" or "udp" — defaults to "tcp" if empty
+  // "tcp" or "udp": defaults to "tcp" if empty
   string proto = 3;
   // Literal host IP to bind. Empty preserves legacy behavior for callers
   // that predate explicit host binding support.
@@ -62,7 +62,7 @@ message HealthcheckConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 message ContainerCreateRequest {
-  // Container name — MUST match the ploydok-* allowlist enforced by the agent.
+  // Container name: MUST match the ploydok-* allowlist enforced by the agent.
   string name = 1;
 
   // Docker image reference (e.g. "nginx:1.25-alpine").
@@ -235,7 +235,7 @@ message BuildProgress {
 // ─────────────────────────────────────────────────────────────────────────────
 
 message NetworkCreateRequest {
-  // Network name — must match ploydok-* prefix.
+  // Network name: must match ploydok-* prefix.
   string name = 1;
   // Docker network driver (e.g. "bridge"). Defaults to "bridge" when empty.
   string driver = 2;
@@ -292,11 +292,11 @@ message ContainerSnapshot {
   uint64 mem_bytes = 7;
   uint64 mem_limit_bytes = 8;
   uint32 restart_count = 9;
-  // Label "ploydok.kind" — "app" | "infra" | "agent" | "" (unknown)
+  // Label "ploydok.kind": "app" | "infra" | "agent" | "" (unknown)
   string kind = 10;
   // Label "ploydok.app_id" if kind=="app", empty otherwise
   string app_id = 11;
-  // Label "ploydok.color" if kind=="app" — "blue"|"green"|""
+  // Label "ploydok.color" if kind=="app": "blue"|"green"|""
   string color = 12;
   // Last active ping result (filled only after PingContainer called); 0 if never
   uint64 last_ping_ms = 13;
@@ -318,7 +318,7 @@ message ListContainersResponse {
 
 message PingContainerRequest {
   string container_id = 1;
-  // e.g. "/health" — mandatory, max 256 chars
+  // e.g. "/health": mandatory, max 256 chars
   string path = 2;
   // Target port on the container (must match one of its exposed ports)
   uint32 port = 3;
@@ -378,9 +378,9 @@ message ExecFrame {
   }
 }
 
-// First frame sent by the client — initialises the exec session.
+// First frame sent by the client: initialises the exec session.
 message ExecStart {
-  // Container name or id — must match the ploydok-* allowlist.
+  // Container name or id: must match the ploydok-* allowlist.
   string container_id = 1;
   // Command to run inside the container (e.g. ["/bin/sh"]).
   repeated string cmd = 2;
@@ -407,7 +407,7 @@ message ExecExit {
 
 // Sent by the server once the exec session is ready (after create+start).
 message ExecReady {
-  // Docker exec id — useful for debugging / correlation.
+  // Docker exec id: useful for debugging / correlation.
   string exec_id = 1;
 }
 
@@ -416,9 +416,9 @@ message ExecReady {
 // ─────────────────────────────────────────────────────────────────────────────
 
 message ListContainerFilesRequest {
-  // Container name or id — must match the ploydok-* allowlist.
+  // Container name or id: must match the ploydok-* allowlist.
   string container_id = 1;
-  // Absolute path to list (must start with "/" — no "..").
+  // Absolute path to list (must start with "/": no "..").
   string path = 2;
   // Include dotfiles in the listing.
   bool show_hidden = 3;
@@ -452,7 +452,7 @@ message ListContainerFilesResponse {
 }
 
 message ReadContainerFileRequest {
-  // Container name or id — must match the ploydok-* allowlist.
+  // Container name or id: must match the ploydok-* allowlist.
   string container_id = 1;
   // Absolute path to read.
   string path = 2;
@@ -493,7 +493,7 @@ message DumpChunk {
 
 message RestoreChunk {
   oneof payload {
-    // First frame sent by the client — must arrive before any data frames.
+    // First frame sent by the client: must arrive before any data frames.
     RestoreHeader header = 1;
     bytes data = 2;
   }
@@ -512,7 +512,7 @@ message RestoreResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Host stats (Sprint 6.6 — VPS health monitoring)
+// Host stats (Sprint 6.6: VPS health monitoring)
 // ─────────────────────────────────────────────────────────────────────────────
 
 message HostStatsRequest {}
@@ -836,9 +836,17 @@ message IngressNetworkIssue {
   string address = 3;
   string conflicting_endpoint = 4;
 }
+// Inventory includes all project overlays, including those without Caddy.
+message IngressProjectOverlay {
+  string name = 1;
+  // Excludes Caddy and Docker's load-balancer endpoint. Includes service references.
+  bool has_workloads = 2;
+}
 message IngressStatusResponse {
   string container_id = 1;
   repeated IngressNetworkIssue issues = 2;
+  repeated IngressProjectOverlay project_overlays = 3;
+  bool overlay_inventory_complete = 4;
 }
 
 service Agent {
@@ -879,7 +887,7 @@ service Agent {
   rpc DumpDatabase    (DumpRequest)             returns (stream DumpChunk);
   rpc RestoreDatabase (stream RestoreChunk)     returns (RestoreResult);
 
-  // Host monitoring (VPS health — Sprint 6.6)
+  // Host monitoring (VPS health: Sprint 6.6)
   rpc HostStats       (HostStatsRequest)        returns (HostStatsResponse);
 
   // Disk usage & image reclaim
