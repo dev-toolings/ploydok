@@ -21,6 +21,7 @@ import {
   RiShuffleLine,
 } from "@remixicon/react"
 import { toast } from "sonner"
+import { copyToClipboard, notifyCopyFailed } from "../../lib/clipboard"
 import type { Domain, TlsStatus } from "../../lib/domains"
 
 // ---------------------------------------------------------------------------
@@ -104,8 +105,12 @@ export function DomainCard({
   const actionLocked = Boolean(lockReason)
 
   async function copyTxtValue(value: string, label: string) {
-    await navigator.clipboard.writeText(value)
-    toast.success(t("domains.copied", { label }))
+    try {
+      await copyToClipboard(value)
+      toast.success(t("domains.copied", { label }))
+    } catch {
+      notifyCopyFailed()
+    }
   }
 
   return (

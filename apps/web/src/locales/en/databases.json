@@ -325,7 +325,6 @@
     "schemeMissing": "Connection string scheme is missing",
     "credentialsMissing": "Connection string credentials are missing",
     "passwordMissing": "Connection string password is missing",
-    "copyFailed": "Copy command failed",
     "passwordRevealed": "Database password revealed",
     "passwordExtractFailed": "Unable to extract password from connection string",
     "passwordCopied": "Database password copied",

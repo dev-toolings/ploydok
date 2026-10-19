@@ -13,6 +13,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { useTranslation } from "react-i18next"
 import { createPageHead } from "../../../../../lib/page-metadata"
+import { copyToClipboard, notifyCopyFailed } from "../../../../../lib/clipboard"
 import {
   Dialog,
   DialogContent,
@@ -262,11 +263,11 @@ function GeneratedEnvPanel({
 
   const handleCopy = async (key: string, value: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(value)
+      await copyToClipboard(value)
       setCopied(key)
       window.setTimeout(() => setCopied(null), 1500)
     } catch {
-      // ignore clipboard failure
+      notifyCopyFailed()
     }
   }
 

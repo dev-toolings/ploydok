@@ -27,6 +27,7 @@ import { QRCodeSVG } from "qrcode.react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { createPageHead } from "../../../../lib/page-metadata"
+import { copyToClipboard, notifyCopyFailed } from "../../../../lib/clipboard"
 import {
   useDeleteTotp,
   useEnrollTotp,
@@ -97,9 +98,13 @@ function TotpPage(): React.JSX.Element {
 
   const handleCopySecret = async (): Promise<void> => {
     if (!enrollData) return
-    await navigator.clipboard.writeText(enrollData.secret)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await copyToClipboard(enrollData.secret)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      notifyCopyFailed()
+    }
   }
 
   const handleDelete = (): void => {

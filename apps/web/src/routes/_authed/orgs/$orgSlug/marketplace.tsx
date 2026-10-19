@@ -13,6 +13,7 @@ import { Input } from "@workspace/ui/components/input"
 import { useTranslation } from "react-i18next"
 import { formatTemplateVersion } from "@ploydok/shared"
 import { createPageHead } from "../../../../lib/page-metadata"
+import { copyToClipboard, notifyCopyFailed } from "../../../../lib/clipboard"
 import {
   Dialog,
   DialogContent,
@@ -302,10 +303,10 @@ function TemplateDialog({
   const handleCopy = async (): Promise<void> => {
     if (!data?.dockerCompose) return
     try {
-      await navigator.clipboard.writeText(data.dockerCompose)
+      await copyToClipboard(data.dockerCompose)
       setCopied(true)
     } catch {
-      // ignore clipboard failure
+      notifyCopyFailed()
     }
   }
 
