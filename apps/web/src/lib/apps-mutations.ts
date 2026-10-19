@@ -19,6 +19,7 @@ import type {
 } from "./apps"
 import type { ApiError } from "./api"
 import type { NotificationEvent } from "./notifications"
+import type { DeleteOutcome } from "./delete-outcome"
 import type { QueryClient, QueryKey } from "@tanstack/react-query"
 
 // ---------------------------------------------------------------------------
@@ -81,13 +82,10 @@ function useTrackAppDelete(appId: string): (jobId: string) => void {
     (jobId: string) => {
       const toastId = `delete-app:${appId}`
 
-      if (typeof window === "undefined") {
-        toast.loading(i18n.t("apps:toasts.deleting"), { id: toastId })
-        return
-      }
+      if (typeof window === "undefined") return
 
       let cleanup = () => {}
-      const completion = new Promise<string>((resolve, reject) => {
+      const completion = new Promise<DeleteOutcome>((resolve, reject) => {
         let unsubDeleted: (() => void) | null = null
         let unsubFailed: (() => void) | null = null
         let pollTimer: number | undefined
@@ -112,13 +110,7 @@ function useTrackAppDelete(appId: string): (jobId: string) => void {
             const evt = data as NotificationEvent
             if (evt.appId !== appId) return
             cleanup()
-            const outcome = deleteOutcome(evt)
-            resolve(outcome.text)
-            // toast.promise only knows success: a deletion with leftover
-            // cleanup is shown as a warning right after it settles.
-            if (outcome.level === "warning") {
-              window.setTimeout(() => toast.warning(outcome.text, { id: toastId }), 0)
-            }
+            resolve(deleteOutcome(evt))
           }) ?? null
 
         unsubFailed =
@@ -140,7 +132,7 @@ function useTrackAppDelete(appId: string): (jobId: string) => void {
               invalidateGetCache()
               removeAppFromListCaches(qc, appId)
               qc.removeQueries({ queryKey: ["apps", appId] })
-              resolve(i18n.t("apps:toasts.deleted"))
+              resolve({ level: "success", text: i18n.t("apps:toasts.deleted") })
               return
             }
             if (job.status === "failed" || job.status === "cancelled") {
@@ -163,15 +155,16 @@ function useTrackAppDelete(appId: string): (jobId: string) => void {
         void reconcile()
       })
 
-      toast.promise(completion, {
-        id: toastId,
-        loading: i18n.t("apps:toasts.deleting"),
-        success: (message) => message,
-        error: (err) =>
-          err instanceof Error
-            ? err.message
-            : i18n.t("apps:toasts.deleteFailed"),
-      })
+      // The header indicator shows the pending state; only the outcome
+      // gets a toast.
+      completion.then(
+        (outcome) => toast[outcome.level](outcome.text, { id: toastId }),
+        (err: unknown) =>
+          toast.error(
+            err instanceof Error ? err.message : i18n.t("apps:toasts.deleteFailed"),
+            { id: toastId }
+          )
+      )
     },
     [appId, subscribe, qc]
   )
@@ -182,10 +175,7 @@ function useTrackAppStop(appId: string): () => void {
   return React.useCallback(() => {
     const toastId = `stop-app:${appId}`
 
-    if (!subscribe || typeof window === "undefined") {
-      toast.loading(i18n.t("apps:toasts.stopping"), { id: toastId })
-      return
-    }
+    if (!subscribe || typeof window === "undefined") return
 
     let cleanup = () => {}
     const completion = new Promise<string>((resolve, reject) => {
@@ -219,13 +209,14 @@ function useTrackAppStop(appId: string): () => void {
       })
     })
 
-    toast.promise(completion, {
-      id: toastId,
-      loading: i18n.t("apps:toasts.stopping"),
-      success: (message) => message,
-      error: (err) =>
-        err instanceof Error ? err.message : i18n.t("apps:toasts.stopFailed"),
-    })
+    completion.then(
+      (message) => toast.success(message, { id: toastId }),
+      (err: unknown) =>
+        toast.error(
+          err instanceof Error ? err.message : i18n.t("apps:toasts.stopFailed"),
+          { id: toastId }
+        )
+    )
   }, [appId, subscribe])
 }
 
@@ -523,9 +514,6 @@ export function useDeleteApp(appId: string) {
     onMutate: () => {
       const listSnapshot = snapshotAppListCaches(qc)
       markAppDeletingInListCaches(qc, appId)
-      toast.loading(i18n.t("apps:toasts.deleting"), {
-        id: `delete-app:${appId}`,
-      })
       return { listSnapshot }
     },
     onSuccess: (result) => {

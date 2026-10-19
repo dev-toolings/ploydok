@@ -99,6 +99,7 @@ import {
 import { useTheme } from "../theme/ThemeToggle"
 import { CommandBar, detectMac } from "./CommandBar"
 import { CommandPaletteRoot } from "./CommandPalette"
+import { AppActivityIndicator } from "./AppActivityIndicator"
 import { BuildActivityIndicator } from "./BuildActivityIndicator"
 import { NotificationBell } from "./NotificationBell"
 import {
@@ -1277,6 +1278,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
             <div className="flex shrink-0 items-center gap-1 md:min-w-0 md:flex-1 md:justify-end">
               <MobileSearchButton />
               <BuildActivityIndicator />
+              <AppActivityIndicator />
               <NotificationBell />
             </div>
           </div>

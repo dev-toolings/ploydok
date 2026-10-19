@@ -58,14 +58,14 @@ export function useDeploymentToasts(): void {
 
   // App delete cascade is async: DELETE /apps/:id returns 202 and the worker
   // emits app.deleted / app.delete.failed once Docker + registry + Caddy + DB
-  // row are wiped. We upgrade the loading toast posted by useDeleteApp and
-  // bust the apps caches here, mounted once at the _authed layout — robust
-  // to the user navigating away from the detail page before completion.
+  // row are wiped. The pending state lives in the header indicator
+  // (AppActivityIndicator); only the outcome gets a toast. Caches are busted
+  // here, mounted once at the _authed layout, so the user can navigate away
+  // from the detail page before completion.
   const onAppDeleteQueued = React.useCallback((evt: NotificationEvent) => {
     if (evt.t < mountedAt.current) return
     if (!evt.appId) return
     markAppDeletingInListCaches(qc, evt.appId)
-    toast.loading(evt.message, { id: `delete-app:${evt.appId}` })
   }, [qc])
 
   const onAppDeleted = React.useCallback(
@@ -92,11 +92,6 @@ export function useDeploymentToasts(): void {
     [qc]
   )
 
-  const onAppStopQueued = React.useCallback((evt: NotificationEvent) => {
-    if (evt.t < mountedAt.current) return
-    if (!evt.appId) return
-    toast.loading(evt.message, { id: `stop-app:${evt.appId}` })
-  }, [])
 
   const onAppStopped = React.useCallback(
     (evt: NotificationEvent) => {
@@ -137,7 +132,6 @@ export function useDeploymentToasts(): void {
     "app.delete.failed",
     onAppDeleteFailed
   )
-  useEventsSubscription<NotificationEvent>("app.stop.queued", onAppStopQueued)
   useEventsSubscription<NotificationEvent>("app.stopped", onAppStopped)
   useEventsSubscription<NotificationEvent>("app.stop.failed", onAppStopFailed)
 }

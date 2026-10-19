@@ -100,7 +100,9 @@ describe("useDeleteApp", () => {
       apps[1],
     ])
     expect(qc.getQueryData(["apps", "app-1"])).toBeUndefined()
-    expect(loadingCalls).toBe(1)
+    // The pending state is shown by the header AppActivityIndicator, not a
+    // loading toast: only the outcome gets a toast.
+    expect(loadingCalls).toBe(0)
     expect(successCalls).toBe(0)
   })
 })
