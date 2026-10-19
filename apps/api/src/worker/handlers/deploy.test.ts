@@ -502,7 +502,7 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
       commitMessage: "chore: log archiving test",
     })
 
-    await withAppDeployLease(db, appId, buildId, () => handleDeploy(db, job))
+    await withAppDeployLease(db, appId, buildId, () => handleDeploy(db, job), { purpose: "deploy" })
 
     // Assert the log file was created at the expected path.
     const expectedLogDir = path.join(env.PLOYDOK_BUILD_DIR, appId)
@@ -584,7 +584,7 @@ describe.skipIf(skipIntegration)("handleDeploy — log archiving", () => {
     const job = makeJob({ buildId })
 
     await expect(
-      withAppDeployLease(db, appId, buildId, () => handleDeploy(db, job))
+      withAppDeployLease(db, appId, buildId, () => handleDeploy(db, job), { purpose: "deploy" })
     ).rejects.toThrow("git clone failed: timeout")
 
     // Log file must have been created (even on failure).
@@ -723,7 +723,7 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     })
 
     await withAppDeployLease(db, bgAppId, bgBuildId, () =>
-      handleDeploy(db, job)
+      handleDeploy(db, job), { purpose: "deploy" }
     )
 
     // runBlueGreen must have been called.
@@ -777,7 +777,7 @@ describe.skipIf(skipIntegration)("handleDeploy — blue-green", () => {
     const job = makeJob({ buildId: bgBuildId })
 
     await expect(
-      withAppDeployLease(db, bgAppId, bgBuildId, () => handleDeploy(db, job))
+      withAppDeployLease(db, bgAppId, bgBuildId, () => handleDeploy(db, job), { purpose: "deploy" })
     ).rejects.toThrow("healthcheck failed after 6 retries")
 
     // Build record must have status failed.

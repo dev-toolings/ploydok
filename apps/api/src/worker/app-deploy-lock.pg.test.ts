@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
-import { eq } from "drizzle-orm"
+import { and, eq, gt } from "drizzle-orm"
 import { nanoid } from "nanoid"
-import { apps, builds, projects, users } from "@ploydok/db"
+import { app_deploy_leases, apps, builds, projects, users } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import { requestBuildCancellation } from "@ploydok/db/queries"
 import { makeTestDb, TEST_PG_URL } from "../test/db-helpers"
@@ -13,6 +13,7 @@ import {
   fenceDeploySideEffect,
   runOwnedDeployReconciliation,
   withAppDeployLease,
+  withRoutingDeployLease,
 } from "./app-deploy-lock"
 
 const skip = !TEST_PG_URL
@@ -74,17 +75,17 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
       started()
       await gate
       await db.update(builds).set({ status: "succeeded" }).where(eq(builds.id, build1))
-    }, { token: "worker-one" })
+    }, { purpose: "deploy", token: "worker-one" })
     await entered
     await db.insert(builds).values({ id: build2, app_id: appId })
     await expect(
-      withAppDeployLease(db, appId, build1, async () => undefined)
+      withAppDeployLease(db, appId, build1, async () => undefined, { purpose: "deploy" })
     ).rejects.toBeInstanceOf(DeployDeferredError)
     const [active] = await db.select().from(builds).where(eq(builds.id, build1))
     expect(active?.status).toBe("pending")
     expect(active?.finished_at).toBeNull()
     await expect(
-      withAppDeployLease(db, appId, build2, async () => undefined)
+      withAppDeployLease(db, appId, build2, async () => undefined, { purpose: "deploy" })
     ).rejects.toBeInstanceOf(DeployDeferredError)
     const [waiting] = await db.select().from(builds).where(eq(builds.id, build2))
     expect(waiting?.status).toBe("pending")
@@ -94,7 +95,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
     await first
     await withAppDeployLease(db, appId, build2, async () => {
       await db.update(builds).set({ status: "succeeded" }).where(eq(builds.id, build2))
-    })
+    }, { purpose: "deploy" })
     const [executed] = await db.select().from(builds).where(eq(builds.id, build2))
     expect(executed?.status).toBe("succeeded")
     expect(executed?.error_message).toBeNull()
@@ -109,7 +110,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
     ])
     try {
       await expect(
-        withAppDeployLease(db, appId, deployedId, async () => undefined)
+        withAppDeployLease(db, appId, deployedId, async () => undefined, { purpose: "deploy" })
       ).rejects.toBeInstanceOf(DeployCancelledError)
       let called = false
       await withAppDeployLease(db, appId, deployedId, async () => {
@@ -126,6 +127,42 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
       }
     } finally {
       for (const id of [deployedId, ...pendingIds]) {
+        await db.delete(builds).where(eq(builds.id, id))
+      }
+    }
+  })
+
+  it("maps a held or unsuccessful routing lease to null instead of throwing", async () => {
+    const deployedId = nanoid()
+    const queuedId = nanoid()
+    await db.insert(builds).values([
+      { id: deployedId, app_id: appId, status: "succeeded" },
+      { id: queuedId, app_id: appId, status: "pending" },
+    ])
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const entered = new Promise<void>((resolve) => { started = resolve })
+    try {
+      // The Caddy reconciler and rollback fence the serving build this way.
+      expect(await withRoutingDeployLease(db, appId, deployedId, async () => "routed")).toBe("routed")
+      // A build that does not serve traffic cannot be fenced for routing.
+      expect(await withRoutingDeployLease(db, appId, queuedId, async () => "routed")).toBeNull()
+      // While a deployment owns the app, routing yields instead of failing.
+      const deploying = withAppDeployLease(db, appId, queuedId, async () => {
+        started()
+        await gate
+      }, { purpose: "deploy" })
+      await entered
+      expect(await withRoutingDeployLease(db, appId, deployedId, async () => "routed")).toBeNull()
+      release()
+      await deploying
+      const leases = await db.select().from(app_deploy_leases)
+        .where(and(eq(app_deploy_leases.app_id, appId), gt(app_deploy_leases.lease_until, new Date())))
+      expect(leases).toHaveLength(0)
+    } finally {
+      release()
+      for (const id of [deployedId, queuedId]) {
         await db.delete(builds).where(eq(builds.id, id))
       }
     }
@@ -154,7 +191,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
         expect(cleaned).toBe(false)
         await fenceDeploySideEffect()
       },
-      { token: "stale", leaseMs: 25, heartbeatMs: 60_000 }
+      { purpose: "deploy", token: "stale", leaseMs: 25, heartbeatMs: 60_000 }
     )
     await new Promise((resolve) => setTimeout(resolve, 50))
     let releaseSuccessor!: () => void
@@ -168,6 +205,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
       build2,
       () => successorGate,
       {
+        purpose: "deploy",
         token: "successor",
       }
     )
@@ -198,7 +236,7 @@ describe.skipIf(skip)("durable deploy leases (Postgres)", () => {
           expect(cancelled?.cancel_requested_at).toBeInstanceOf(Date)
           await fenceDeploySideEffect()
         },
-        { token: "cancelled-worker" }
+        { purpose: "deploy", token: "cancelled-worker" }
       )
     ).rejects.toBeInstanceOf(DeployCancelledError)
   })

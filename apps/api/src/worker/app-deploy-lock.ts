@@ -161,19 +161,50 @@ export async function runOwnedDeployReconciliation(
   return true
 }
 
+export type DeployLeaseOptions = {
+  leaseMs?: number
+  heartbeatMs?: number
+  token?: string
+  gateRedis?: GateRedis
+  retryFailed?: boolean
+  // "deploy" runs a queued build and may coalesce the waiting queue.
+  // "routing" only fences a build that already serves traffic (rollback,
+  // route switch, Caddy reconciliation). Every caller must choose.
+  purpose: "deploy" | "routing"
+}
+
+/**
+ * Fence a routing operation on the build that already serves the app.
+ * Returns null when the lease cannot be taken right now: another deployment
+ * owns the app, cleanup holds the gate, the lease was lost mid-task, or the
+ * build is no longer successful. Callers map null to their conflict path.
+ */
+export async function withRoutingDeployLease<T>(
+  db: Db,
+  appId: string,
+  buildId: string,
+  task: () => Promise<T>
+): Promise<T | null> {
+  try {
+    return await withAppDeployLease(db, appId, buildId, task, { purpose: "routing" })
+  } catch (error) {
+    if (
+      error instanceof DeployLeaseLostError ||
+      error instanceof DeployDeferredError ||
+      error instanceof DeployCancelledError
+    ) {
+      return null
+    }
+    throw error
+  }
+}
+
 export async function withAppDeployLease<T>(
   db: Db,
   appId: string,
   buildId: string,
   task: () => Promise<T>,
-  opts: {
-    leaseMs?: number
-    heartbeatMs?: number
-    token?: string
-    gateRedis?: GateRedis
-    retryFailed?: boolean
-    purpose?: "deploy" | "routing"
-  } = {}
+  opts: DeployLeaseOptions
 ): Promise<T> {
   // Cleanup takes this gate before its destructive snapshot. No deployment
   // lifecycle side effects may start until both the gate and app lease exist.

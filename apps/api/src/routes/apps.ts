@@ -149,12 +149,9 @@ import {
 import { createRateLimiter } from "../webhooks/rate-limit"
 import { runtimeContainerNameCandidates } from "../services/runtime-containers"
 import {
-  DeployLeaseLostError,
-  DeployDeferredError,
-  DeployCancelledError,
   currentDeployLease,
   fenceDeploySideEffect,
-  withAppDeployLease,
+  withRoutingDeployLease as fenceRoutingBuild,
 } from "../worker/app-deploy-lock"
 
 export { deriveDefaultAppDomainBase } from "../domains/app-domain"
@@ -922,16 +919,7 @@ async function withRoutingDeployLease<T>(opts: {
 }): Promise<T | null> {
   const buildId = await currentRoutingBuildId(opts.db, opts.app)
   if (!buildId) return null
-  try {
-    return await withAppDeployLease(opts.db, opts.app.id, buildId, opts.task, { purpose: "routing" })
-  } catch (error) {
-    if (
-      error instanceof DeployLeaseLostError ||
-      error instanceof DeployDeferredError ||
-      error instanceof DeployCancelledError
-    ) return null
-    throw error
-  }
+  return fenceRoutingBuild(opts.db, opts.app.id, buildId, opts.task)
 }
 
 async function cleanupRetainedDockerSlot(
