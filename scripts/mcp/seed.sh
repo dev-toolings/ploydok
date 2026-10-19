@@ -11,6 +11,10 @@
 #   bash scripts/mcp/seed.sh --org inopan     # another organization (default claude-agent)
 #   bash scripts/mcp/seed.sh --no-apps        # tokens and .mcp.json only
 #
+# mcp-demo-broken fails on purpose: traefik/whoami has no shell, so the
+# in-container healthcheck never passes. It is the agent repair scenario of
+# DEV-PLO-41.
+#
 # Tokens are written with their hashes directly in PostgreSQL (staging over
 # SSH): an MCP token is issued from a browser session only, and API tokens
 # cannot mint tokens. Demo apps go through the public REST API with a
@@ -159,6 +163,7 @@ if ((seed_apps)); then
   done <<'APPS'
 mcp-demo-echo|mendhak/http-https-echo:37|8080
 mcp-demo-nginx|nginx:1.27-alpine|80
+mcp-demo-broken|traefik/whoami:v1.10|80
 APPS
 
   # Wait for the builds, then hit each app so request logs exist.
@@ -184,7 +189,7 @@ where user_id = '$user_id' and kind = 'mcp' and name like 'mcp-seed:%' and revok
 SQL
 
 read -r full_token _ < <(insert_token "mcp-seed: $org_slug full" mcp \
-  '["apps:read","services:read","databases:read","apps:deploy"]' null "$token_days days")
+  '["apps:read","services:read","databases:read","apps:deploy","apps:write"]' null "$token_days days")
 servers="$(jq -nc --arg n "$name_prefix" --arg u "$mcp_url" --arg t "$full_token" \
   '{($n): {type:"http", url:$u, headers:{Authorization:("Bearer " + $t)}}}')"
 

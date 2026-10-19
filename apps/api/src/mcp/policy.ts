@@ -63,8 +63,12 @@ export class TokenPolicy {
     this.appIds = user.token_app_ids
   }
 
+  hasScope(scope: string): boolean {
+    return tokenHasScope(this.user.token_scopes ?? [], scope)
+  }
+
   requireScope(scope: string): void {
-    if (!tokenHasScope(this.user.token_scopes ?? [], scope)) {
+    if (!this.hasScope(scope)) {
       throw new PolicyError("FORBIDDEN", `This token lacks the ${scope} scope`)
     }
   }

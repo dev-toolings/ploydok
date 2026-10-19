@@ -379,9 +379,11 @@ export function createPloydokMcpServer(deps: McpServerDeps): McpServer {
 
   const action = async (
     appId: string,
-    req: ApiRequest
+    req: ApiRequest,
+    scope = "apps:deploy",
+    note = ACCEPTED_NOTE
   ): Promise<ToolOutcome> => {
-    policy.requireScope("apps:deploy")
+    policy.requireScope(scope)
     await policy.assertApp(appId)
     if (!(await deps.allowAction(deps.user.pat_id ?? deps.user.id))) {
       throw new PolicyError(
@@ -389,10 +391,70 @@ export function createPloydokMcpServer(deps: McpServerDeps): McpServer {
         "Too many actions for this token; retry in a minute"
       )
     }
-    const out = await call({ ...req, method: "POST" })
+    const out = await call({ method: "POST", ...req })
     if ("error" in out) return out
-    return { payload: { ...(out.payload as object), note: ACCEPTED_NOTE } }
+    return { payload: { ...(out.payload as object), note } }
   }
+
+  // A tool the token cannot use is not listed: an agent would only try it
+  // and be refused. The scope is still checked again inside each call.
+  if (policy.hasScope("apps:write")) {
+    server.registerTool(
+      "update_app",
+      {
+        description:
+          "Change an app's image, runtime port or HTTP healthcheck. Saved " +
+          "only: run deploy_app afterwards to apply it.",
+        inputSchema: {
+          appId,
+          imageRef: z
+            .string()
+            .min(1)
+            .max(512)
+            .optional()
+            .describe("Image apps only, e.g. nginx:1.27-alpine"),
+          runtimePort: z.number().int().min(1).max(65535).optional(),
+          healthcheck: z
+            .object({
+              path: z.string().startsWith("/").max(512).optional(),
+              port: z.number().int().min(1).max(65535).nullable().optional(),
+              intervalS: z.number().int().min(1).max(300).optional(),
+              timeoutS: z.number().int().min(1).max(120).optional(),
+              retries: z.number().int().min(1).max(20).optional(),
+              startPeriodS: z.number().int().min(0).max(600).optional(),
+            })
+            .optional()
+            .describe(
+              "Probed over HTTP from inside the container, which needs a " +
+                "shell and curl, wget, node, bun or python3"
+            ),
+        },
+        annotations: destructive,
+      },
+      ({ appId, imageRef, runtimePort, healthcheck }) =>
+        run("update_app", app(appId), async () => {
+          const body = {
+            ...(imageRef !== undefined ? { imageRef } : {}),
+            ...(runtimePort !== undefined ? { runtimePort } : {}),
+            ...(healthcheck !== undefined ? { healthcheck } : {}),
+          }
+          if (Object.keys(body).length === 0) {
+            throw new PolicyError(
+              "VALIDATION_ERROR",
+              "Pass imageRef, runtimePort or healthcheck"
+            )
+          }
+          return action(
+            appId,
+            { method: "PATCH", path: `/apps/${enc(appId)}`, body },
+            "apps:write",
+            "Saved, not applied. Run deploy_app to roll it out."
+          )
+        })
+    )
+  }
+
+  if (!policy.hasScope("apps:deploy")) return server
 
   server.registerTool(
     "deploy_app",

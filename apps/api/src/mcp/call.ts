@@ -5,7 +5,7 @@ import { withMcpPrincipal } from "../auth/mcp-principal"
 export const JSON_MAX_BYTES = 1024 * 1024
 
 export type ApiRequest = {
-  method?: "GET" | "POST"
+  method?: "GET" | "POST" | "PATCH"
   path: string
   query?: Record<string, string | number | undefined>
   body?: unknown

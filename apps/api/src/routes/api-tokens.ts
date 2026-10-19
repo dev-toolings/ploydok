@@ -173,19 +173,20 @@ export function createApiTokensRouter(db: Db): Hono<AppEnv> {
         400
       )
     }
-    const { name, orgId, appIds, allowDeploy, expiresInDays } = parsed.data
+    const { name, orgId, appIds, allowDeploy, allowConfig, expiresInDays } =
+      parsed.data
 
-    const roles: Array<"owner" | "member"> = allowDeploy
-      ? ["owner"]
-      : ["owner", "member"]
+    const roles: Array<"owner" | "member"> =
+      allowDeploy || allowConfig ? ["owner"] : ["owner", "member"]
     if (!(await hasRole(db, orgId, user.id, roles))) {
       return c.json(
         {
           error: {
             code: "FORBIDDEN",
-            message: allowDeploy
-              ? "Only organization owners can grant deployments"
-              : "Not a member of this organization",
+            message:
+              allowDeploy || allowConfig
+                ? "Only organization owners can grant deployments or configuration changes"
+                : "Not a member of this organization",
           },
         },
         403
@@ -220,7 +221,7 @@ export function createApiTokensRouter(db: Db): Hono<AppEnv> {
       tokenHash: createHash("sha256").update(token).digest("hex"),
       bcryptHash: await bcrypt.hash(token, BCRYPT_ROUNDS),
       expiresAt,
-      scopes: mcpTokenScopes(allowDeploy),
+      scopes: mcpTokenScopes(allowDeploy, allowConfig),
       kind: "mcp",
       orgId,
       ...(uniqueAppIds ? { appIds: uniqueAppIds } : {}),

@@ -2410,7 +2410,7 @@ export function createAppsRouter(db: Db): Hono {
       )
     }
 
-    const { jobId } = await enqueueWithDbRow({
+    const { jobId, row } = await enqueueWithDbRow({
       db,
       queue: deployQueue,
       jobName: "deploy.requested",
@@ -2429,7 +2429,7 @@ export function createAppsRouter(db: Db): Hono {
       jobOptions: { attempts: 1 },
     })
 
-    return c.json({ ok: true, jobId, buildId: null }, 202)
+    return c.json({ ok: true, jobId, buildId: row.id }, 202)
   })
   // stop / restart / rollback are implemented in the [M3.3 lifecycle] block below.
   router.get("/:id/builds", appsRead, async (c) => {

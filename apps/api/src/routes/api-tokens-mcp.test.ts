@@ -96,6 +96,16 @@ describe("POST /api-tokens/mcp", () => {
     expect(created).toHaveLength(0)
   })
 
+  it("refuses configuration changes to a plain member", async () => {
+    memberOrgs = ["org_1"]
+    const res = await request(
+      {},
+      { name: "agent", orgId: "org_1", allowConfig: true }
+    )
+    expect(res.status).toBe(403)
+    expect(created).toHaveLength(0)
+  })
+
   it("refuses an app from another organization", async () => {
     memberOrgs = ["org_1"]
     appsFound = 1
@@ -113,7 +123,13 @@ describe("POST /api-tokens/mcp", () => {
     ownerOrgs = ["org_1"]
     const res = await request(
       {},
-      { name: "agent", orgId: "org_1", appIds: ["a1", "a2"], allowDeploy: true }
+      {
+        name: "agent",
+        orgId: "org_1",
+        appIds: ["a1", "a2"],
+        allowDeploy: true,
+        allowConfig: true,
+      }
     )
     expect(res.status).toBe(201)
     const body = (await res.json()) as { token: string }
@@ -122,7 +138,13 @@ describe("POST /api-tokens/mcp", () => {
       kind: "mcp",
       orgId: "org_1",
       appIds: ["a1", "a2"],
-      scopes: ["apps:read", "services:read", "databases:read", "apps:deploy"],
+      scopes: [
+        "apps:read",
+        "services:read",
+        "databases:read",
+        "apps:deploy",
+        "apps:write",
+      ],
     })
   })
 })

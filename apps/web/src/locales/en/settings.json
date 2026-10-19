@@ -551,7 +551,9 @@
       "required": "Name and organization are required",
       "pickApps": "Pick at least one app",
       "create": "Create token",
-      "creating": "Creating..."
+      "creating": "Creating...",
+      "allowConfig": "Allow configuration changes",
+      "allowConfigHint": "Change an app's image, port and healthcheck. Organization owners only."
     },
     "created": {
       "title": "Your MCP token",
@@ -573,7 +575,8 @@
       "lastUsed": "Last used {{date}}",
       "neverUsed": "Never used",
       "revoke": "Revoke",
-      "confirm": "Confirm"
+      "confirm": "Confirm",
+      "canConfigure": "Can change config"
     }
   }
 }

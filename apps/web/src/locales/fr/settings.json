@@ -551,7 +551,9 @@
       "required": "Le nom et l'organisation sont obligatoires",
       "pickApps": "Choisissez au moins une app",
       "create": "Créer le jeton",
-      "creating": "Création..."
+      "creating": "Création...",
+      "allowConfig": "Autoriser la modification de configuration",
+      "allowConfigHint": "Changer l'image, le port et le healthcheck d'une app. Réservé aux propriétaires de l'organisation."
     },
     "created": {
       "title": "Votre jeton MCP",
@@ -573,7 +575,8 @@
       "lastUsed": "Utilisé le {{date}}",
       "neverUsed": "Jamais utilisé",
       "revoke": "Révoquer",
-      "confirm": "Confirmer"
+      "confirm": "Confirmer",
+      "canConfigure": "Peut modifier la config"
     }
   }
 }

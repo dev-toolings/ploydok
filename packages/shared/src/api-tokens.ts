@@ -36,6 +36,8 @@ export const McpTokenCreateSchema = z.object({
   orgId: z.string().min(1),
   appIds: z.array(z.string().min(1)).min(1).max(100).optional(),
   allowDeploy: z.boolean().default(false),
+  /** Lets the agent change an app's image, port and healthcheck. */
+  allowConfig: z.boolean().default(false),
   expiresInDays: z
     .number()
     .int()
@@ -46,13 +48,17 @@ export const McpTokenCreateSchema = z.object({
 
 export type McpTokenCreateInput = z.input<typeof McpTokenCreateSchema>
 
-export function mcpTokenScopes(allowDeploy: boolean): ApiTokenScope[] {
+export function mcpTokenScopes(
+  allowDeploy: boolean,
+  allowConfig: boolean
+): ApiTokenScope[] {
   const scopes: ApiTokenScope[] = [
     "apps:read",
     "services:read",
     "databases:read",
   ]
   if (allowDeploy) scopes.push("apps:deploy")
+  if (allowConfig) scopes.push("apps:write")
   return scopes
 }
 

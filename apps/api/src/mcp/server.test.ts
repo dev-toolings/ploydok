@@ -57,14 +57,23 @@ function errorOf(result: Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("Ploydok MCP server", () => {
-  it("lists read and action tools", async () => {
-    const { client } = await connect(mcpUser())
-    const { tools } = await client.listTools()
+  it("lists action tools to a token allowed to deploy", async () => {
+    const user = mcpUser({ token_scopes: ["apps:read", "apps:deploy"] })
+    const { tools } = await (await connect(user)).client.listTools()
     const names = tools.map((t) => t.name)
     expect(names).toContain("get_runtime_logs")
     expect(names).toContain("deploy_app")
+    expect(names).not.toContain("update_app")
     const deploy = tools.find((t) => t.name === "deploy_app")
     expect(deploy?.annotations?.destructiveHint).toBe(true)
+  })
+
+  it("hides action tools from a read-only token", async () => {
+    const { tools } = await (await connect(mcpUser())).client.listTools()
+    const names = tools.map((t) => t.name)
+    expect(names).toHaveLength(11)
+    expect(names).not.toContain("deploy_app")
+    expect(names).not.toContain("update_app")
   })
 
   it("refuses an app outside the token allowlist without calling the API", async () => {
@@ -87,13 +96,31 @@ describe("Ploydok MCP server", () => {
     expect(calls).toHaveLength(0)
   })
 
-  it("refuses deploy_app without the apps:deploy scope", async () => {
-    const { client, calls } = await connect(mcpUser())
+  it("patches only the configuration fields given to update_app", async () => {
+    const user = mcpUser({ token_scopes: ["apps:read", "apps:write"] })
+    const { client, calls } = await connect(user)
     const result = await client.callTool({
-      name: "deploy_app",
+      name: "update_app",
+      arguments: { appId: "a1", imageRef: "nginx:1.27-alpine" },
+    })
+    expect(result.isError).toBeFalsy()
+    expect(calls).toEqual([
+      {
+        method: "PATCH",
+        path: "/apps/a1",
+        body: { imageRef: "nginx:1.27-alpine" },
+      },
+    ])
+  })
+
+  it("rejects an empty update_app without calling the API", async () => {
+    const user = mcpUser({ token_scopes: ["apps:write"] })
+    const { client, calls } = await connect(user)
+    const result = await client.callTool({
+      name: "update_app",
       arguments: { appId: "a1" },
     })
-    expect(errorOf(result).code).toBe("FORBIDDEN")
+    expect(errorOf(result).code).toBe("VALIDATION_ERROR")
     expect(calls).toHaveLength(0)
   })
 
