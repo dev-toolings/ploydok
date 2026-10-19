@@ -2952,42 +2952,99 @@ export function createAppsRouter(db: Db): Hono {
       }
     }
 
-    try {
-      const rollbackResult = await withRoutingDeployLease({
-        db,
-        app,
-        task: async () => {
-          const currentApp = await getAppForUser(db, appId, user.id)
+    // The response only confirms that the rollback started under the app
+    // lease. The runtime switch itself (Swarm update monitor, health gate)
+    // continues afterwards and reports through the event bus, like deploy,
+    // stop and restart: a client waiting for completion would hit its own
+    // timeout before Swarm finishes.
+    type RollbackStart = { kind: "ok" | "conflict" | "invalid_target" }
+    const rollbackLogger = childLogger("apps-rollback")
+    let settleStart!: (start: RollbackStart | null) => void
+    let failStart!: (error: unknown) => void
+    let started = false
+    const startPromise = new Promise<RollbackStart | null>((resolve, reject) => {
+      settleStart = (start) => {
+        started = true
+        resolve(start)
+      }
+      failStart = reject
+    })
+    const publishRollback = (status: "completed" | "failed", message: string, error?: string) => {
+      try {
+        eventBus.publish(`user:${user.id}`, {
+          type: "deploy.status_change",
+          appId,
+          message,
+          data: { rollback: status, ...(error ? { error } : {}) },
+        })
+      } catch (pubErr) {
+        rollbackLogger.warn({ pubErr, appId }, "eventBus publish rollback status failed (non-fatal)")
+      }
+    }
+    void withRoutingDeployLease({
+      db,
+      app,
+      task: async () => {
+        const currentApp = await getAppForUser(db, appId, user.id)
+        if (
+          !currentApp ||
+          currentApp.container_id !== app.container_id ||
+          currentApp.domain !== app.domain ||
+          currentApp.status !== app.status ||
+          currentApp.updated_at?.getTime() !== app.updated_at?.getTime()
+        ) {
+          settleStart({ kind: "conflict" })
+          return false
+        }
+        if (body.buildId) {
+          const targetBuild = await getBuildForApp(db, body.buildId, appId)
           if (
-            !currentApp ||
-            currentApp.container_id !== app.container_id ||
-            currentApp.domain !== app.domain ||
-            currentApp.status !== app.status ||
-            currentApp.updated_at?.getTime() !== app.updated_at?.getTime()
+            !targetBuild ||
+            (targetBuild.status !== "succeeded" &&
+              targetBuild.status !== "succeeded_with_warning")
           ) {
-            return { kind: "conflict" as const }
+            settleStart({ kind: "invalid_target" })
+            return false
           }
-          if (body.buildId) {
-            const targetBuild = await getBuildForApp(db, body.buildId, appId)
-            if (
-              !targetBuild ||
-              (targetBuild.status !== "succeeded" &&
-                targetBuild.status !== "succeeded_with_warning")
-            ) {
-              return { kind: "invalid_target" as const }
-            }
-          }
-          if (currentApp.runtime_mode === "swarm") {
-            const { rollbackSwarmApp } =
-              await import("../worker/swarm-runner.js")
-            await rollbackSwarmApp(appId, db, body.buildId)
-          } else {
-            const { rollbackApp } = await import("../worker/runner.js")
-            await rollbackApp(appId, db, body.buildId, undefined)
-          }
-          return { kind: "ok" as const }
-        },
+        }
+        settleStart({ kind: "ok" })
+        if (currentApp.runtime_mode === "swarm") {
+          const { rollbackSwarmApp } =
+            await import("../worker/swarm-runner.js")
+          await rollbackSwarmApp(appId, db, body.buildId)
+        } else {
+          const { rollbackApp } = await import("../worker/runner.js")
+          await rollbackApp(appId, db, body.buildId, undefined)
+        }
+        return true
+      },
+    })
+      .then((completed) => {
+        if (!started) {
+          settleStart(null)
+          return
+        }
+        if (completed) {
+          publishRollback("completed", "Rollback applied")
+          return
+        }
+        // The lease was lost after the switch began: the runtime may hold
+        // either build. Reconciliation restores the route from the database.
+        rollbackLogger.warn({ appId }, "rollback lost its deploy lease")
+        publishRollback("failed", "Rollback interrupted", "deploy lease lost")
       })
+      .catch((error: unknown) => {
+        if (!started) {
+          failStart(error)
+          return
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        rollbackLogger.error({ err: error, appId }, "rollback failed after start")
+        publishRollback("failed", "Rollback failed", message)
+      })
+
+    try {
+      const rollbackResult = await startPromise
       if (!rollbackResult) {
         return c.json(
           {
@@ -3021,7 +3078,7 @@ export function createAppsRouter(db: Db): Hono {
           409
         )
       }
-      return c.json({ ok: true })
+      return c.json({ ok: true, accepted: true }, 202)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: "ROLLBACK_FAILED", message } }, 500)
