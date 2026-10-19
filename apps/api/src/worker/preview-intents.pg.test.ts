@@ -19,7 +19,7 @@ const deploy = { action: "deploy" as const, appId: "app-fixture", prNumber: 7,
   headSha: "sha-one", domain: "pr-7.example.test", expiresAt: new Date(), source: "webhook:pull_request" }
 const unavailable = (name: string) => ({ name, add: async () => { throw new Error("Redis unavailable") } })
 
-test.each(["deploy", "teardown"] as const)("preview %s intent survives failed Redis publication and replays the same job reference", async action => {
+test.skipIf(!process.env.DATABASE_URL).each(["deploy", "teardown"] as const)("preview %s intent survives failed Redis publication and replays the same job reference", async action => {
   await isolated(async db => {
     await enqueuePreviewIntent(db, unavailable("preview.deploy"), deploy)
     if (action === "teardown") {
@@ -54,7 +54,7 @@ test.each(["deploy", "teardown"] as const)("preview %s intent survives failed Re
   })
 })
 
-test("a newer preview transition fences stale replay while preserving immutable heads", async () => {
+test.skipIf(!process.env.DATABASE_URL)("a newer preview transition fences stale replay while preserving immutable heads", async () => {
   await isolated(async db => {
     const first = await enqueuePreviewIntent(db, unavailable("preview.deploy"), deploy)
     const second = await enqueuePreviewIntent(db, unavailable("preview.deploy"), { ...deploy, headSha: "sha-two" })
@@ -66,7 +66,7 @@ test("a newer preview transition fences stale replay while preserving immutable 
   })
 })
 
-test("failure to persist the outbox rolls back the preview and snapshot together", async () => {
+test.skipIf(!process.env.DATABASE_URL)("failure to persist the outbox rolls back the preview and snapshot together", async () => {
   await isolated(async db => {
     await db.execute(sql.raw("ALTER TABLE pg_temp.queue_outbox_events ADD CONSTRAINT fixture_reject CHECK (false)"))
     await expect(enqueuePreviewIntent(db, unavailable("preview.deploy"), deploy)).rejects.toThrow()

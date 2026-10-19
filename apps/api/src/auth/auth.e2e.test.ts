@@ -23,6 +23,7 @@ import { describe, it, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { requireAuth } from "./middleware";
 import { signAccessToken, ACCESS_COOKIE } from "./jwt";
+import { createSession } from "./sessions";
 import { users } from "@ploydok/db";
 import type { Db } from "@ploydok/db";
 import { nanoid } from "nanoid";
@@ -55,7 +56,8 @@ describe.skipIf(skip)("/me endpoint", () => {
       recovery_expires_at: null,
     }).onConflictDoNothing();
 
-    const token = await signAccessToken({ userId, email: `alice-${userId}@example.com`, sessionId: "sess" });
+    const { sessionId } = await createSession(db, { userId, userAgent: "test", ip: "127.0.0.1" });
+    const token = await signAccessToken({ userId, email: `alice-${userId}@example.com`, sessionId });
 
     const app = new Hono();
     app.get("/me", requireAuth(db), (c) => {

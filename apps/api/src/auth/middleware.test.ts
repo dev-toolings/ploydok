@@ -204,11 +204,11 @@ describe.skipIf(skip)("requireAuth middleware", () => {
   })
 
   it("returns 200 with valid access token cookie", async () => {
-    await insertActiveSession(db, userId, "sess-1")
+    await insertActiveSession(db, userId, sessionId)
     const token = await signAccessToken({
       userId,
       email: `user-${userId}@test.com`,
-      sessionId: "sess-1",
+      sessionId,
     })
 
     const app = new Hono()

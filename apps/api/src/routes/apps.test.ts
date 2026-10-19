@@ -990,7 +990,7 @@ describe.skipIf(skip)("POST /apps", () => {
       installationId: githubInstallationId,
       repoFullName: "owner/replay",
       branch: "main",
-      idempotencyKey: "create-test-key:app",
+      idempotencyKey: `create-test-key:${nanoid()}:app`,
     }
 
     const first = await app.request("/apps", {
@@ -1250,6 +1250,7 @@ describe.skipIf(skip)("POST /apps", () => {
   })
 
   it("uses provided domain instead of generated one", async () => {
+    const domain = `myapp-${nanoid().replace(/[^a-z0-9]/gi, "a").toLowerCase()}.example.com`
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await app.request("/apps", {
       method: "POST",
@@ -1261,15 +1262,16 @@ describe.skipIf(skip)("POST /apps", () => {
         installationId: githubInstallationId,
         repoFullName: "o/r",
         branch: "main",
-        domain: "myapp.example.com",
+        domain,
       }),
     })
     expect(res.status).toBe(201)
     const body = (await res.json()) as { app: { domain: string } }
-    expect(body.app.domain).toBe("myapp.example.com")
+    expect(body.app.domain).toBe(domain)
   })
 
   it("persists a custom domain with framework preset runtime defaults", async () => {
+    const domain = `Laravel-${nanoid().replace(/[^a-z0-9]/gi, "a")}.Example.com`
     const app = buildTestApp(db, fakeUser(userId, `u@t.com`))
     const res = await app.request("/apps", {
       method: "POST",
@@ -1280,7 +1282,7 @@ describe.skipIf(skip)("POST /apps", () => {
         gitProvider: "image",
         imageRef: "nginx:stable",
         frameworkPreset: "laravel",
-        domain: "Laravel.Example.com",
+        domain,
       }),
     })
 
@@ -1305,7 +1307,7 @@ describe.skipIf(skip)("POST /apps", () => {
       .where(eq(apps.id, body.app.id))
 
     expect(rows[0]).toEqual({
-      domain: "laravel.example.com",
+      domain: domain.toLowerCase(),
       domainSource: "custom",
       frameworkPreset: "laravel",
       buildMethod: "nixpacks",
@@ -2094,9 +2096,14 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
       body: JSON.stringify({ buildId }),
     })
 
-    expect(res.status).toBe(200)
+    expect(res.status, await res.clone().text()).toBe(200)
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
+    expect(rollbackCalls).toBe(1)
+    const [target] = await db.select().from(builds).where(eq(builds.id, buildId))
+    expect(target?.status).toBe(status)
+    const leases = await db.select().from(app_deploy_leases).where(eq(app_deploy_leases.app_id, appId))
+    expect(leases).toHaveLength(0)
   })
 
   it("returns a conflict and does not start rollback while another deployment owns the app", async () => {
@@ -2124,7 +2131,7 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
         body: JSON.stringify({ buildId }),
       })
 
-      expect(res.status).toBe(409)
+      expect(res.status, await res.clone().text()).toBe(409)
       const body = (await res.json()) as { error: { code: string } }
       expect(body.error.code).toBe("ROLLBACK_CONFLICT")
       expect(rollbackCalls).toBe(0)
@@ -2168,7 +2175,7 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
     })
 
     // Runner mock succeeds — expect 200
-    expect(res.status).toBe(200)
+    expect(res.status, await res.clone().text()).toBe(200)
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
   })

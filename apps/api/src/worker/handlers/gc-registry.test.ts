@@ -138,7 +138,7 @@ describe("gc.registry worker", () => {
 
     expect(auditUnauthorizedSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        reason: "legacy payload (no jobId) — drop after queue drain",
+        reason: "legacy payload (no jobId): drop after queue drain",
       })
     )
     expect(queueClaimMod.claimQueuedRow).not.toHaveBeenCalled()
