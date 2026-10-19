@@ -14,6 +14,7 @@ import { apps } from "@ploydok/db"
 import type { Db } from "@ploydok/db"
 import type { Agent } from "../agent"
 import { childLogger } from "../logger"
+import { logAgentDependentFailure } from "../agent/availability"
 
 const log = childLogger("apps.status-reconciler")
 
@@ -91,7 +92,12 @@ export async function loadAppContainerIndex(
 
     return { byContainerId, byContainerName, bestByAppId }
   } catch (err) {
-    log.warn({ err }, "failed to load container snapshots; skipping reconcile")
+    logAgentDependentFailure(
+      log,
+      err,
+      {},
+      "failed to load container snapshots; skipping reconcile"
+    )
     return null
   }
 }

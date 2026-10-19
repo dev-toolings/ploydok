@@ -12,6 +12,10 @@ import { apps, projects, createRedis } from "@ploydok/db"
 import type { Db, Redis } from "@ploydok/db"
 import type { Agent } from "../../agent"
 import { childLogger } from "../../logger"
+import {
+  getAgentAvailability,
+  logAgentDependentFailure,
+} from "../../agent/availability"
 import { env } from "../../env"
 import { dispatch } from "../../notify/index"
 import { getSharedAgent } from "../../debug/singletons"
@@ -173,7 +177,11 @@ export async function runAutoHealOnce(
   const loadIndex = deps.loadIndex ?? loadAppContainerIndex
   const index = await loadIndex(agent)
   if (!index) {
-    log.warn("auto-heal skipped: container snapshot unavailable")
+    if (getAgentAvailability().state === "down") {
+      log.debug("auto-heal skipped: agent unavailable")
+    } else {
+      log.warn("auto-heal skipped: container snapshot unavailable")
+    }
     return result
   }
 
@@ -313,7 +321,7 @@ async function autoHealTick(db: Db): Promise<void> {
       log.debug(result, "auto-heal tick complete")
     }
   } catch (err) {
-    log.warn({ err }, "auto-heal tick failed")
+    logAgentDependentFailure(log, err, {}, "auto-heal tick failed")
   } finally {
     _running = false
   }

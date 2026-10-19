@@ -73,6 +73,14 @@ dev: ## Demarre le web et l'API apres verification de l'infra
 	@printf '$(C_TARGET)[dev]$(C_RESET) waiting for postgres + redis to report healthy...\n'
 	@docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml up -d --no-recreate --wait --wait-timeout 120 postgres redis
 	@$(MAKE) --no-print-directory db-ensure-auth
+	@# Wait only for a running compose agent: a stopped one means the native
+	@# agent (make dev-agent) owns the socket and must not be displaced.
+	@if [ -n "$$(docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml ps --status running -q agent)" ]; then \
+	  printf '$(C_TARGET)[dev]$(C_RESET) waiting for the agent socket (a cold Rust build can take minutes)...\n'; \
+	  docker compose --env-file apps/api/.env.local -f infra/docker-compose.yml up -d --no-recreate --wait --wait-timeout 660 agent; \
+	else \
+	  printf '$(C_WARN)[dev]$(C_RESET) compose agent not running, not waiting for it\n'; \
+	fi
 	@printf '$(C_OK)[dev]$(C_RESET) starting web:5173 + api:3335\n'
 	bunx turbo dev
 

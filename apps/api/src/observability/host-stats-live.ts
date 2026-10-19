@@ -2,6 +2,7 @@
 import type { HostStatsResponse } from "@ploydok/agent-proto"
 import { getSharedAgent } from "../debug/singletons"
 import { childLogger } from "../logger"
+import { logAgentDependentFailure } from "../agent/availability"
 import { eventBus, type EventBus } from "../worker/event-bus"
 import { buildHostStatsBody, type HostStatsBody } from "./host-stats-body"
 
@@ -104,5 +105,5 @@ export const hostStatsLive = new HostStatsLive({
     timer.unref()
     return () => clearInterval(timer)
   },
-  warn: (err) => log.warn({ err }, "host_stats.live_failed"),
+  warn: (err) => logAgentDependentFailure(log, err, {}, "host_stats.live_failed"),
 })

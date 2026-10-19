@@ -95,6 +95,11 @@ export function createAgentClient(opts: AgentClientOptions = {}): AgentClient {
     // Large receive buffer for build context / image pull streams
     "grpc.max_receive_message_length": 256 * 1024 * 1024, // 256 MiB
     "grpc.max_send_message_length": 256 * 1024 * 1024, // 256 MiB
+    // Le backoff de reconnexion par défaut monte à 120 s : après un restart de
+    // l'agent, l'API restait aveugle bien après le retour du socket. L'agent
+    // est local (socket Unix ou réseau overlay), une reconnexion coûte peu.
+    "grpc.initial_reconnect_backoff_ms": 500,
+    "grpc.max_reconnect_backoff_ms": 5_000,
     // Sur Unix socket avec TLS, gRPC n'extrait pas de SNI depuis l'address ;
     // on force le hostname utilisé pour la vérification du SAN à correspondre
     // au CN du cert serveur émis par installer/install.sh::generate_agent_pki.

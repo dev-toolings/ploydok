@@ -6,6 +6,7 @@ pub mod audit;
 pub mod audit_signer;
 pub mod boot_guard;
 pub mod buildkit_profile;
+pub mod healthcheck;
 pub mod host_stats;
 pub mod pki;
 // tonic::Status is the gRPC error type of every service helper; boxing it
