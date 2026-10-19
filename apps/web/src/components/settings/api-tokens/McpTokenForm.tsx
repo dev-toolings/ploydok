@@ -32,6 +32,7 @@ export function McpTokenForm({
   const [allApps, setAllApps] = React.useState(true)
   const [appIds, setAppIds] = React.useState<Array<string>>([])
   const [allowDeploy, setAllowDeploy] = React.useState(false)
+  const [allowConfig, setAllowConfig] = React.useState(false)
   const [expiresInDays, setExpiresInDays] = React.useState("30")
   const [error, setError] = React.useState<string | null>(null)
   const create = useCreateMcpToken()
@@ -59,6 +60,7 @@ export function McpTokenForm({
         name: name.trim(),
         orgId: selectedOrg,
         allowDeploy,
+        allowConfig,
         expiresInDays: Number(expiresInDays),
         ...(allApps ? {} : { appIds }),
       })
@@ -164,6 +166,13 @@ export function McpTokenForm({
         hint={t("apiTokens.form.allowDeployHint")}
         checked={allowDeploy}
         onChange={setAllowDeploy}
+      />
+      <ToggleRow
+        id="mcp-config"
+        label={t("apiTokens.form.allowConfig")}
+        hint={t("apiTokens.form.allowConfigHint")}
+        checked={allowConfig}
+        onChange={setAllowConfig}
       />
 
       {error ? (

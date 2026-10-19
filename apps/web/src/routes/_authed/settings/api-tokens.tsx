@@ -90,6 +90,9 @@ function TokenRow({ token }: { token: ApiToken }): React.JSX.Element {
     token.scopes.includes("apps:deploy") || token.scopes.includes("admin:*")
       ? t("apiTokens.row.canDeploy")
       : t("apiTokens.row.readOnly"),
+    token.kind === "mcp" && token.scopes.includes("apps:write")
+      ? t("apiTokens.row.canConfigure")
+      : null,
     token.expires_at
       ? t("apiTokens.row.expires", { date: date(token.expires_at) })
       : t("apiTokens.row.noExpiry"),
