@@ -43,13 +43,11 @@ git clone --depth 1 https://github.com/coollabsio/coolify.git /tmp/coolify
 
 ## Search And Read Workflow
 
-- Prefer `ig` over `rg` or `grep` for repo search.
+- Prefer `rg` (ripgrep) over `grep` for repo search.
 - Useful commands:
-  - `ig "pattern" apps/web`
-  - `ig read path/to/file --signatures`
-  - `ig smart apps/web/src`
-  - read `.ig/context.md` for a repo overview before broad exploration
-- Fall back to `rg` only if `ig` is unavailable or insufficient.
+  - `rg "pattern" apps/web`
+  - `rg --files apps/web/src`
+  - `rg -l "pattern" apps/web/src`
 
 ## Non-Negotiable Runtime Rules
 
