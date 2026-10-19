@@ -430,8 +430,10 @@ Trigger: `/health/ready` fails for 5 minutes.
 
 1. Run `curl -fsS https://<control-plane>/health/ready` from the monitoring
    network and record the failing component.
-2. Inspect `docker service ps ploydok_api ploydok_caddy ploydok_postgres` and
-   the corresponding service logs.
+2. Inspect `docker service ps ploydok_api ploydok_postgres`, their service
+   logs, and `docker inspect ploydok-caddy` / `docker logs ploydok-caddy`.
+   `ploydok_caddy` is a zero-replica descriptor; the agent owns standalone Caddy.
+   For ingress collisions, record `ingress.network_issues` from readiness.
 3. If Postgres is unavailable, stop deployment mutations and follow the
    restore procedure; do not recreate its volume.
 4. Resolve the named component, then require ten consecutive healthy probes

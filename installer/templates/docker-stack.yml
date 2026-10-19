@@ -10,12 +10,12 @@
 # Differences vs docker-compose.yml:
 #   - `deploy:` directives drive replicas, rolling updates and restarts
 #     (Swarm ignores top-level `restart:`).
-#   - Caddy publishes 80/443 in mode: host so ACME's same-source-IP rule
+#   - Caddy declares 80/443 in mode: host so ACME's same-source-IP rule
 #     still works (the Swarm routing-mesh would otherwise NAT inbound
 #     traffic to a random task).
 #   - web runs with replicas: 2 + start-first updates. API stays at one task
 #     while its WebAuthn/setup challenge state is process-local.
-#   - postgres / redis / registry / agent / buildkitd / caddy stay at
+#   - postgres / redis / registry / agent / buildkitd stay at
 #     replicas: 1 (stateful or singleton).
 #   - Watchtower is gone. It is replaced by `ploydok-update.timer` on the host.
 
@@ -169,6 +169,9 @@ services:
         ploydok.kind: infra
         ploydok.component: agent
 
+  # Deployment descriptor only. The agent manages a standalone ploydok-caddy
+  # container with these mounts and direct host ports. Live overlay joins never
+  # replace the ingress process. Keep zero replicas across stack redeploys.
   caddy:
     image: ${PLOYDOK_CADDY_IMAGE}
     labels:
@@ -193,7 +196,7 @@ services:
       - ploydok
       - ploydok-public
     deploy:
-      replicas: 1
+      replicas: 0
       update_config:
         parallelism: 1
         order: stop-first

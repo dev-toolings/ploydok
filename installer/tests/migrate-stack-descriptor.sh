@@ -75,6 +75,22 @@ grep -Fq "fetch('http://127.0.0.1:3335/health')" "$TMP/restart.yml" || fail "api
 grep -Fq "delay: 5s" "$TMP/restart.yml" || fail "restart delay dropped"
 [[ -z "$(bash "$MIGRATE" "$TMP/restart.yml")" ]] || fail "second restart run must be a no-op"
 
+# A Caddy-only legacy descriptor must migrate even without other old constructs.
+cat >"$TMP/caddy.yml" <<'YAML'
+services:
+  caddy:
+    image: caddy@sha256:abc
+    deploy:
+      replicas: 1
+  web:
+    deploy:
+      replicas: 2
+YAML
+[[ "$(bash "$MIGRATE" "$TMP/caddy.yml")" == "migrated" ]] || fail "Caddy descriptor not migrated"
+grep -Fq 'replicas: 0' "$TMP/caddy.yml" || fail "Caddy must have zero managed tasks"
+grep -Fq 'replicas: 2' "$TMP/caddy.yml" || fail "web replica count changed"
+[[ -z "$(bash "$MIGRATE" "$TMP/caddy.yml")" ]] || fail "Caddy migration must be idempotent"
+
 cp "$ROOT/installer/templates/docker-stack.yml" "$TMP/current.yml"
 [[ -z "$(bash "$MIGRATE" "$TMP/current.yml")" ]] || fail "current template must not need migration"
 cmp -s "$ROOT/installer/templates/docker-stack.yml" "$TMP/current.yml" || fail "current template was rewritten"

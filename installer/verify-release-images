@@ -43,6 +43,13 @@ if [[ -f "$install_dir/docker-stack.yml" ]]; then
       exit 1
     }
   done
+  # A zero-replica descriptor does not prove that the data plane was updated.
+  active="$(docker inspect --format '{{.Config.Image}}' ploydok-caddy)"
+  running="$(docker inspect --format '{{.State.Running}}' ploydok-caddy)"
+  [[ "$active" == "${expected[caddy]}" && "$running" == "true" ]] || {
+    echo "standalone Caddy is not running the manifest digest: $active" >&2
+    exit 1
+  }
 else
   descriptor="$install_dir/docker-compose.yml"
   [[ -f "$descriptor" ]] || descriptor="$data_dir/docker-compose.yml"

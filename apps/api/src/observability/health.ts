@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm"
 import { and, inArray, isNotNull, eq } from "drizzle-orm"
 import { existsSync } from "node:fs"
 import { apps, databases, services, type Db } from "@ploydok/db"
+import type { IngressNetworkIssue } from "@ploydok/agent-proto"
 import type { CaddyConfig } from "../caddy/types.js"
 import { getSharedAgent } from "../debug/singletons.js"
 
@@ -22,6 +23,7 @@ export interface HealthReport {
     caddy: { status: ComponentStatus; admin_url?: string; error?: string }
     ingress: {
       status: ComponentStatus
+      network_issues: IngressNetworkIssue[]
       expected_http_routes: number
       missing_http_routes: string[]
       expected_tcp_proxies: number
@@ -174,13 +176,16 @@ async function expectedIngressIds(db: Db): Promise<{
   }
 }
 
-async function checkIngress(
-  db: Db
+export async function checkIngress(
+  db: Db,
+  inspectNetworks = () => getSharedAgent().ingressStatus(),
+  loadConfig = fetchCaddyConfig,
 ): Promise<HealthReport["components"]["ingress"]> {
   try {
-    const [{ httpRouteIds, tcpProxyIds }, config] = await Promise.all([
+    const [{ httpRouteIds, tcpProxyIds }, config, networkStatus] = await Promise.all([
       expectedIngressIds(db),
-      fetchCaddyConfig(),
+      loadConfig(),
+      inspectNetworks(),
     ])
 
     const actualHttpRouteIds = new Set(
@@ -204,7 +209,8 @@ async function checkIngress(
       missingHttpRoutes.length > 0 || missingTcpProxies.length > 0
 
     return {
-      status: hasMissing ? "degraded" : "ok",
+      status: hasMissing || networkStatus.issues.length > 0 ? "degraded" : "ok",
+      network_issues: networkStatus.issues,
       expected_http_routes: httpRouteIds.length,
       missing_http_routes: missingHttpRoutes,
       expected_tcp_proxies: tcpProxyIds.length,
@@ -213,6 +219,7 @@ async function checkIngress(
   } catch (err) {
     return {
       status: "down",
+      network_issues: [],
       expected_http_routes: 0,
       missing_http_routes: [],
       expected_tcp_proxies: 0,

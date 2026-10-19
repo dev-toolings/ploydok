@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use bollard::models::{Network, Service, ServiceSpec};
-use ploydok_agent::service::ingress_network::{collision, reconcile, set_network, AttachmentState};
+use bollard::models::{Network, Service};
+use ploydok_agent::service::caddy_runtime::{reconcile_locked, runtime_config};
+use ploydok_agent::service::ingress_network::{collision, reconcile, status, AttachmentState};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -62,41 +63,87 @@ fn ignores_vips_on_other_overlays_and_non_colliding_tasks() {
 }
 
 #[test]
-fn changes_only_network_membership_and_is_idempotent() {
-    let mut spec: ServiceSpec = serde_json::from_value(json!({
-        "Name": "ploydok_caddy", "Labels": {"ploydok.kind": "infra"},
-        "TaskTemplate": {"ContainerSpec": {"Image": "caddy@sha256:abc", "Mounts": [{"Type": "volume", "Source": "data", "Target": "/data"}]},
-            "Networks": [{"Target": "control", "Aliases": ["caddy"]}]},
-        "EndpointSpec": {"Ports": [{"TargetPort": 80, "PublishedPort": 80, "PublishMode": "host"}]},
-        "UpdateConfig": {"Order": "stop-first"}
-    })).unwrap();
-    let original = spec.clone();
-    assert!(set_network(&mut spec, &network(), true));
-    assert!(!set_network(&mut spec, &network(), true));
-    assert_eq!(spec.endpoint_spec, original.endpoint_spec);
-    assert_eq!(spec.update_config, original.update_config);
-    assert_eq!(
-        spec.task_template.as_ref().unwrap().container_spec,
-        original.task_template.as_ref().unwrap().container_spec
+fn detects_ipv6_collision_when_ipv4_is_distinct() {
+    let mut net = network();
+    net.containers
+        .as_mut()
+        .unwrap()
+        .get_mut("old")
+        .unwrap()
+        .ipv6_address = Some("fd00::2/64".into());
+    net.containers
+        .as_mut()
+        .unwrap()
+        .get_mut("app")
+        .unwrap()
+        .ipv6_address = Some("fd00::2/64".into());
+    assert!(
+        matches!(collision(&net, "old", &[]), Some(AttachmentState::AddressCollision { address, .. }) if address == "fd00::2")
     );
-    assert!(set_network(&mut spec, &network(), false));
-    assert!(!set_network(&mut spec, &network(), false));
-    assert_eq!(spec, original);
 }
 
-// Exercise the real Docker HTTP calls, including migrating an already-connected
-// colliding container. The fake rejects container connect/disconnect implicitly.
-async fn fixture(
-    rollout_ip: &'static str,
-) -> (
+fn descriptor() -> Value {
+    json!({"Name": "ploydok_caddy", "Labels": {"ploydok.component": "caddy"},
+        "Mode": {"Replicated": {"Replicas": 1}},
+        "TaskTemplate": {"ContainerSpec": {"Image": "caddy@sha256:abc", "Labels": {"ploydok.component": "caddy"}, "Mounts": [{"Type": "volume", "Source": "ploydok_caddy-data", "Target": "/data"}, {"Type": "volume", "Source": "ploydok_caddy-admin-socket", "Target": "/run/caddy-admin"}]},
+            "Networks": [{"Target": "control"}, {"Target": "overlay-id"}]},
+        "EndpointSpec": {"Ports": [{"TargetPort": 80, "PublishedPort": 80, "Protocol": "tcp", "PublishMode": "host"}]}})
+}
+
+#[test]
+fn runtime_contract_preserves_ports_mounts_and_resume_but_excludes_network_churn() {
+    let mut spec: bollard::models::ServiceSpec = serde_json::from_value(descriptor()).unwrap();
+    let original = runtime_config(&spec).unwrap();
+    spec.task_template.as_mut().unwrap().networks = Some(vec![]);
+    assert_eq!(runtime_config(&spec).unwrap(), original);
+    assert!(original.cmd.as_ref().unwrap().contains(&"--resume".into()));
+    let host = original.host_config.as_ref().unwrap();
+    assert_eq!(host.mounts.as_ref().unwrap().len(), 2);
+    assert_eq!(
+        host.port_bindings.as_ref().unwrap()["80/tcp"]
+            .as_ref()
+            .unwrap()[0]
+            .host_port
+            .as_deref(),
+        Some("80")
+    );
+    assert!(!original
+        .labels
+        .as_ref()
+        .unwrap()
+        .contains_key("com.docker.swarm.service.id"));
+    spec.task_template
+        .as_mut()
+        .unwrap()
+        .container_spec
+        .as_mut()
+        .unwrap()
+        .image = Some("caddy@sha256:def".into());
+    assert_ne!(runtime_config(&spec).unwrap().labels, original.labels);
+}
+
+#[derive(Default)]
+struct State {
+    calls: Vec<String>,
+    spec: Value,
+    runtime: Option<Value>,
+    attached: bool,
+    collision: bool,
+    dev: bool,
+}
+
+async fn fixture() -> (
     bollard::Docker,
-    Arc<Mutex<Vec<Value>>>,
+    Arc<Mutex<State>>,
     tokio::task::JoinHandle<()>,
 ) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let updates = Arc::new(Mutex::new(Vec::<Value>::new()));
-    let seen = Arc::clone(&updates);
+    let state = Arc::new(Mutex::new(State {
+        spec: descriptor(),
+        ..Default::default()
+    }));
+    let seen = Arc::clone(&state);
     let server = tokio::spawn(async move {
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -124,131 +171,218 @@ async fn fixture(
                 let n = stream.read(&mut buf).await.unwrap();
                 request.extend_from_slice(&buf[..n]);
             }
-            let path = header
-                .lines()
-                .next()
-                .unwrap()
-                .split_whitespace()
-                .nth(1)
-                .unwrap();
-            let latest = seen.lock().unwrap().last().cloned();
-            let updated = latest.is_some();
-            let attached = latest.as_ref().is_none_or(|spec| {
-                spec["TaskTemplate"]["Networks"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|n| n["Target"] == "overlay-id")
-            });
-            let response = if header.starts_with("POST ")
-                && path.contains("/services/caddy-service/update")
-            {
-                let body: Value =
-                    serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
-                seen.lock().unwrap().push(body);
-                json!({})
-            } else if path.contains("/networks/") {
-                let mut net = network();
-                if updated {
-                    let endpoint = net.containers.as_mut().unwrap().remove("old").unwrap();
-                    if attached {
+            let line = header.lines().next().unwrap();
+            let path = line.split_whitespace().nth(1).unwrap();
+            let body = if length > 0 {
+                serde_json::from_slice(&request[header_end..header_end + length]).unwrap()
+            } else {
+                Value::Null
+            };
+            let (code, response) = {
+                let mut s = seen.lock().unwrap();
+                s.calls.push(line.to_string());
+                if line.starts_with("POST ") && path.contains("/services/ploydok_caddy/update") {
+                    s.spec = body;
+                    (200, json!({}))
+                } else if path.contains("/services/ploydok_caddy") {
+                    (
+                        200,
+                        json!({"ID": "caddy-service", "Version": {"Index": 42}, "Spec": s.spec}),
+                    )
+                } else if path.contains("/images/") {
+                    (200, json!({"Id": "image"}))
+                } else if path.contains("/containers/create") {
+                    assert!(!body["Labels"]
+                        .as_object()
+                        .unwrap()
+                        .contains_key("com.docker.swarm.service.id"));
+                    s.runtime = Some(
+                        json!({"Id": "runtime", "Config": {"Labels": body["Labels"]}, "State": {"Running": false}}),
+                    );
+                    s.attached = true;
+                    (201, json!({"Id": "runtime", "Warnings": []}))
+                } else if path.contains("/containers/runtime/start") {
+                    s.runtime.as_mut().unwrap()["State"]["Running"] = json!(true);
+                    (204, Value::Null)
+                } else if path.contains("/containers/ploydok-caddy/json")
+                    || path.contains("/containers/runtime/json")
+                {
+                    s.runtime
+                        .clone()
+                        .map(|r| (200, r))
+                        .unwrap_or((404, json!({"message": "no such container"})))
+                } else if path.contains("/containers/old/json") {
+                    (
+                        200,
+                        json!({"Config": {"Labels": {"com.docker.swarm.service.id": "caddy-service", "com.docker.swarm.service.name": "ploydok_caddy", "ploydok.component": "caddy"}}}),
+                    )
+                } else if path.contains("/containers/json") {
+                    if path.contains("com.docker.swarm.service.name") {
+                        (200, json!([]))
+                    } else {
+                        (
+                            200,
+                            json!([{"Id": "runtime", "Labels": if s.dev { json!({"ploydok.service": "caddy"}) } else { s.runtime.as_ref().map(|r| r["Config"]["Labels"].clone()).unwrap_or_else(|| json!({"ploydok.component": "caddy"})) }}]),
+                        )
+                    }
+                } else if path.contains("/networks/") && path.contains("/disconnect") {
+                    assert_eq!(body["Container"], "runtime");
+                    s.attached = false;
+                    (200, json!({}))
+                } else if path.contains("/networks/") && path.contains("/connect") {
+                    assert_eq!(body["Container"], "runtime");
+                    s.attached = true;
+                    (200, json!({}))
+                } else if path.contains("/networks/") {
+                    let mut net = network();
+                    net.containers.as_mut().unwrap().remove("old");
+                    if s.attached {
                         net.containers.as_mut().unwrap().insert(
-                            "new".into(),
+                            "runtime".into(),
                             bollard::models::NetworkContainer {
-                                ipv4_address: Some(format!("{rollout_ip}/24")),
-                                ..endpoint
+                                ipv4_address: Some(
+                                    if s.collision {
+                                        "10.0.8.2/24"
+                                    } else {
+                                        "10.0.8.7/24"
+                                    }
+                                    .into(),
+                                ),
+                                ..Default::default()
                             },
                         );
                     }
-                }
-                serde_json::to_value(net).unwrap()
-            } else if path.contains("/containers/old/json") || path.contains("/containers/new/json")
-            {
-                let networks = if !attached {
-                    json!({})
+                    (200, serde_json::to_value(net).unwrap())
+                } else if path.contains("/networks") && s.dev {
+                    (
+                        200,
+                        json!([{"Id": "bridge", "Name": "ploydok-public", "Driver": "bridge"}]),
+                    )
+                } else if path.contains("/networks") {
+                    (
+                        200,
+                        json!([{"Id": "control", "Name": "ploydok_ploydok", "Driver": "overlay", "Attachable": true}, {"Id": "overlay-id", "Name": "ploydok-swarm-proj-test", "Driver": "overlay", "Attachable": true}]),
+                    )
+                } else if path.contains("/services") {
+                    (
+                        200,
+                        json!([{"ID": "app-service", "Endpoint": services()[0].endpoint}, {"ID": "caddy-service", "Spec": s.spec}]),
+                    )
                 } else {
-                    json!({"ploydok-swarm-proj-test": if updated {
-                        json!({"NetworkID": "overlay-id", "IPAMConfig": {"IPv4Address": rollout_ip}})
-                    } else { json!({}) }})
-                };
-                json!({"State": {"Running": true}, "Config": {"Labels": {
-                    "com.docker.swarm.service.id": "caddy-service", "com.docker.swarm.service.name": "ploydok_caddy", "ploydok.component": "caddy"
-                }}, "NetworkSettings": {"Networks": networks}})
-            } else if path.contains("/containers/json") {
-                json!([{"Id": if updated {"new"} else {"old"}}])
-            } else if path.contains("/services/caddy-service") {
-                let spec = latest.unwrap_or_else(|| json!({"Name": "ploydok_caddy", "TaskTemplate": {"Networks": [{"Target": "control", "Aliases": ["caddy"]}]}, "UpdateConfig": {"Order": "stop-first"}}));
-                json!({"ID": "caddy-service", "Version": {"Index": 42}, "Spec": spec})
-            } else if path.contains("/services") {
-                serde_json::to_value(services()).unwrap()
-            } else {
-                panic!("unexpected Docker call: {header}");
+                    panic!("unexpected Docker call: {header}");
+                }
             };
             let body = response.to_string();
-            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).as_bytes()).await.unwrap();
+            stream.write_all(format!("HTTP/1.1 {code} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", if code == 204 {0} else {body.len()}, if code == 204 {""} else {&body}).as_bytes()).await.unwrap();
         }
     });
-    let docker = bollard::Docker::connect_with_http(&url, 5, bollard::API_DEFAULT_VERSION).unwrap();
-    (docker, updates, server)
+    (
+        bollard::Docker::connect_with_http(&url, 5, bollard::API_DEFAULT_VERSION).unwrap(),
+        state,
+        server,
+    )
 }
 
 #[tokio::test]
-async fn migrates_manual_attachment_and_checks_convergence_without_container_connect() {
-    let (docker, updates, server) = fixture("10.0.8.7").await;
+async fn migrates_managed_task_once_into_standalone_manager_allocated_endpoint() {
+    let (docker, state, server) = fixture().await;
     assert!(reconcile(&docker, "old", "ploydok-swarm-proj-test", true)
         .await
         .unwrap());
-    let updates = updates.lock().unwrap();
-    assert_eq!(updates.len(), 1);
+    let s = state.lock().unwrap();
+    assert_eq!(s.spec["Mode"]["Replicated"]["Replicas"], 0);
+    assert_eq!(s.calls.iter().filter(|c| c.contains("/update")).count(), 1);
+    assert!(s.runtime.as_ref().unwrap()["State"]["Running"]
+        .as_bool()
+        .unwrap());
+    server.abort();
+}
+
+#[tokio::test]
+async fn live_join_leave_and_stack_network_reset_never_replace_runtime() {
+    let (docker, state, server) = fixture().await;
     assert_eq!(
-        updates[0]["TaskTemplate"]["Networks"],
-        json!([{"Target": "control", "Aliases": ["caddy"]}, {"Target": "overlay-id"}])
+        reconcile_locked(&docker).await.unwrap().as_deref(),
+        Some("runtime")
     );
-    assert_eq!(updates[0]["UpdateConfig"]["Order"], "stop-first");
-    server.abort();
-}
-
-#[tokio::test]
-async fn repeated_attachment_does_not_restart_caddy() {
-    let (docker, updates, server) = fixture("10.0.8.7").await;
-    reconcile(&docker, "old", "ploydok-swarm-proj-test", true)
+    state.lock().unwrap().calls.clear();
+    reconcile(&docker, "runtime", "ploydok-swarm-proj-test", false)
         .await
         .unwrap();
-    reconcile(&docker, "new", "ploydok-swarm-proj-test", true)
+    reconcile(&docker, "runtime", "ploydok-swarm-proj-test", true)
         .await
         .unwrap();
-    assert_eq!(updates.lock().unwrap().len(), 1);
-    server.abort();
-}
-
-#[tokio::test]
-async fn detach_removes_service_membership_before_network_removal() {
-    let (docker, updates, server) = fixture("10.0.8.7").await;
-    reconcile(&docker, "old", "ploydok-swarm-proj-test", true)
-        .await
-        .unwrap();
-    reconcile(&docker, "new", "ploydok-swarm-proj-test", false)
-        .await
-        .unwrap();
-    let updates = updates.lock().unwrap();
-    assert_eq!(updates.len(), 2);
+    // A stack redeploy drops dynamic memberships from its descriptor.
+    state.lock().unwrap().spec["TaskTemplate"]["Networks"] = json!([{"Target": "control"}]);
     assert_eq!(
-        updates[1]["TaskTemplate"]["Networks"],
-        json!([{"Target": "control", "Aliases": ["caddy"]}])
+        reconcile_locked(&docker).await.unwrap().as_deref(),
+        Some("runtime")
     );
+    let s = state.lock().unwrap();
+    assert!(!s.calls.iter().any(|c| c.contains("/update")
+        || c.contains("/create")
+        || c.contains("/start")
+        || c.starts_with("DELETE ")));
     server.abort();
 }
 
 #[tokio::test]
-async fn post_rollout_collision_is_a_typed_failed_precondition() {
-    let (docker, _, server) = fixture("10.0.8.2").await;
-    let error = reconcile(&docker, "old", "ploydok-swarm-proj-test", true)
+async fn existing_collision_is_rejected_on_idempotent_join_and_reported_read_only() {
+    let (docker, state, server) = fixture().await;
+    reconcile_locked(&docker).await.unwrap();
+    state.lock().unwrap().collision = true;
+    let error = reconcile(&docker, "runtime", "ploydok-swarm-proj-test", true)
         .await
         .unwrap_err();
     assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-    let state: Value = serde_json::from_str(error.message()).unwrap();
-    assert_eq!(state["state"], "address_collision");
-    assert_eq!(state["address"], "10.0.8.2");
-    assert_eq!(state["conflicting_endpoint"], "vip:app-service");
+    let typed: Value = serde_json::from_str(error.message()).unwrap();
+    assert_eq!(typed["state"], "address_collision");
+    state.lock().unwrap().calls.clear();
+    let report = status(&docker).await.unwrap();
+    assert_eq!(report.issues[0].state, "address_collision");
+    assert_eq!(report.issues[0].network, "ploydok-swarm-proj-test");
+    assert_eq!(report.issues[0].address, "10.0.8.2");
+    assert_eq!(report.issues[0].conflicting_endpoint, "vip:app-service");
+    assert!(state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .all(|c| c.starts_with("GET ")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn readiness_supports_compose_caddy_without_swarm() {
+    let (docker, state, server) = fixture().await;
+    state.lock().unwrap().dev = true;
+    let report = status(&docker).await.unwrap();
+    assert!(report.issues.is_empty());
+    assert_eq!(report.container_id, "runtime");
+    assert!(!state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|c| c.contains("/services")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn readiness_gates_runtime_image_convergence_without_mutation() {
+    let (docker, state, server) = fixture().await;
+    reconcile_locked(&docker).await.unwrap();
+    assert!(status(&docker).await.unwrap().issues.is_empty());
+    state.lock().unwrap().spec["TaskTemplate"]["ContainerSpec"]["Image"] =
+        json!("caddy@sha256:def");
+    state.lock().unwrap().calls.clear();
+    let error = status(&docker).await.unwrap_err();
+    assert_eq!(error.message(), "ingress_runtime_revision_pending");
+    assert!(state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .all(|c| c.starts_with("GET ")));
     server.abort();
 }

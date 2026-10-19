@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Swarm tasks must receive overlay addresses from the manager, never local IPAM.
 use super::bollard_err;
-use bollard::container::{InspectContainerOptions, ListContainersOptions};
-use bollard::models::{Network, NetworkAttachmentConfig, Service, ServiceSpec};
-use bollard::network::InspectNetworkOptions;
-use bollard::service::{InspectServiceOptions, ListServicesOptions, UpdateServiceOptions};
+use bollard::container::InspectContainerOptions;
+use bollard::models::{Network, Service};
+use bollard::network::{ConnectNetworkOptions, DisconnectNetworkOptions, InspectNetworkOptions};
+use bollard::service::ListServicesOptions;
 use bollard::Docker;
 use serde::Serialize;
-use std::collections::HashMap;
-use tokio::sync::Mutex;
-use tokio::time::{sleep, timeout, Duration};
 use tonic::Status;
-
-// Serialize read/modify/write and convergence across concurrent deploys/reconcile.
-static ATTACHMENT_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -48,61 +42,51 @@ pub fn collision(
     services: &[Service],
 ) -> Option<AttachmentState> {
     let endpoints = network.containers.as_ref()?;
-    let caddy_ip = address(endpoints.get(caddy_id)?.ipv4_address.as_deref()?);
-    if caddy_ip.is_empty() {
-        return None;
-    }
-    let conflict = endpoints
-        .iter()
-        .find_map(|(id, endpoint)| {
-            (id != caddy_id && endpoint.ipv4_address.as_deref().map(address) == Some(caddy_ip))
+    let caddy = endpoints.get(caddy_id)?;
+    for caddy_ip in [caddy.ipv4_address.as_deref(), caddy.ipv6_address.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(address)
+        .filter(|ip| !ip.is_empty())
+    {
+        let conflict = endpoints
+            .iter()
+            .find_map(|(id, endpoint)| {
+                (id != caddy_id
+                    && [
+                        endpoint.ipv4_address.as_deref(),
+                        endpoint.ipv6_address.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(address)
+                    .any(|ip| ip == caddy_ip))
                 .then(|| id.clone())
-        })
-        .or_else(|| {
-            services.iter().find_map(|service| {
-                service
-                    .endpoint
-                    .as_ref()?
-                    .virtual_ips
-                    .as_ref()?
-                    .iter()
-                    .find_map(|vip| {
-                        (vip.network_id == network.id
-                            && vip.addr.as_deref().map(address) == Some(caddy_ip))
-                        .then(|| format!("vip:{}", service.id.as_deref().unwrap_or("unknown")))
-                    })
             })
-        })?;
-    Some(AttachmentState::AddressCollision {
-        network: network.name.clone().unwrap_or_default(),
-        address: caddy_ip.to_string(),
-        conflicting_endpoint: conflict,
-    })
-}
-
-pub fn set_network(spec: &mut ServiceSpec, network: &Network, attach: bool) -> bool {
-    let networks = spec
-        .task_template
-        .get_or_insert_with(Default::default)
-        .networks
-        .get_or_insert_with(Vec::new);
-    let matches = |entry: &NetworkAttachmentConfig| {
-        entry.target.is_some() && (entry.target == network.id || entry.target == network.name)
-    };
-    if attach {
-        if networks.iter().any(matches) {
-            return false;
+            .or_else(|| {
+                services.iter().find_map(|service| {
+                    service
+                        .endpoint
+                        .as_ref()?
+                        .virtual_ips
+                        .as_ref()?
+                        .iter()
+                        .find_map(|vip| {
+                            (vip.network_id == network.id
+                                && vip.addr.as_deref().map(address) == Some(caddy_ip))
+                            .then(|| format!("vip:{}", service.id.as_deref().unwrap_or("unknown")))
+                        })
+                })
+            });
+        if let Some(conflicting_endpoint) = conflict {
+            return Some(AttachmentState::AddressCollision {
+                network: network.name.clone().unwrap_or_default(),
+                address: caddy_ip.to_string(),
+                conflicting_endpoint,
+            });
         }
-        networks.push(NetworkAttachmentConfig {
-            target: network.id.clone(),
-            ..Default::default()
-        });
-    } else {
-        let previous = networks.len();
-        networks.retain(|entry| !matches(entry));
-        return previous != networks.len();
     }
-    true
+    None
 }
 
 async fn inspect_network(docker: &Docker, name: &str) -> Result<Network, Status> {
@@ -119,194 +103,193 @@ async fn services(docker: &Docker) -> Result<Vec<Service>, Status> {
         .map_err(|e| bollard_err("list_ingress_services", e))
 }
 
-/// Returns false only for standalone containers or non-overlay networks.
-/// Existing manual attachments migrate through a normal service rollout.
+fn is_caddy(labels: &std::collections::HashMap<String, String>) -> bool {
+    labels
+        .get("ploydok.component")
+        .or_else(|| labels.get("ploydok.service"))
+        .map(String::as_str)
+        == Some("caddy")
+}
+
+/// Managed tasks must never use local IPAM. Migrate legacy Caddy once, then
+/// connect/disconnect the standalone runtime through manager AttachNetwork.
 pub async fn reconcile(
     docker: &Docker,
     container_id: &str,
     network_name: &str,
     attach: bool,
 ) -> Result<bool, Status> {
+    let _lock = super::caddy_runtime::LOCK.lock().await;
     let network = inspect_network(docker, network_name).await?;
-    if network.driver.as_deref() != Some("overlay") || network.scope.as_deref() != Some("swarm") {
-        return Ok(false);
-    }
     let container = docker
         .inspect_container(container_id, None::<InspectContainerOptions>)
         .await
         .map_err(|e| bollard_err("inspect_container", e))?;
-    let labels = container
-        .config
-        .and_then(|config| config.labels)
-        .unwrap_or_default();
-    let Some(service_id) = labels.get("com.docker.swarm.service.id") else {
-        return Ok(false);
-    };
-    // This RPC does not grant arbitrary infrastructure service-update access.
-    if labels
-        .get("com.docker.swarm.service.name")
-        .map(String::as_str)
-        != Some("ploydok_caddy")
-        || labels.get("ploydok.component").map(String::as_str) != Some("caddy")
-    {
+    let labels = container.config.and_then(|c| c.labels).unwrap_or_default();
+    let managed = labels.contains_key("com.docker.swarm.service.id");
+    let caddy = is_caddy(&labels);
+    if managed && !caddy && network.driver.as_deref() == Some("overlay") {
         return Err(Status::failed_precondition(
-            "managed_overlay_requires_service_attachment",
+            "managed_overlay_requires_standalone_ingress",
         ));
     }
-    let pending = AttachmentState::AttachmentPending {
-        network: network_name.to_string(),
+    if !caddy {
+        return Ok(false);
+    }
+    let id = if managed {
+        if labels
+            .get("com.docker.swarm.service.name")
+            .map(String::as_str)
+            != Some("ploydok_caddy")
+        {
+            return Err(Status::permission_denied(
+                "ingress_service_identity_mismatch",
+            ));
+        }
+        super::caddy_runtime::reconcile_locked(docker)
+            .await?
+            .ok_or_else(|| Status::failed_precondition("ingress_descriptor_missing"))?
+    } else {
+        container_id.to_string()
     };
-    timeout(Duration::from_secs(25), async {
-        let _lock = ATTACHMENT_LOCK.lock().await;
-        reconcile_locked(docker, container_id, service_id, &network, attach).await
-    })
-    .await
-    .map_err(|_| pending.status())?
-}
-
-async fn reconcile_locked(
-    docker: &Docker,
-    container_id: &str,
-    service_id: &str,
-    network: &Network,
-    attach: bool,
-) -> Result<bool, Status> {
-    let network_name = network
-        .name
-        .as_deref()
-        .ok_or_else(|| Status::failed_precondition("ingress_network_name_missing"))?;
-    if network.id.as_deref().is_none_or(str::is_empty) {
-        return Err(Status::failed_precondition("ingress_network_id_missing"));
-    }
-    let current = docker
-        .inspect_service(
-            service_id,
-            Some(InspectServiceOptions {
-                insert_defaults: true,
-            }),
-        )
-        .await
-        .map_err(|e| bollard_err("inspect_ingress_service", e))?;
-    let version = current
-        .version
-        .and_then(|v| v.index)
-        .ok_or_else(|| Status::failed_precondition("ingress_service_version_missing"))?;
-    let mut spec = current
-        .spec
-        .ok_or_else(|| Status::failed_precondition("ingress_service_spec_missing"))?;
-    if spec.name.as_deref() != Some("ploydok_caddy") {
-        return Err(Status::permission_denied(
-            "ingress_service_identity_mismatch",
-        ));
-    }
-    if let Some(state) = collision(
-        &inspect_network(docker, network_name).await?,
-        container_id,
-        &services(docker).await?,
-    ) {
-        tracing::warn!(state = "address_collision", attachment = ?state, "repairing ingress address collision through service allocation");
-    }
-    if set_network(&mut spec, network, attach) {
-        // Host-published ports require stop-first. Preserve all existing
-        // settings, including update policy, mounts, ports and networks.
+    let actual = inspect_network(docker, network_name).await?;
+    let present = actual
+        .containers
+        .as_ref()
+        .is_some_and(|c| c.contains_key(&id));
+    if attach && !present {
         docker
-            .update_service(
-                service_id,
-                spec,
-                UpdateServiceOptions {
-                    version,
-                    registry_auth_from: false,
-                    rollback: false,
+            .connect_network(
+                network_name,
+                ConnectNetworkOptions {
+                    container: id.clone(),
+                    endpoint_config: Default::default(),
                 },
-                None,
             )
             .await
-            .map_err(|e| {
-                // A version conflict is not an idempotent network 409.
-                if matches!(
-                    e,
-                    bollard::errors::Error::DockerResponseServerError {
-                        status_code: 409,
-                        ..
-                    }
-                ) {
-                    Status::aborted("ingress_service_version_conflict")
-                } else {
-                    bollard_err("update_ingress_service", e)
-                }
-            })?;
-    }
-    // Wait for the actual managed endpoint, not merely an accepted spec.
-    // This is rollout convergence, not a retry of unsafe network connect.
-    loop {
-        let mut filters = HashMap::new();
-        filters.insert(
-            "label".to_string(),
-            vec![format!("com.docker.swarm.service.id={service_id}")],
-        );
-        filters.insert("status".to_string(), vec!["running".to_string()]);
-        let containers = docker
-            .list_containers(Some(ListContainersOptions {
-                filters,
-                ..Default::default()
-            }))
+            .map_err(|e| bollard_err("connect_ingress_network", e))?;
+    } else if !attach && present {
+        docker
+            .disconnect_network(
+                network_name,
+                DisconnectNetworkOptions {
+                    container: id.clone(),
+                    force: true,
+                },
+            )
             .await
-            .map_err(|e| bollard_err("list_ingress_tasks", e))?;
+            .map_err(|e| bollard_err("disconnect_ingress_network", e))?;
+    }
+    if attach && network.scope.as_deref() == Some("swarm") {
         let actual = inspect_network(docker, network_name).await?;
-        for task in containers {
-            let Some(id) = task.id else {
-                continue;
-            };
-            let runtime = docker
-                .inspect_container(&id, None::<InspectContainerOptions>)
-                .await
-                .map_err(|e| bollard_err("inspect_ingress_task", e))?;
-            if runtime.state.as_ref().and_then(|s| s.running) != Some(true) {
-                continue;
+        if let Some(state) = collision(&actual, &id, &services(docker).await?) {
+            return Err(state.status());
+        }
+        if !actual
+            .containers
+            .as_ref()
+            .is_some_and(|c| c.contains_key(&id))
+        {
+            return Err(AttachmentState::AttachmentPending {
+                network: network_name.into(),
             }
-            let endpoint = runtime
-                .network_settings
-                .as_ref()
-                .and_then(|n| n.networks.as_ref())
-                .and_then(|n| n.get(network_name));
-            if attach {
-                // A manual attachment has no manager-assigned IPAMConfig.
-                let managed = endpoint.is_some_and(|e| {
-                    e.network_id == network.id
-                        && e.ipam_config
-                            .as_ref()
-                            .and_then(|c| c.ipv4_address.as_deref())
-                            .is_some_and(|ip| !ip.is_empty())
-                });
-                if !managed {
-                    continue;
-                }
-                if let Some(state) = collision(&actual, &id, &services(docker).await?) {
-                    return Err(state.status());
-                }
-                if actual
-                    .containers
-                    .as_ref()
-                    .and_then(|c| c.get(&id))
-                    .and_then(|c| c.ipv4_address.as_deref())
-                    .is_some_and(|ip| !address(ip).is_empty())
-                {
-                    return Ok(true);
-                }
-            } else if endpoint.is_none() {
-                // Old manual endpoints must disappear before network removal.
-                let old_present = actual.containers.as_ref().is_some_and(|c| {
-                    c.values().any(|e| {
-                        e.name
-                            .as_deref()
-                            .is_some_and(|name| name.starts_with("ploydok_caddy."))
-                    })
-                });
-                if !old_present {
-                    return Ok(true);
-                }
+            .status());
+        }
+    }
+    Ok(true)
+}
+
+/// Read-only, uncached inspection of every project overlay joined by Caddy.
+/// No repair or lifecycle operation is permitted on this readiness path.
+pub async fn status(
+    docker: &Docker,
+) -> Result<ploydok_proto::agent::IngressStatusResponse, Status> {
+    use bollard::container::ListContainersOptions;
+    use bollard::network::ListNetworksOptions;
+    use ploydok_proto::agent::{IngressNetworkIssue, IngressStatusResponse};
+    use std::collections::HashMap;
+    let containers = docker
+        .list_containers(Some(ListContainersOptions::<String> {
+            filters: HashMap::from([("label".into(), vec!["ploydok.kind=infra".into()])]),
+            ..Default::default()
+        }))
+        .await
+        .map_err(|e| bollard_err("list_ingress_containers", e))?;
+    let containers: Vec<_> = containers
+        .into_iter()
+        .filter(|c| c.labels.as_ref().is_some_and(is_caddy))
+        .collect();
+    if containers.len() != 1 {
+        return Err(Status::failed_precondition(
+            "ingress_requires_one_running_caddy",
+        ));
+    }
+    let id = containers[0]
+        .id
+        .as_deref()
+        .ok_or_else(|| Status::failed_precondition("ingress_container_id_missing"))?;
+    let networks = docker
+        .list_networks(None::<ListNetworksOptions<String>>)
+        .await
+        .map_err(|e| bollard_err("list_ingress_networks", e))?;
+    let services = if networks
+        .iter()
+        .any(|n| n.driver.as_deref() == Some("overlay"))
+    {
+        services(docker).await?
+    } else {
+        Vec::new()
+    };
+    let mut issues = Vec::new();
+    for network in &networks {
+        if network.driver.as_deref() != Some("overlay")
+            || !network
+                .name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("ploydok-swarm-proj-"))
+        {
+            continue;
+        }
+        let name = network
+            .name
+            .as_deref()
+            .ok_or_else(|| Status::failed_precondition("ingress_network_name_missing"))?;
+        let actual = inspect_network(docker, name).await?;
+        if let Some(AttachmentState::AddressCollision {
+            network,
+            address,
+            conflicting_endpoint,
+        }) = collision(&actual, id, &services)
+        {
+            issues.push(IngressNetworkIssue {
+                state: "address_collision".into(),
+                network,
+                address,
+                conflicting_endpoint,
+            });
+        }
+    }
+    // Report collisions even during migration. Once allocation is clean,
+    // readiness also gates the asynchronous descriptor-to-runtime convergence.
+    if issues.is_empty() {
+        if let Some(spec) = services
+            .iter()
+            .filter_map(|s| s.spec.as_ref())
+            .find(|s| s.name.as_deref() == Some("ploydok_caddy"))
+        {
+            let desired = super::caddy_runtime::runtime_config(spec)?;
+            let revision = super::caddy_runtime::REVISION;
+            if containers[0].labels.as_ref().and_then(|l| l.get(revision))
+                != desired.labels.as_ref().and_then(|l| l.get(revision))
+            {
+                return Err(Status::failed_precondition(
+                    "ingress_runtime_revision_pending",
+                ));
             }
         }
-        sleep(Duration::from_millis(250)).await;
     }
+    Ok(IngressStatusResponse {
+        container_id: id.into(),
+        issues,
+    })
 }

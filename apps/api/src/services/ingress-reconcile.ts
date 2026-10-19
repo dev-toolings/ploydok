@@ -55,8 +55,8 @@ export async function reconcileIngressOnce(opts: {
     fetchRunningServicesForCaddy(db),
     fetchPublicDatabaseProxiesForCaddy(db),
   ])
-  // Swarm attachment changes can roll Caddy. Restore routes on the new task,
-  // after every attachment has converged, rather than writing to the old one.
+  // Legacy task migration replaces Caddy once. Converge attachments before
+  // restoring routes on the standalone runtime.
   const attachments = await reconcileCaddyAttachments(agent, db)
   const [appRoutes, serviceRoutes, databaseProxies] =
     await Promise.all([

@@ -103,6 +103,7 @@ use crate::validator::{
 pub mod monitor;
 use monitor::Monitor;
 
+pub mod caddy_runtime;
 pub mod ingress_network;
 
 async fn resolve_and_validate_workload_network(
@@ -1757,6 +1758,13 @@ impl Agent for AgentService {
 
         audit("network_remove", &req.network_id, Ok(()));
         Ok(Response::new(NetworkRemoveResponse {}))
+    }
+
+    async fn ingress_status(
+        &self,
+        _request: Request<ploydok_proto::agent::IngressStatusRequest>,
+    ) -> Result<Response<ploydok_proto::agent::IngressStatusResponse>, Status> {
+        Ok(Response::new(ingress_network::status(&self.docker).await?))
     }
 
     // ── NetworkConnect ───────────────────────────────────────────────────────

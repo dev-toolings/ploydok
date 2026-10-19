@@ -4,6 +4,7 @@ import { type ServiceError, status as GrpcStatus } from "@grpc/grpc-js"
 import { childLogger } from "../logger"
 import type {
   AgentClient,
+  IngressStatusResponse,
   ContainerCreateRequest,
   ContainerCreateResponse,
   ContainerStartRequest,
@@ -327,6 +328,13 @@ export class Agent {
       (r, m, opts, cb) => this.client.listContainers(r, m, opts, cb),
       req,
       timeoutMs
+    )
+  }
+
+  ingressStatus(timeoutMs = 3_000): Promise<IngressStatusResponse> {
+    return callUnary(
+      (r, m, opts, cb) => this.client.ingressStatus(r, m, opts, cb),
+      {}, timeoutMs, 0
     )
   }
 

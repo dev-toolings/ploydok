@@ -76,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
     docker.ping().await?;
     info!("connected to Docker daemon");
     buildkit_profile::spawn_reconcile_task(docker.clone());
+    service::caddy_runtime::spawn_reconcile_task(docker.clone());
 
     // ── Validator ────────────────────────────────────────────────────────────
     let validator = StrictValidator::from_env()?;

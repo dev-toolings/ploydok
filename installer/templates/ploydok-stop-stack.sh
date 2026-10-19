@@ -27,6 +27,15 @@ while :; do
     echo '[ploydok-stop] could not inspect remaining stack services' >&2
     exit 1
   }
+  # The agent must be gone before removing its standalone data plane, or its
+  # reconciliation loop could recreate Caddy while the stack is stopping.
+  if ! grep -Fxq ploydok_agent <<<"$services" &&
+    [[ -z "$(docker ps -q --filter label=com.docker.swarm.service.name=ploydok_agent)" ]]; then
+    ingress_kind="$(docker inspect --format '{{index .Config.Labels "ploydok.component"}}' ploydok-caddy 2>/dev/null || true)"
+    if [[ "$ingress_kind" == "caddy" ]]; then
+      docker rm -f ploydok-caddy >/dev/null
+    fi
+  fi
   networks="$(docker network ls --filter label=com.docker.stack.namespace=ploydok --format '{{.Name}}')" || {
     echo '[ploydok-stop] could not inspect remaining stack networks' >&2
     exit 1
