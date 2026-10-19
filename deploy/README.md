@@ -39,7 +39,8 @@ The agent migrates legacy Caddy service tasks automatically at startup or on
 attachment reconciliation. It preflights the local image and attachable networks,
 scales the descriptor to zero, waits for task shutdown, and creates the standalone
 container with all project networks. One ingress interruption is expected during
-this migration. The shared admin Unix socket, certificate/config volumes and
+this migration (about 12 seconds on staging): plan a maintenance window for the
+first production upgrade that ships this runtime. The shared admin Unix socket, certificate/config volumes and
 static bind mount remain intact. `caddy run --resume` restores persisted dynamic
 routes after all overlays are attached; API reconciliation also restores routes.
 

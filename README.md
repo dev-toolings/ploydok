@@ -510,6 +510,14 @@ release gates; take an independently stored backup before testing an upgrade.
 | User apps                                                        | not touched                            | Runtime app containers keep serving traffic.     |
 | User databases                                                   | not touched                            | Provisioned databases keep running.              |
 
+One-time ingress interruption: the first upgrade to a release that ships the
+standalone Caddy runtime (develop `4992951` and later) migrates the legacy
+`ploydok_caddy` Swarm task to the agent-managed `ploydok-caddy` container.
+Every public app is unreachable while the task stops and the container starts
+(about 12 seconds observed on staging). Schedule that upgrade in a maintenance
+window and announce it to app owners. It happens once per host: later upgrades
+do not restart Caddy unless its image or runtime configuration changes.
+
 Safety checks:
 
 - control-plane database snapshot before upgrade;
