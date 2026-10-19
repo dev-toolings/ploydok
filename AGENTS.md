@@ -350,5 +350,13 @@ prefer `orca orchestration` (Run, `dispatch --inject`, `worker_done`).
 - Search the real code before deciding.
 - Respect the auth and SSR invariants above.
 - Make small, reviewable patches.
+- Fix the failure class, not the reported instance. Before proposing a fix,
+  check whether the same cause reaches production (`installer/templates/`,
+  `agent/Dockerfile.prod`, readiness in `apps/api/src/observability/`) and
+  not only the dev compose. Prefer a durable contract (a readiness probe that
+  exercises the real dependency, a typed "not ready" state instead of a
+  generic error, a migration, a check script) over a wait, an immediate
+  retry, a longer timeout or a lower log level. Those are stopgaps: name them
+  as such and ship them with the durable fix.
 - Add or update regression tests when fixing logic bugs.
 - Prefer precise commands and concrete file references over generic advice.
