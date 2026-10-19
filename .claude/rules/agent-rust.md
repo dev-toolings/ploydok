@@ -2,7 +2,7 @@
 
 Workspace Cargo (édition Rust 2021). Deux binaires :
 
-- `ploydok-agent` : daemon long-run. Unix socket (`/tmp/ploydok-agent.sock` en dev), protocole gRPC. Appelé par l'API pour opérations host (spawn container, refresh Caddy, etc.).
+- `ploydok-agent` : daemon long-run. Unix socket (`/tmp/ploydok/agent.sock` en dev), protocole gRPC. Appelé par l'API pour opérations host (spawn container, refresh Caddy, etc.).
 - `ploydok-cli` : outil ops. Il expose actuellement `admin-recovery` et
   `audit verify`. Vérifier le contrat réel du sous-commande avant de le citer
   dans un runbook : le chemin historique `admin-recovery` cible encore SQLite
@@ -36,7 +36,7 @@ cd agent && cargo fmt --check
 ## Build / run dev
 
 ```bash
-make dev-agent     # cargo run --release -p ploydok-agent, insecure, socket /tmp/ploydok-agent.sock
+make dev-agent     # cargo run --release -p ploydok-agent, insecure, socket /tmp/ploydok/agent.sock
 ```
 
 ## Proto
