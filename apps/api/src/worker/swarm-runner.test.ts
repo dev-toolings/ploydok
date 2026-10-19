@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "bun:test"
-import type { SwarmTaskSnapshot } from "@ploydok/agent-proto"
-import { describeTasks, taskForLogs, taskIsHealthy } from "./swarm-runner"
+import { EventEmitter } from "node:events"
+import type { AgentClient, ListServiceTasksResponse, SwarmTaskSnapshot } from "@ploydok/agent-proto"
+import { describeTasks, taskForLogs, taskIsHealthy, waitForServiceHealthy } from "./swarm-runner"
 
 function task(
   overrides: Partial<SwarmTaskSnapshot> = {}
@@ -124,3 +125,90 @@ describe("rollout failure details", () => {
   })
 })
 
+// Each poll models a manager snapshot, independently of the local container order.
+describe("Swarm rollout convergence", () => {
+  const healthy = (overrides: Partial<SwarmTaskSnapshot> = {}) => task({
+    running: true, healthStatus: "healthy", matchesServiceSpec: true,
+    ...overrides,
+  })
+  function agentFor(snapshots: ListServiceTasksResponse[]) {
+    let polls = 0
+    const agent = {
+      listServiceTasks(_req: unknown, callback: (err: null, result: ListServiceTasksResponse) => void) {
+        callback(null, snapshots[Math.min(polls++, snapshots.length - 1)]!)
+        return {}
+      },
+      containerLogs() {
+        const stream = Object.assign(new EventEmitter(), { cancel() {} })
+        queueMicrotask(() => {
+          stream.emit("data", { line: "last rollout container output" })
+          stream.emit("end")
+        })
+        return stream
+      },
+    } as unknown as InstanceType<typeof AgentClient>
+    return { agent, polls: () => polls }
+  }
+  const wait = (agent: InstanceType<typeof AgentClient>, extra = {}) => waitForServiceHealthy({
+    agent, serviceName: "ploydok-app-demo", replicas: 1, channel: "test",
+    timeoutMs: 1_000, pollMs: 1, expectUpdate: true, ...extra,
+  })
+
+  it("rejects old healthy tasks alongside a new unhealthy task, even for the same image", async () => {
+    const { agent } = agentFor([{
+      updateState: "completed",
+      tasks: [healthy({ matchesServiceSpec: false }), healthy({
+        id: "new-task", healthStatus: "unhealthy", error: "port 81: connection refused",
+      })],
+    }])
+    await expect(wait(agent, { timeoutMs: 30 })).rejects.toThrow("health=unhealthy error=port 81: connection refused")
+  })
+
+  it("fails automatic rollback and paused states with manager and task failure details", async () => {
+    for (const updateState of ["rollback_started", "rollback_completed", "paused", "rollback_paused"]) {
+      const fixture = agentFor([{
+        updateState, updateMessage: "update rolled back due to task failure",
+        tasks: [healthy(), healthy({
+          id: "failed-task", running: false, matchesServiceSpec: false,
+          healthStatus: "unhealthy", error: "health probe port 81 refused",
+        })],
+      }])
+      const failure = await wait(fixture.agent).catch((error: Error) => error)
+      expect(failure).toBeInstanceOf(Error)
+      expect(String(failure)).toContain(`update ${updateState}: update rolled back due to task failure`)
+      expect(String(failure)).toContain("health probe port 81 refused")
+      expect(String(failure)).toContain("last rollout container output")
+      expect(fixture.polls()).toBe(1)
+    }
+  })
+
+  it("accepts a fresh create without UpdateStatus once its desired replicas are healthy", async () => {
+    const snapshot = { updateState: "", tasks: [healthy()] }
+    const { agent } = agentFor([snapshot])
+    expect(await wait(agent, { expectUpdate: false })).toBe(snapshot)
+  })
+
+  it("waits for update completion and all desired replica slots before succeeding", async () => {
+    const desired = healthy({ id: "new-task" })
+    const snapshot = { updateState: "completed", tasks: [desired, healthy({ slot: 2 })] }
+    const fixture = agentFor([
+      { updateState: "updating", tasks: snapshot.tasks },
+      { updateState: "completed", tasks: [desired, healthy({ id: "duplicate-slot" })] },
+      snapshot,
+    ])
+    expect(await wait(fixture.agent, { replicas: 2 })).toBe(snapshot)
+    expect(fixture.polls()).toBe(3)
+  })
+
+  it("waits for explicit native rollback completion instead of treating it as deploy failure", async () => {
+    const snapshot = { updateState: "rollback_completed", tasks: [healthy()] }
+    const fixture = agentFor([{ updateState: "rollback_started", tasks: [healthy()] }, snapshot])
+    expect(await wait(fixture.agent, { nativeRollback: true })).toBe(snapshot)
+    expect(fixture.polls()).toBe(2)
+  })
+
+  it("fails closed when the agent cannot report rollout status", async () => {
+    const { agent } = agentFor([{ tasks: [healthy()] }])
+    await expect(wait(agent)).rejects.toThrow("upgrade the agent")
+  })
+})
