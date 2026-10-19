@@ -53,11 +53,7 @@ export function createApiCaller(
       init.headers = { "content-type": "application/json" }
     }
 
-    const res = await app.request(
-      url.pathname + url.search,
-      init,
-      principalEnv
-    )
+    const res = await app.request(url.pathname + url.search, init, principalEnv)
     const isJson = (res.headers.get("content-type") ?? "").includes(
       "application/json"
     )
@@ -193,8 +189,7 @@ function normalizeError(
         return {
           status,
           code: typeof e.code === "string" ? e.code : fallback.code,
-          message:
-            typeof e.message === "string" ? e.message : `HTTP ${status}`,
+          message: typeof e.message === "string" ? e.message : `HTTP ${status}`,
         }
       }
       if (typeof nested === "string") {

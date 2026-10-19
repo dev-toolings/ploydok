@@ -65,10 +65,7 @@ export class TokenPolicy {
 
   requireScope(scope: string): void {
     if (!tokenHasScope(this.user.token_scopes ?? [], scope)) {
-      throw new PolicyError(
-        "FORBIDDEN",
-        `This token lacks the ${scope} scope`
-      )
+      throw new PolicyError("FORBIDDEN", `This token lacks the ${scope} scope`)
     }
   }
 

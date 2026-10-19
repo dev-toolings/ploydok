@@ -317,18 +317,14 @@ export function createPloydokMcpServer(deps: McpServerDeps): McpServer {
       annotations: readOnly,
     },
     ({ serviceId, tail, container }) =>
-      run(
-        "get_service_logs",
-        { type: "service", id: serviceId },
-        async () => {
-          policy.requireScope("services:read")
-          await policy.assertOrgResource("service", serviceId)
-          return call({
-            path: `/services/${enc(serviceId)}/logs`,
-            query: { tail, container },
-          })
-        }
-      )
+      run("get_service_logs", { type: "service", id: serviceId }, async () => {
+        policy.requireScope("services:read")
+        await policy.assertOrgResource("service", serviceId)
+        return call({
+          path: `/services/${enc(serviceId)}/logs`,
+          query: { tail, container },
+        })
+      })
   )
 
   server.registerTool(
