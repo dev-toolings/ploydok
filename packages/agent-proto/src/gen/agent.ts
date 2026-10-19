@@ -918,6 +918,22 @@ export interface GetAuditPubkeyResponse {
   keyId: string;
 }
 
+/** Narrow read-only ingress allocation inspection. No lifecycle mutation. */
+export interface IngressStatusRequest {
+}
+
+export interface IngressNetworkIssue {
+  state: string;
+  network: string;
+  address: string;
+  conflictingEndpoint: string;
+}
+
+export interface IngressStatusResponse {
+  containerId: string;
+  issues: IngressNetworkIssue[];
+}
+
 function createBaseVolumeMount(): VolumeMount {
   return { hostPath: "", containerPath: "", readOnly: false };
 }
@@ -11332,8 +11348,255 @@ export const GetAuditPubkeyResponse: MessageFns<GetAuditPubkeyResponse> = {
   },
 };
 
+function createBaseIngressStatusRequest(): IngressStatusRequest {
+  return {};
+}
+
+export const IngressStatusRequest: MessageFns<IngressStatusRequest> = {
+  encode(_: IngressStatusRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): IngressStatusRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseIngressStatusRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(_: any): IngressStatusRequest {
+    return {};
+  },
+
+  toJSON(_: IngressStatusRequest): unknown {
+    const obj: any = {};
+    return obj;
+  },
+
+  create(base?: DeepPartial<IngressStatusRequest>): IngressStatusRequest {
+    return IngressStatusRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<IngressStatusRequest>): IngressStatusRequest {
+    const message = createBaseIngressStatusRequest();
+    return message;
+  },
+};
+
+function createBaseIngressNetworkIssue(): IngressNetworkIssue {
+  return { state: "", network: "", address: "", conflictingEndpoint: "" };
+}
+
+export const IngressNetworkIssue: MessageFns<IngressNetworkIssue> = {
+  encode(message: IngressNetworkIssue, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.state !== "") {
+      writer.uint32(10).string(message.state);
+    }
+    if (message.network !== "") {
+      writer.uint32(18).string(message.network);
+    }
+    if (message.address !== "") {
+      writer.uint32(26).string(message.address);
+    }
+    if (message.conflictingEndpoint !== "") {
+      writer.uint32(34).string(message.conflictingEndpoint);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): IngressNetworkIssue {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseIngressNetworkIssue();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.network = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.address = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.conflictingEndpoint = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): IngressNetworkIssue {
+    return {
+      state: isSet(object.state) ? globalThis.String(object.state) : "",
+      network: isSet(object.network) ? globalThis.String(object.network) : "",
+      address: isSet(object.address) ? globalThis.String(object.address) : "",
+      conflictingEndpoint: isSet(object.conflictingEndpoint)
+        ? globalThis.String(object.conflictingEndpoint)
+        : isSet(object.conflicting_endpoint)
+        ? globalThis.String(object.conflicting_endpoint)
+        : "",
+    };
+  },
+
+  toJSON(message: IngressNetworkIssue): unknown {
+    const obj: any = {};
+    if (message.state !== "") {
+      obj.state = message.state;
+    }
+    if (message.network !== "") {
+      obj.network = message.network;
+    }
+    if (message.address !== "") {
+      obj.address = message.address;
+    }
+    if (message.conflictingEndpoint !== "") {
+      obj.conflictingEndpoint = message.conflictingEndpoint;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<IngressNetworkIssue>): IngressNetworkIssue {
+    return IngressNetworkIssue.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<IngressNetworkIssue>): IngressNetworkIssue {
+    const message = createBaseIngressNetworkIssue();
+    message.state = object.state ?? "";
+    message.network = object.network ?? "";
+    message.address = object.address ?? "";
+    message.conflictingEndpoint = object.conflictingEndpoint ?? "";
+    return message;
+  },
+};
+
+function createBaseIngressStatusResponse(): IngressStatusResponse {
+  return { containerId: "", issues: [] };
+}
+
+export const IngressStatusResponse: MessageFns<IngressStatusResponse> = {
+  encode(message: IngressStatusResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.containerId !== "") {
+      writer.uint32(10).string(message.containerId);
+    }
+    for (const v of message.issues) {
+      IngressNetworkIssue.encode(v!, writer.uint32(18).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): IngressStatusResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseIngressStatusResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.containerId = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.issues.push(IngressNetworkIssue.decode(reader, reader.uint32()));
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): IngressStatusResponse {
+    return {
+      containerId: isSet(object.containerId)
+        ? globalThis.String(object.containerId)
+        : isSet(object.container_id)
+        ? globalThis.String(object.container_id)
+        : "",
+      issues: globalThis.Array.isArray(object?.issues)
+        ? object.issues.map((e: any) => IngressNetworkIssue.fromJSON(e))
+        : [],
+    };
+  },
+
+  toJSON(message: IngressStatusResponse): unknown {
+    const obj: any = {};
+    if (message.containerId !== "") {
+      obj.containerId = message.containerId;
+    }
+    if (message.issues?.length) {
+      obj.issues = message.issues.map((e) => IngressNetworkIssue.toJSON(e));
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<IngressStatusResponse>): IngressStatusResponse {
+    return IngressStatusResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<IngressStatusResponse>): IngressStatusResponse {
+    const message = createBaseIngressStatusResponse();
+    message.containerId = object.containerId ?? "";
+    message.issues = object.issues?.map((e) => IngressNetworkIssue.fromPartial(e)) || [];
+    return message;
+  },
+};
+
 export type AgentService = typeof AgentService;
 export const AgentService = {
+  ingressStatus: {
+    path: "/ploydok.agent.v1.Agent/IngressStatus" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: IngressStatusRequest): Buffer => Buffer.from(IngressStatusRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): IngressStatusRequest => IngressStatusRequest.decode(value),
+    responseSerialize: (value: IngressStatusResponse): Buffer =>
+      Buffer.from(IngressStatusResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): IngressStatusResponse => IngressStatusResponse.decode(value),
+  },
   /** Container lifecycle */
   containerCreate: {
     path: "/ploydok.agent.v1.Agent/ContainerCreate" as const,
@@ -11748,6 +12011,7 @@ export const AgentService = {
 } as const;
 
 export interface AgentServer extends UntypedServiceImplementation {
+  ingressStatus: handleUnaryCall<IngressStatusRequest, IngressStatusResponse>;
   /** Container lifecycle */
   containerCreate: handleUnaryCall<ContainerCreateRequest, ContainerCreateResponse>;
   containerStart: handleUnaryCall<ContainerStartRequest, ContainerStartResponse>;
@@ -11803,6 +12067,21 @@ export interface AgentServer extends UntypedServiceImplementation {
 }
 
 export interface AgentClient extends Client {
+  ingressStatus(
+    request: IngressStatusRequest,
+    callback: (error: ServiceError | null, response: IngressStatusResponse) => void,
+  ): ClientUnaryCall;
+  ingressStatus(
+    request: IngressStatusRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: IngressStatusResponse) => void,
+  ): ClientUnaryCall;
+  ingressStatus(
+    request: IngressStatusRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: IngressStatusResponse) => void,
+  ): ClientUnaryCall;
   /** Container lifecycle */
   containerCreate(
     request: ContainerCreateRequest,

@@ -28,31 +28,51 @@ not restarted: Caddy publishes host ports and cannot restart without dropping
 traffic. Local application image tags are removed after the run. It never prunes
 shared builders, services or unrelated images.
 
-Project overlay attachments are owned by the `ploydok_caddy` Swarm service
-spec. Never run `docker network connect` on a Caddy task: managed containers
-skip Docker's manager-side attach allocation, so a locally allocated address
-can duplicate a service VIP or task address. Changing upstream DNS to
-`tasks.<service>` does not correct that allocation path.
+The data plane is a standalone `ploydok-caddy` container managed by the agent.
+The zero-replica `ploydok_caddy` Swarm service is its deployment descriptor:
+image, bind/volume mounts and direct host-published ports remain in the stack
+file. Never scale that descriptor up or connect a managed task to an overlay.
+Standalone attachable-overlay endpoints go through Docker manager AttachNetwork;
+managed task containers skip that allocation path and can duplicate a VIP/task IP.
 
-The agent updates only service network membership, preserves the existing
-host ports and rollout policy, and waits for a running task with a managed
-endpoint. A new or removed overlay requires a Caddy task restart and a brief
-ingress interruption. Repeated reconciliation does not restart it. API boot
-and the 60-second ingress reconciliation migrate existing manual attachments
-automatically, including after a stack deployment resets dynamic memberships.
-All attachments converge before reconciliation restores routes on the new
-task. Attachment failures expose `address_collision` or `attachment_pending`
-states; collision checks compare Caddy's address with service VIPs and local
-task endpoints on the same overlay (the supported single-node Swarm topology).
-When an individual deploy adds an overlay, other dynamic routes can need the
-next reconciliation tick to recover from the restart (up to 60 seconds).
+The agent migrates legacy Caddy service tasks automatically at startup or on
+attachment reconciliation. It preflights the local image and attachable networks,
+scales the descriptor to zero, waits for task shutdown, and creates the standalone
+container with all project networks. One ingress interruption is expected during
+this migration. The shared admin Unix socket, certificate/config volumes and
+static bind mount remain intact. `caddy run --resume` restores persisted dynamic
+routes after all overlays are attached; API reconciliation also restores routes.
 
-The same agent binary handles installer production stacks and staging.
+Subsequent project overlay joins/leaves use live container network operations.
+They never change the service spec or replace Caddy. Stack deployments preserve
+zero replicas, and the agent preserves runtime attachments when the descriptor
+network list is reset. Only an image/runtime-configuration change replaces the
+standalone container. Docker's `unless-stopped` policy covers daemon restarts;
+the agent checks desired state every ten seconds. The agent image needs no Docker
+CLI or extra runtime dependency. Explicit stack stop removes Caddy after the agent
+has stopped, before waiting for stack network removal. DR quiesce pauses Caddy
+alongside workloads so its persistent volumes stop changing during the snapshot.
+
+Projects retain separate data-plane networks. Only ingress joins multiple project
+networks. Ports 80/443 bind directly on the host through normal container port
+publishing, preserving external client source addresses without Swarm routing-mesh
+SNAT. The admin bridge continues using the shared Unix socket and management plane.
+
+`/health/ready` now performs an uncached read-only agent inspection of every project
+overlay. `ingress.network_issues` reports `address_collision`, the network, address,
+and conflicting VIP/task endpoint. A collision makes ingress degraded and readiness
+non-green even if all routes exist. Inspection failure or a pending runtime revision makes ingress down. Upgrade
+health gates on this readiness contract before verifying manifest digests. IPv4
+and IPv6 endpoints are checked against all service VIPs and local task endpoints
+under the supported single-node Swarm contract. Compose development is also supported.
+
 See Docker's [managed-container attachment path](https://github.com/moby/moby/blob/a5b58c9/daemon/container_operations.go#L269-L325)
-at the staging engine's reported source revision.
+at the staging engine's reported source revision. The previous rollout attachment
+implementation in b3ea587 is superseded by this lifecycle contract.
 
 The host must already contain the reviewed `installer/ploydok-cli`,
 `installer/migrate-stack-descriptor` at `/usr/local/lib/ploydok/migrate-stack-descriptor`,
+`installer/templates/ploydok-stop-stack.sh` as `/usr/local/lib/ploydok/stop-stack.sh`,
 `installer/verify-release-images` at `/usr/local/lib/ploydok/verify-release-images`,
 and `scripts/deploy-shuttle/upgrade-host.sh` at
 `/usr/local/bin/ploydok-shuttle-upgrade` (root-owned, executable). The adapter is

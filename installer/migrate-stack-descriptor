@@ -20,7 +20,10 @@ descriptor="${1:?usage: migrate-stack-descriptor <docker-stack.yml>}"
 legacy_tmpfs='^    tmpfs:[[:space:]]*$'
 legacy_restart='^        condition: on-failure[[:space:]]*$'
 legacy_probe="127\.0\.0\.1:3335/health/ready'"
-grep -qE "$legacy_tmpfs|$legacy_restart|$legacy_probe" "$descriptor" || exit 0
+# Caddy is now a zero-replica runtime descriptor. The agent performs the
+# one-time managed-task to standalone migration.
+legacy_caddy="$(awk '/^  caddy:$/ { caddy=1; next } /^  [A-Za-z0-9_.-]+:/ { caddy=0 } caddy && /^      replicas: [1-9][0-9]*$/ { print }' "$descriptor")"
+if [[ -z "$legacy_caddy" ]] && ! grep -qE "$legacy_tmpfs|$legacy_restart|$legacy_probe" "$descriptor"; then exit 0; fi
 
 tmp="$(mktemp "$(dirname -- "$descriptor")/.migrate-stack.XXXXXX")"
 trap 'rm -f -- "$tmp" "$tmp.awk"' EXIT
@@ -89,6 +92,7 @@ awk '
       if (!hasVolumes[svc]) printf "    volumes:\n%s", mounts(svc)
       next
     }
+    if (inServices && svc == "caddy" && $0 ~ /^      replicas: [0-9]+$/) $0 = "      replicas: 0"
     print
     if (inServices && $0 ~ /^    volumes:[[:space:]]*$/ && count[svc] > 0) printf "%s", mounts(svc)
   }

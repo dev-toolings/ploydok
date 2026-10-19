@@ -26,7 +26,12 @@ if [[ "$1" == "compose" ]]; then
   printf 'container-%s\n' "$service"
 elif [[ "$1" == "inspect" ]]; then
   service="${@: -1}"
+  if [[ "$3" == '{{.State.Running}}' ]]; then
+    printf '%s\n' "${FAKE_RELEASE_RUNNING:-true}"
+    exit 0
+  fi
   service="${service#container-}"
+  service="${service#ploydok-}"
   key="PLOYDOK_${service^^}_IMAGE"
   value="$(awk -F= -v key="$key" '$1 == key { print $2 }' "$FAKE_RELEASE_MANIFEST")"
   [[ "${FAKE_RELEASE_MISMATCH:-}" != "$service" ]] || value="${value%sha256:*}sha256:$(printf 'c%.0s' {1..64})"
@@ -56,6 +61,15 @@ rm "$TMP/install/docker-compose.yml"
 touch "$TMP/install/docker-stack.yml"
 PATH="$TMP/bin:$PATH" FAKE_RELEASE_MANIFEST="$manifest" \
   bash "$ROOT/installer/verify-release-images" "$manifest" "$TMP/install" "$TMP/data" >/dev/null
+
+if PATH="$TMP/bin:$PATH" FAKE_RELEASE_MANIFEST="$manifest" FAKE_RELEASE_MISMATCH=caddy \
+  bash "$ROOT/installer/verify-release-images" "$manifest" "$TMP/install" "$TMP/data" >/dev/null 2>&1; then
+  echo "release verifier accepted a stale standalone Caddy image" >&2; exit 1
+fi
+if PATH="$TMP/bin:$PATH" FAKE_RELEASE_MANIFEST="$manifest" FAKE_RELEASE_RUNNING=false \
+  bash "$ROOT/installer/verify-release-images" "$manifest" "$TMP/install" "$TMP/data" >/dev/null 2>&1; then
+  echo "release verifier accepted a stopped standalone Caddy" >&2; exit 1
+fi
 
 workflow="$ROOT/.github/workflows/release-images.yml"
 grep -q 'group: release-images-promotion' "$workflow" || {

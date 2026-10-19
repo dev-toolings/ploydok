@@ -123,7 +123,7 @@ export function networksToAttachForRunningApps(
  */
 let cachedCaddyId: string | null = null
 
-/** Reset the cache — exposed for tests or post-restart reconciliation. */
+/** Reset the cache, exposed for tests or post-restart reconciliation. */
 export function resetCaddyIdCache(): void {
   cachedCaddyId = null
 }
@@ -153,9 +153,9 @@ async function resolveCaddyContainerId(agent: Agent): Promise<string> {
 
 /**
  * Ensure Caddy is attached to `projectNetwork`. Idempotent: treats Docker's
- * 409 "already exists" as success for standalone containers. For Swarm tasks
- * the agent updates the service spec and verifies the managed endpoint instead
- * of calling container-level connect. This can roll Caddy's host-port task.
+ * 409 "already exists" as success for standalone containers. The agent migrates legacy Swarm Caddy tasks to the standalone runtime once.
+ * Standalone overlays allocate through manager AttachNetwork without restarting
+ * Caddy. Collision validation also runs on already-present endpoints.
  */
 export async function ensureCaddyOnProjectNetwork(
   agent: Agent,

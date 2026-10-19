@@ -818,7 +818,21 @@ message GetAuditPubkeyResponse {
 // Service definition
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Narrow read-only ingress allocation inspection. No lifecycle mutation.
+message IngressStatusRequest {}
+message IngressNetworkIssue {
+  string state = 1;
+  string network = 2;
+  string address = 3;
+  string conflicting_endpoint = 4;
+}
+message IngressStatusResponse {
+  string container_id = 1;
+  repeated IngressNetworkIssue issues = 2;
+}
+
 service Agent {
+  rpc IngressStatus (IngressStatusRequest) returns (IngressStatusResponse);
   // Container lifecycle
   rpc ContainerCreate (ContainerCreateRequest)  returns (ContainerCreateResponse);
   rpc ContainerStart  (ContainerStartRequest)   returns (ContainerStartResponse);

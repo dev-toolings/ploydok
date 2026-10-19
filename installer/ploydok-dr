@@ -109,9 +109,16 @@ quiesce() {
       api web agent caddy adminer registry redis prometheus alertmanager
   fi
   mapfile -t PAUSED_CONTAINERS < <(
-    for kind in app database service preview hook scheduled-job; do
-      docker ps -q --filter "label=ploydok.kind=$kind"
-    done | sort -u
+    {
+      for kind in app database service preview hook scheduled-job; do
+        docker ps -q --filter "label=ploydok.kind=$kind"
+      done
+      # The standalone ingress holds writable certificate/config volumes too.
+      # Paused containers retain Running=true, so the agent leaves it quiesced.
+      if [[ "$runtime" == "swarm" ]]; then
+        docker ps -q --filter 'name=^/ploydok-caddy$' --filter label=ploydok.component=caddy
+      fi
+    } | sort -u
   )
   for id in "${PAUSED_CONTAINERS[@]}"; do
     [[ -n "$id" ]] && docker pause "$id" >/dev/null

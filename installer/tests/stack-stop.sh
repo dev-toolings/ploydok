@@ -17,6 +17,9 @@ case "$1 $2" in
     count="$(cat "$STOP_STATE" 2>/dev/null || echo 0)"
     count=$((count + 1)); printf '%s' "$count" >"$STOP_STATE"
     if [[ "${STOP_STUCK:-0}" == 1 || "$count" -lt 2 ]]; then echo ploydok_api; fi ;;
+  'ps -q') ;;
+  'inspect --format') echo caddy ;;
+  'rm -f') [[ "$3" == ploydok-caddy ]] ;;
   'network ls')
     if [[ "${STOP_STUCK:-0}" == 1 || "$(cat "$STOP_STATE")" -lt 3 ]]; then echo ploydok_ploydok; fi ;;
   *) echo "unexpected docker invocation: $*" >&2; exit 2 ;;
@@ -27,6 +30,7 @@ PATH="$TMP/bin:$PATH" bash "$ROOT/installer/templates/ploydok-stop-stack.sh"
 [[ "$(cat "$STOP_STATE")" == 3 ]]
 [[ ! -e "$PLOYDOK_STACK_REMOVE_MARKER" ]]
 grep -Fq 'label=com.docker.stack.namespace=ploydok' "$STOP_LOG"
+grep -Fq 'rm -f ploydok-caddy' "$STOP_LOG"
 ! grep -Eq 'volume|prune' "$STOP_LOG"
 if PATH="$TMP/bin:$PATH" STOP_STUCK=1 PLOYDOK_STACK_REMOVE_TIMEOUT_SECONDS=1 \
   bash "$ROOT/installer/templates/ploydok-stop-stack.sh" >"$TMP/error" 2>&1; then

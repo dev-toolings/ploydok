@@ -119,6 +119,7 @@ describe("operational metrics", () => {
           agent: { status: "ok" },
           caddy: { status: "ok" },
           ingress: {
+            network_issues: [],
             status: "ok",
             expected_http_routes: 0,
             missing_http_routes: [],
@@ -214,6 +215,7 @@ describe("operational metrics", () => {
           agent: { status: "ok" },
           caddy: { status: "ok" },
           ingress: {
+            network_issues: [],
             status: "ok",
             expected_http_routes: 0,
             missing_http_routes: [],
@@ -303,6 +305,7 @@ describe("operational metrics", () => {
           agent: { status: "ok" },
           caddy: { status: "ok" },
           ingress: {
+            network_issues: [],
             status: "ok",
             expected_http_routes: 0,
             missing_http_routes: [],
@@ -386,6 +389,7 @@ describe("operational metrics", () => {
           agent: { status: "ok" },
           caddy: { status: "ok" },
           ingress: {
+            network_issues: [],
             status: "ok",
             expected_http_routes: 0,
             missing_http_routes: [],
@@ -453,6 +457,7 @@ describe.skipIf(!testPgUrl)("operational metrics PostgreSQL contract", () => {
             agent: { status: "ok" },
             caddy: { status: "ok" },
             ingress: {
+              network_issues: [],
               status: "ok",
               expected_http_routes: 0,
               missing_http_routes: [],
@@ -620,6 +625,7 @@ describe.skipIf(!testPgUrl)("operational metrics PostgreSQL contract", () => {
             agent: { status: "ok" },
             caddy: { status: "ok" },
             ingress: {
+              network_issues: [],
               status: "ok",
               expected_http_routes: 0,
               missing_http_routes: [],
