@@ -407,7 +407,10 @@
     "protectionSaved": "Réglages de protection enregistrés",
     "certUploaded": "Certificat téléversé",
     "customCertRemoved": "Certificat personnalisé retiré : retour à ACME",
-    "routingChecked": "État du routage public actualisé"
+    "routingChecked": "État du routage public actualisé",
+    "deletedNamed": "{{app}} supprimée",
+    "deletedWithWarnings": "{{app}} supprimée, mais un nettoyage reste à vérifier : {{steps}}",
+    "deleteFailedSteps": "{{app}} n'a pas pu être supprimée : {{steps}}"
   },
   "empty": {
     "noApps": "Aucune application",
@@ -1135,5 +1138,16 @@
     "currentCommit": "Commit courant",
     "domain": "Domaine",
     "notSet": "Non défini"
+  },
+  "deleteSteps": {
+    "app": "Application",
+    "containers": "conteneurs",
+    "registry": "images du registre",
+    "localImages": "images Docker locales",
+    "caddy": "route Caddy",
+    "buildArtifacts": "espace de build",
+    "staticArtifacts": "fichiers statiques",
+    "appVolumes": "volumes",
+    "dbCascade": "enregistrement en base"
   }
 }

@@ -17,7 +17,7 @@ import { env } from "../env"
 import { workerLog as logger } from "./logger"
 import { handleDeploy } from "./handlers/deploy"
 import { FatalDeployError } from "./errors"
-import { handleDeleteApp } from "./handlers/delete-app"
+import { failedDeleteSteps, handleDeleteApp } from "./handlers/delete-app"
 import { handleDomainVerify } from "./handlers/domain-verify"
 import type { DomainVerifyPayload } from "./handlers/domain-verify"
 import {
@@ -424,45 +424,50 @@ export function startWorker(
         const appName = appRow?.name ?? "App"
 
         try {
-          await handleDeleteApp(db, { id: job.id ?? "", payload: job.data })
-          const [outcome] = deleteJobId
-            ? await db
-                .select({
-                  status: app_delete_jobs.status,
-                  error: app_delete_jobs.error_message,
-                })
-                .from(app_delete_jobs)
-                .where(eq(app_delete_jobs.id, deleteJobId))
-                .limit(1)
-            : []
-          if (outcome?.status !== "succeeded") {
-            if (
-              recipientId &&
-              appIdForNotification &&
-              outcome?.status === "failed"
-            ) {
+          const result = await handleDeleteApp(db, {
+            id: job.id ?? "",
+            payload: job.data,
+          })
+          if (!result) {
+            logger.warn({ jobId: job.id }, "app.delete job not claimed")
+            return
+          }
+          // Step names are safe to show; raw Docker errors stay in the job
+          // row and the logs.
+          const failedSteps = failedDeleteSteps(result)
+          if (!result.steps.dbCascade.ok) {
+            logger.warn(
+              { jobId: job.id, failedSteps },
+              "app.delete did not remove the app"
+            )
+            if (recipientId && appIdForNotification) {
               eventBus.publish(`user:${recipientId}`, {
                 type: "app.delete.failed",
                 appId: appIdForNotification,
-                message:
-                  env.NODE_ENV === "prod"
-                    ? "Application cleanup failed"
-                    : (outcome.error ?? "Application cleanup failed"),
+                message: `${appName} deletion failed: ${failedSteps.join(", ")}`,
+                data: { appName, failedSteps },
               })
             }
-            logger.warn(
-              { jobId: job.id, status: outcome?.status },
-              "app.delete cleanup did not succeed"
-            )
             return
           }
-          logger.info({ jobId: job.id }, "app.delete done")
+          if (failedSteps.length > 0) {
+            logger.warn(
+              { jobId: job.id, failedSteps },
+              "app.delete done with leftover cleanup"
+            )
+          } else {
+            logger.info({ jobId: job.id }, "app.delete done")
+          }
           if (recipientId && appIdForNotification) {
             try {
               eventBus.publish(`user:${recipientId}`, {
                 type: "app.deleted",
                 appId: appIdForNotification,
-                message: `${appName} supprimée`,
+                message:
+                  failedSteps.length > 0
+                    ? `${appName} deleted, cleanup to check: ${failedSteps.join(", ")}`
+                    : `${appName} deleted`,
+                data: { appName, warnings: failedSteps },
               })
             } catch (pubErr) {
               logger.warn(
@@ -478,7 +483,12 @@ export function startWorker(
                 type: "app.delete.failed",
                 appId: appIdForNotification,
                 message:
-                  err instanceof Error ? err.message : "Suppression échouée",
+                  env.NODE_ENV === "prod"
+                    ? `${appName} deletion failed`
+                    : err instanceof Error
+                      ? err.message
+                      : `${appName} deletion failed`,
+                data: { appName, failedSteps: ["dbCascade"] },
               })
             } catch {
               // best-effort

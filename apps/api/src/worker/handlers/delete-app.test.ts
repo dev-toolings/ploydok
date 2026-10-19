@@ -5,6 +5,9 @@
  * Tests schema validation and graceful error handling.
  */
 import { describe, it, expect, mock, beforeEach, spyOn } from "bun:test"
+
+// Image removal retries while a container still references the image.
+Bun.env["PLOYDOK_IMAGE_REMOVE_RETRY_MS"] = "1"
 import {
   app_delete_jobs,
   apps,
@@ -199,11 +202,45 @@ describe("handleDeleteApp", () => {
       status: string
       error_message: string
     }
+    expect(final.error_message).toContain("[localImages]")
     expect(final.error_message).toContain("image in use")
+    // The app row is gone: leftover cleanup is a warning on a succeeded job.
     expect(final).toMatchObject({
-      status: "failed",
-      error_message: expect.stringContaining("manifest DELETE 405"),
+      status: "succeeded",
+      error_message: expect.stringContaining("[registry] manifest DELETE 405"),
     })
+  })
+
+  it("retries local image removal while a stopping container still uses the image", async () => {
+    const { handleDeleteApp } = await import("./delete-app")
+    const { db, updateCalls } = createMockDb()
+    spyOn(registryMod, "deleteRepository").mockResolvedValue({ tagsDeleted: 1, errors: [] })
+    let attempts = 0
+    const remove = mock(async () => {
+      attempts++
+      if (attempts <= 2) {
+        throw new Error(
+          "Docker responded with status code 409: conflict: unable to delete (must be forced) - container 670df2c1bbff is using its referenced image 813b39cd69d8"
+        )
+      }
+    })
+    spyOn(singletonsMod, "getSharedAgent").mockReturnValue({
+      imageRemove: remove,
+    } as any)
+    spyOn(queueClaimMod, "claimQueuedRow").mockResolvedValue({
+      app_id: "demo",
+      requested_by_user_id: "user-1",
+      source: "api",
+      options: {
+        dockerCleanup: false,
+        deleteBuildArtifacts: false,
+        deleteCaddyRoutes: false,
+      },
+    })
+    const result = await handleDeleteApp(db, { id: "delete", payload: { jobId: "delete" } })
+    expect(result?.steps.localImages).toEqual({ ok: true })
+    expect(attempts).toBeGreaterThanOrEqual(3)
+    expect(updateCalls.at(-1)?.values).toMatchObject({ status: "succeeded" })
   })
 
   it("preserves images when deleteImages is false", async () => {
@@ -462,7 +499,7 @@ describe("handleDeleteApp", () => {
     })
   })
 
-  it("marks the delete job failed when app volume purge fails", async () => {
+  it("records a failed app volume purge as a warning on the succeeded job", async () => {
     const { handleDeleteApp } = await import("./delete-app")
     const { db, updateCalls } = createMockDb()
     const claimed = {
@@ -487,18 +524,12 @@ describe("handleDeleteApp", () => {
       payload: JSON.stringify({ jobId: "job-volume-fail" }),
     })
 
-    expect(
-      updateCalls.some(
-        (call) =>
-          call.table === app_delete_jobs &&
-          (call.values as any).status === "failed"
-      )
-    ).toBeTrue()
     const finalUpdate = updateCalls.find(
       (call) =>
         call.table === app_delete_jobs && "status" in (call.values as any)
     )
-    expect((finalUpdate?.values as any).error_message).toContain("purge failed")
+    expect((finalUpdate?.values as any).status).toBe("succeeded")
+    expect((finalUpdate?.values as any).error_message).toContain("[appVolumes] purge failed")
   })
 
   it("stops the Swarm service before leftover docker containers", async () => {

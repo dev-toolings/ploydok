@@ -13,6 +13,7 @@ import { toast } from "sonner"
 import { useQueryClient } from "@tanstack/react-query"
 import { useEventsSubscription } from "./events-provider"
 import { invalidateGetCache } from "./api"
+import { toastDeleteOutcome } from "./delete-outcome"
 import {
   markAppDeletingInListCaches,
   markAppStoppedInListCaches,
@@ -75,7 +76,7 @@ export function useDeploymentToasts(): void {
       removeAppFromListCaches(qc, evt.appId)
       qc.removeQueries({ queryKey: ["apps", evt.appId] })
       void qc.invalidateQueries({ queryKey: ["apps"] })
-      toast.success(evt.message, { id: `delete-app:${evt.appId}` })
+      toastDeleteOutcome(evt, toast)
     },
     [qc]
   )
@@ -86,7 +87,7 @@ export function useDeploymentToasts(): void {
       if (!evt.appId) return
       invalidateGetCache()
       void qc.invalidateQueries({ queryKey: ["apps"] })
-      toast.error(evt.message, { id: `delete-app:${evt.appId}` })
+      toastDeleteOutcome(evt, toast)
     },
     [qc]
   )

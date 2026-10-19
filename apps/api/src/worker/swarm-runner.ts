@@ -6,6 +6,7 @@ import * as grpc from "@grpc/grpc-js"
 import { and, desc, eq, inArray } from "drizzle-orm"
 import { AgentClient } from "@ploydok/agent-proto"
 import type {
+  ListContainersResponse,
   ListServiceTasksResponse,
   LogLine,
   ServiceCreateResponse,
@@ -597,6 +598,41 @@ export async function scaleSwarmApp(appId: string, replicas: number, db: Db) {
   }
 }
 
+/**
+ * Swarm removes a service immediately but shuts its task containers down
+ * asynchronously (stop grace period). Anything that reuses the app's
+ * resources afterwards (image removal, network teardown) must wait for the
+ * containers to be gone, or Docker answers "image is being used".
+ */
+export async function waitForAppContainersGone(opts: {
+  agent: Pick<AgentClient, "listContainers">
+  appId: string
+  serviceNames: readonly string[]
+  timeoutMs?: number
+  pollMs?: number
+}): Promise<{ gone: boolean; remaining: string[] }> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 45_000)
+  const pollMs = opts.pollMs ?? 500
+  for (;;) {
+    const res = await grpcUnary<ListContainersResponse>(
+      opts.agent.listContainers.bind(opts.agent),
+      { kindFilter: "app" }
+    )
+    const remaining = res.containers
+      .filter(
+        (c) =>
+          c.appId === opts.appId ||
+          opts.serviceNames.some(
+            (name) => c.name === name || c.name.startsWith(`${name}.`)
+          )
+      )
+      .map((c) => c.name)
+    if (remaining.length === 0) return { gone: true, remaining }
+    if (Date.now() >= deadline) return { gone: false, remaining }
+    await sleep(pollMs)
+  }
+}
+
 export async function stopSwarmApp(appId: string, db: Db) {
   const rows = await db
     .select({
@@ -618,6 +654,19 @@ export async function stopSwarmApp(appId: string, db: Db) {
   try {
     for (const serviceName of names) {
       await grpcUnary(agent.serviceRemove.bind(agent), { serviceName })
+    }
+    if (names.length > 0) {
+      const wait = await waitForAppContainersGone({
+        agent,
+        appId,
+        serviceNames: names,
+      })
+      if (!wait.gone) {
+        workerLog.warn(
+          { appId, remaining: wait.remaining },
+          "swarm task containers still present after service removal"
+        )
+      }
     }
     await caddy.removeUpstream(appId)
     await db

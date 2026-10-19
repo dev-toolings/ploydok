@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { apiFetch, invalidateGetCache } from "./api"
 import i18n from "./i18n"
 import { normalizeAppDetail } from "./apps"
+import { deleteOutcome } from "./delete-outcome"
 import { notifyMutationError } from "./second-factor-toast"
 import { useEventsSubscribeFn } from "./events-provider"
 import type {
@@ -17,6 +18,7 @@ import type {
   RawAppDetail,
 } from "./apps"
 import type { ApiError } from "./api"
+import type { NotificationEvent } from "./notifications"
 import type { QueryClient, QueryKey } from "@tanstack/react-query"
 
 // ---------------------------------------------------------------------------
@@ -107,18 +109,24 @@ function useTrackAppDelete(appId: string): (jobId: string) => void {
 
         unsubDeleted =
           subscribe?.("app.deleted", (data) => {
-            const evt = data as { appId?: string; message?: string }
+            const evt = data as NotificationEvent
             if (evt.appId !== appId) return
             cleanup()
-            resolve(evt.message ?? i18n.t("apps:toasts.deleted"))
+            const outcome = deleteOutcome(evt)
+            resolve(outcome.text)
+            // toast.promise only knows success: a deletion with leftover
+            // cleanup is shown as a warning right after it settles.
+            if (outcome.level === "warning") {
+              window.setTimeout(() => toast.warning(outcome.text, { id: toastId }), 0)
+            }
           }) ?? null
 
         unsubFailed =
           subscribe?.("app.delete.failed", (data) => {
-            const evt = data as { appId?: string; message?: string }
+            const evt = data as NotificationEvent
             if (evt.appId !== appId) return
             cleanup()
-            reject(new Error(evt.message ?? i18n.t("apps:toasts.deleteFailed")))
+            reject(new Error(deleteOutcome(evt).text))
           }) ?? null
 
         const reconcile = async (): Promise<void> => {

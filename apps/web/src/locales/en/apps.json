@@ -407,7 +407,10 @@
     "protectionSaved": "Protection settings saved",
     "certUploaded": "Certificate uploaded successfully",
     "customCertRemoved": "Custom certificate removed: reverting to ACME",
-    "routingChecked": "Public routing status refreshed"
+    "routingChecked": "Public routing status refreshed",
+    "deletedNamed": "{{app}} deleted",
+    "deletedWithWarnings": "{{app}} deleted, but some cleanup is left to check: {{steps}}",
+    "deleteFailedSteps": "{{app}} could not be deleted: {{steps}}"
   },
   "empty": {
     "noApps": "No apps yet",
@@ -1135,5 +1138,16 @@
     "currentCommit": "Current commit",
     "domain": "Domain",
     "notSet": "Not set"
+  },
+  "deleteSteps": {
+    "app": "App",
+    "containers": "containers",
+    "registry": "registry images",
+    "localImages": "local Docker images",
+    "caddy": "Caddy route",
+    "buildArtifacts": "build workspace",
+    "staticArtifacts": "static files",
+    "appVolumes": "volumes",
+    "dbCascade": "database record"
   }
 }
