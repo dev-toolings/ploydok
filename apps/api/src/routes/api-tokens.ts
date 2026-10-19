@@ -44,6 +44,17 @@ export function createApiTokensRouter(db: Db): Hono<AppEnv> {
     if (!user) {
       return c.json({ error: "Unauthorized" }, 401)
     }
+    if (user.pat_id !== undefined) {
+      return c.json(
+        {
+          error: {
+            code: "PAT_NOT_ALLOWED",
+            message: "API tokens cannot manage API tokens",
+          },
+        },
+        403
+      )
+    }
 
     const body = await c.req.json()
     const parseResult = ApiTokenCreateSchema.safeParse(body)
@@ -131,6 +142,17 @@ export function createApiTokensRouter(db: Db): Hono<AppEnv> {
     const user = getUser(c)
     if (!user) {
       return c.json({ error: "Unauthorized" }, 401)
+    }
+    if (user.pat_id !== undefined) {
+      return c.json(
+        {
+          error: {
+            code: "PAT_NOT_ALLOWED",
+            message: "API tokens cannot manage API tokens",
+          },
+        },
+        403
+      )
     }
 
     const tokenId = c.req.param("id")
