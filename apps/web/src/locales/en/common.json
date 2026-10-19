@@ -112,7 +112,6 @@
     "registry": "Registry",
     "notifications": "Notifications",
     "apiTokens": "API tokens",
-    "apiTokensTooltip": "Planned — API tokens are not generally available.",
     "guide": "Guide",
     "changelog": "Changelog",
     "settings": "Settings",

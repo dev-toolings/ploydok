@@ -139,7 +139,8 @@ export function resolveTopbarBreadcrumb(
     if (
       segments[0] === "git-providers" ||
       segments[0] === "registry" ||
-      segments[0] === "notifications"
+      segments[0] === "notifications" ||
+      segments[0] === "api-tokens"
     ) {
       items[0] = integrations
     }
@@ -166,6 +167,11 @@ export function resolveTopbarBreadcrumb(
 
     if (segments[0] === "notifications") {
       items.push(navItem("notifications"))
+      return items
+    }
+
+    if (segments[0] === "api-tokens") {
+      items.push(navItem("apiTokens"))
       return items
     }
 

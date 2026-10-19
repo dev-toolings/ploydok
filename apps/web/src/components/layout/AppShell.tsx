@@ -236,8 +236,7 @@ const integrationsNav: Array<NavItem> = [
   {
     id: "apiTokens",
     icon: RiKey2Line,
-    comingSoon: true,
-    tooltipKey: "nav.apiTokensTooltip",
+    rootSettingsPathSuffix: "api-tokens",
   },
 ]
 

@@ -526,5 +526,54 @@
     "sessionsDevices": "{{count}} appareils",
     "sessionsStrong": "Aucune connexion parallèle à auditer.",
     "sessionsWeak": "Vérifiez les autres appareils et révoquez tout ce qui est inconnu."
+  },
+  "apiTokens": {
+    "title": "Jetons MCP et API",
+    "description": "Connectez un agent IA ou un harness (Claude Code, Codex, Cursor) à Ploydok via MCP pour lire les logs et lancer des déploiements.",
+    "new": "Nouveau jeton MCP",
+    "empty": "Aucun jeton",
+    "emptyHint": "Créez un jeton MCP pour qu'un agent IA lise les logs de vos apps et, si vous l'autorisez, les déploie.",
+    "revoked": "Jeton révoqué",
+    "form": {
+      "title": "Nouveau jeton MCP",
+      "hint": "Le jeton ne fonctionne que sur l'endpoint MCP et uniquement pour l'organisation choisie.",
+      "name": "Nom",
+      "namePlaceholder": "Claude Code sur mon portable",
+      "organization": "Organisation",
+      "expiry": "Expire après",
+      "days_one": "{{count}} jour",
+      "days_other": "{{count}} jours",
+      "allApps": "Toutes les apps de l'organisation",
+      "allAppsHint": "Désactivez pour choisir des apps. Un jeton limité à des apps ne lit ni les services ni les bases de données.",
+      "noApps": "Cette organisation n'a pas encore d'app.",
+      "allowDeploy": "Autoriser les déploiements",
+      "allowDeployHint": "Déployer, redémarrer, arrêter, revenir en arrière et mettre à l'échelle. Réservé aux propriétaires de l'organisation.",
+      "required": "Le nom et l'organisation sont obligatoires",
+      "pickApps": "Choisissez au moins une app",
+      "create": "Créer le jeton",
+      "creating": "Création..."
+    },
+    "created": {
+      "title": "Votre jeton MCP",
+      "description": "Copiez-le maintenant : il ne sera plus affiché.",
+      "token": "Jeton",
+      "url": "Endpoint MCP",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "cursor": "Cursor (.cursor/mcp.json)"
+    },
+    "row": {
+      "apps_one": "{{count}} app",
+      "apps_other": "{{count}} apps",
+      "allApps": "Toutes les apps",
+      "canDeploy": "Peut déployer",
+      "readOnly": "Lecture seule",
+      "expires": "Expire le {{date}}",
+      "noExpiry": "Sans expiration",
+      "lastUsed": "Utilisé le {{date}}",
+      "neverUsed": "Jamais utilisé",
+      "revoke": "Révoquer",
+      "confirm": "Confirmer"
+    }
   }
 }
