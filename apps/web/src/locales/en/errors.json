@@ -32,6 +32,7 @@
     "INVALID_DOMAIN": "Enter a valid hostname without a path, port, or credentials.",
     "DOMAIN_CONFLICT": "This hostname is already used by another resource.",
     "CONFLICT": "This action conflicts with an existing resource.",
+    "ORGANIZATION_NOT_EMPTY": "Delete all apps, services and databases in this workspace before deleting it.",
     "VALIDATION_ERROR": "Some values are invalid. Review the form and try again.",
     "rate_limited": "Too many requests. Try again shortly.",
     "replay_limit_reached": "This delivery has reached its replay limit.",

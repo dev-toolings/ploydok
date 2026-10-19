@@ -295,5 +295,7 @@ it("returns 409 when deleting an organization that still has runtime resources",
   const app = buildApp(createOrganizationsRouter({} as Db))
   const response = await app.request("/organizations/test-user", { method: "DELETE" })
   expect(response.status).toBe(409)
-  expect(await response.json()).toMatchObject({ error: { code: "CONFLICT" } })
+  expect(await response.json()).toMatchObject({
+    error: { code: "ORGANIZATION_NOT_EMPTY" },
+  })
 })

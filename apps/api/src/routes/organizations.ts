@@ -140,7 +140,13 @@ export function createOrganizationsRouter(db: Db): Hono {
     if (!result.ok) {
       if (result.reason === "not_empty") {
         return c.json(
-          { error: { code: "CONFLICT", message: "Delete all apps, services and databases before deleting the organization" } },
+          {
+            error: {
+              code: "ORGANIZATION_NOT_EMPTY",
+              message:
+                "Delete all apps, services and databases before deleting the organization",
+            },
+          },
           409
         )
       }
