@@ -777,14 +777,18 @@ message SwarmTaskSnapshot {
   optional int32 exit_code = 11;        // Docker State.ExitCode; -1 when unavailable.
   optional string health_status = 12;   // "healthy", "unhealthy", "starting", or "none".
   optional string state = 13;           // Docker State.Status.
+  optional bool matches_service_spec = 14; // Task.Spec matches the inspected service TaskTemplate.
 }
 
 message ListServiceTasksRequest {
   string service_name = 1;
+  optional bool include_history = 2; // Include old tasks for rollout diagnostics.
 }
 
 message ListServiceTasksResponse {
   repeated SwarmTaskSnapshot tasks = 1;
+  optional string update_state = 2; // Empty for a fresh service, otherwise Docker UpdateStatus.State.
+  optional string update_message = 3;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

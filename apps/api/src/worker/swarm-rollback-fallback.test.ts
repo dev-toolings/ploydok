@@ -38,6 +38,7 @@ mock.module("@ploydok/agent-proto", () => {
       serviceTaskPolls++
       if (serviceUpdateMode === "async-missing" && serviceTaskPolls === 1) {
         callback(null, {
+          updateState: "updating",
           tasks: [
             {
               id: "task-1",
@@ -51,12 +52,14 @@ mock.module("@ploydok/agent-proto", () => {
               healthStatus: "none",
               nodeId: "node-1",
               error: "manifest unknown",
+              matchesServiceSpec: true,
             },
           ],
         })
         return {}
       }
       callback(null, {
+        updateState: "rollback_completed",
         tasks: [
           {
             id: "task-1",
@@ -70,6 +73,7 @@ mock.module("@ploydok/agent-proto", () => {
             healthStatus: "healthy",
             nodeId: "node-1",
             error: "",
+            matchesServiceSpec: true,
           },
         ],
       })

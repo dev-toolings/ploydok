@@ -193,7 +193,14 @@ function readContainerTail(
   })
 }
 
-async function waitForServiceHealthy(opts: {
+class SwarmRolloutError extends Error {
+  constructor(message: string, readonly automaticRollback: boolean) {
+    super(message)
+    this.name = "SwarmRolloutError"
+  }
+}
+
+export async function waitForServiceHealthy(opts: {
   agent: InstanceType<typeof AgentClient>
   serviceName: string
   replicas: number
@@ -201,47 +208,69 @@ async function waitForServiceHealthy(opts: {
   hasHealthcheck?: boolean
   failOnUnavailableImage?: boolean
   timeoutMs?: number
+  pollMs?: number
+  expectUpdate?: boolean
+  nativeRollback?: boolean
 }) {
   const timeoutAt = Date.now() + (opts.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS)
   let last: ListServiceTasksResponse | null = null
+  let failure: string | undefined
+  let automaticRollback = false
   while (Date.now() < timeoutAt) {
     await fenceDeploySideEffect()
     last = await grpcUnary<ListServiceTasksResponse>(
       opts.agent.listServiceTasks.bind(opts.agent),
-      { serviceName: opts.serviceName }
+      { serviceName: opts.serviceName, includeHistory: true }
     )
+    if (last.updateState === undefined) {
+      throw new Error("Swarm rollout inspection is unavailable: upgrade the agent before deploying")
+    }
+    const state = last.updateState
+    automaticRollback = state.startsWith("rollback_") && !opts.nativeRollback
+    if (state === "paused" || state === "rollback_paused" || automaticRollback) {
+      failure = `update ${state}${last.updateMessage ? `: ${last.updateMessage}` : ""}`
+      break
+    }
     if (opts.failOnUnavailableImage) {
       const unavailableTask = last.tasks.find(
-        (task) => task.error && isUnavailableRollbackImage(task.error)
+        (task) => task.matchesServiceSpec === true && task.error && isUnavailableRollbackImage(task.error)
       )
       if (unavailableTask) {
         throw new UnavailableRollbackImageError(unavailableTask.error)
       }
     }
-    const healthy = last.tasks.filter((task) =>
+    const healthy = new Set(last.tasks.filter((task) =>
+      task.matchesServiceSpec === true &&
+      task.desiredState === "running" &&
       taskIsHealthy(task, opts.hasHealthcheck ?? true)
-    )
-    if (healthy.length >= opts.replicas) return last
+    ).map((task) => task.slot))
+    const completed = opts.nativeRollback
+      ? state === "rollback_completed"
+      : state === "completed" || (!opts.expectUpdate && state === "")
+    if (completed && healthy.size >= opts.replicas) return last
     logBus.publish(
       opts.channel,
-      `[swarm] waiting for healthy tasks ${healthy.length}/${opts.replicas}`
+      `[swarm] waiting for healthy tasks ${healthy.size}/${opts.replicas} (update=${state || "none"})`
     )
-    await sleep(DEFAULT_TASK_POLL_MS)
+    await sleep(opts.pollMs ?? DEFAULT_TASK_POLL_MS)
   }
   const tasks = last?.tasks ?? []
-  const culprit = taskForLogs(tasks)
+  const desiredTasks = tasks.filter((task) => task.matchesServiceSpec === true)
+  const failedTasks = tasks.filter((task) => task.error || task.healthStatus === "unhealthy")
+  const culprit = taskForLogs(failedTasks) ?? taskForLogs(desiredTasks) ?? taskForLogs(tasks)
   const output = culprit
     ? await readContainerTail(opts.agent, culprit.containerId)
     : []
   for (const line of output) {
     logBus.publish(opts.channel, `[container] ${line}`)
   }
-  const summary = `Swarm service ${opts.serviceName} did not reach ${opts.replicas} healthy task(s): ${describeTasks(tasks)}`
+  const summary = `Swarm service ${opts.serviceName} ${failure ?? `did not reach ${opts.replicas} healthy task(s)`}: ${describeTasks(tasks)}`
   throw Object.assign(
-    new Error(
+    new SwarmRolloutError(
       output.length > 0
         ? `${summary}\nLast container output:\n${output.join("\n")}`
-        : summary
+        : summary,
+      automaticRollback
     ),
     { classifyMessage: summary }
   )
@@ -433,6 +462,7 @@ export async function runSwarmDeploy(
       replicas,
       channel,
       hasHealthcheck: Boolean(spec.healthcheck),
+      expectUpdate: !createsService,
     })
 
     // A fresh overlay only exists locally once a workload task has joined it.
@@ -513,7 +543,7 @@ export async function runSwarmDeploy(
           "swarm: partial service reconciliation failed"
         )
       )
-    } else if (runtimeMutated) {
+    } else if (runtimeMutated && !(error instanceof SwarmRolloutError && error.automaticRollback)) {
       await runOwnedDeployReconciliation(async () => {
         await grpcUnary<ServiceRollbackResponse>(
           agent.serviceRollback.bind(agent),
@@ -702,6 +732,8 @@ export async function rollbackSwarmApp(
         channel: `runtime:${appId}`,
         hasHealthcheck,
         failOnUnavailableImage: !useNativeRollback,
+        expectUpdate: !useNativeRollback,
+        nativeRollback: useNativeRollback,
       })
     } catch (error) {
       if (
@@ -728,6 +760,7 @@ export async function rollbackSwarmApp(
         replicas: app.replicas ?? 1,
         channel: `runtime:${appId}`,
         hasHealthcheck,
+        nativeRollback: true,
       })
     }
     if (domain) {
@@ -771,7 +804,8 @@ export async function rollbackSwarmApp(
     })
       .where(and(eq(apps.id, appId), currentDeployLeaseCondition()))
   } catch (error) {
-    if (runtimeMutated && (!useNativeRollback || nativeRollbackApplied)) {
+    if (runtimeMutated && (!useNativeRollback || nativeRollbackApplied) &&
+      !(error instanceof SwarmRolloutError && error.automaticRollback)) {
       await runOwnedDeployReconciliation(async () => {
         await grpcUnary<ServiceRollbackResponse>(
           agent.serviceRollback.bind(agent),

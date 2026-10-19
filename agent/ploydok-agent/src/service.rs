@@ -541,6 +541,94 @@ fn swarm_info_response(info: bollard::models::SystemInfo) -> SwarmInfoResponse {
     }
 }
 
+// Compare raw Docker JSON: Bollard 0.17 decodes HealthCheck, while Docker
+// returns Healthcheck. Typed decoding would silently discard that field.
+fn task_matches_service_spec(
+    task: &serde_json::Value,
+    template: Option<&serde_json::Value>,
+) -> bool {
+    let Some(template) = template.filter(|value| value.is_object()) else {
+        return false;
+    };
+    let Some(spec) = task.get("Spec").filter(|value| value.is_object()) else {
+        return false;
+    };
+    let normalize = |value: &serde_json::Value| {
+        let mut value = value.clone();
+        // Docker materializes the service's default Runtime but can omit it
+        // from Task.Spec. Preserve every non-default runtime and all other fields.
+        if value
+            .get("Runtime")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|runtime| runtime.is_empty() || runtime == "container")
+        {
+            if let Some(object) = value.as_object_mut() {
+                object.remove("Runtime");
+            }
+        }
+        value
+    };
+    normalize(template) == normalize(spec)
+}
+
+async fn docker_swarm_json(request: reqwest::RequestBuilder) -> Result<serde_json::Value, Status> {
+    let body = request
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| Status::internal(format!("inspect swarm rollout: {e}")))?
+        .text()
+        .await
+        .map_err(|e| Status::internal(format!("read swarm rollout: {e}")))?;
+    serde_json::from_str(&body).map_err(|e| Status::internal(format!("decode swarm rollout: {e}")))
+}
+
+#[cfg(test)]
+mod rollout_spec_tests {
+    use super::*;
+
+    #[test]
+    fn same_image_with_changed_healthcheck_env_or_force_update_is_not_current() {
+        let template = serde_json::json!({
+            "ContainerSpec": {
+                "Image": "traefik/whoami:v1.10",
+                "Env": ["PORT=80"],
+                "Healthcheck": { "Test": ["CMD", "probe", "81"] }
+            },
+            "ForceUpdate": 2
+        });
+        let current = serde_json::json!({ "Spec": template });
+        assert!(task_matches_service_spec(&current, Some(&template)));
+        let mut with_default_runtime = template.clone();
+        with_default_runtime["Runtime"] = serde_json::json!("container");
+        assert!(task_matches_service_spec(
+            &current,
+            Some(&with_default_runtime)
+        ));
+        with_default_runtime["Runtime"] = serde_json::json!("plugin");
+        assert!(!task_matches_service_spec(
+            &current,
+            Some(&with_default_runtime)
+        ));
+        for field in ["Healthcheck", "Env", "ForceUpdate"] {
+            let mut previous = current.clone();
+            match field {
+                "Healthcheck" => {
+                    previous["Spec"]["ContainerSpec"][field]["Test"] =
+                        serde_json::json!(["CMD", "probe", "80"])
+                }
+                "Env" => previous["Spec"]["ContainerSpec"][field] = serde_json::json!(["PORT=81"]),
+                _ => previous["Spec"][field] = serde_json::json!(1),
+            }
+            assert!(
+                !task_matches_service_spec(&previous, Some(&template)),
+                "{field}"
+            );
+        }
+        assert!(!task_matches_service_spec(&current, None));
+    }
+}
+
 async fn docker_socket_post(path: &str, json_body: &str) -> Result<String, Status> {
     let mut stream = UnixStream::connect("/var/run/docker.sock")
         .await
@@ -2739,123 +2827,156 @@ impl Agent for AgentService {
             .map(swarm_info_response)
             .map_err(|e| bollard_err("info", e))?;
         validate_swarm_task_inspection_topology(&swarm)?;
-        // Bollard 0.17 does not expose Docker's `/tasks` endpoint. The
-        // container snapshot below is therefore a deliberate single-node
-        // fallback. Refuse workers and multi-node managers before any local
-        // snapshot can be mistaken for cluster-wide dependency health.
-        let mut filters = HashMap::new();
-        filters.insert(
-            "label".to_string(),
-            vec![format!(
-                "com.docker.swarm.service.name={}",
-                req.service_name
-            )],
-        );
-        let containers = self
-            .docker
-            .list_containers(Some(ListContainersOptions {
-                all: true,
-                filters,
-                ..Default::default()
-            }))
-            .await
-            .map_err(|e| bollard_err("list_containers", e))?;
-        // During a start-first update Docker can briefly retain both the old
-        // and new task containers for one slot. Keep only the newest task so
-        // readiness cannot be satisfied by an obsolete healthy container.
-        let mut latest_by_slot = HashMap::new();
-        for container in containers {
-            let labels = container.labels.clone().unwrap_or_default();
-            let key = labels
-                .get("com.docker.swarm.task.name")
-                .and_then(|name| {
-                    name.rsplit_once('.')
-                        .map(|(slot_name, _)| slot_name.to_string())
-                })
-                .or_else(|| container.id.clone())
-                .unwrap_or_default();
-            let replace = latest_by_slot
-                .get(&key)
-                .map(|current: &bollard::models::ContainerSummary| {
-                    container.created.unwrap_or(i64::MIN) > current.created.unwrap_or(i64::MIN)
-                })
-                .unwrap_or(true);
-            if replace {
-                latest_by_slot.insert(key, container);
-            }
+        // Read manager tasks, including rejected tasks with no container. Container
+        // timestamps cannot identify the desired spec during start-first updates.
+        let client = reqwest::Client::builder()
+            .unix_socket("/var/run/docker.sock")
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| Status::internal(format!("docker task client: {e}")))?;
+        // Do not insert defaults: compare the stored TaskTemplate with Task.Spec.
+        let service = docker_swarm_json(client.get(format!(
+            "http://localhost/v1.45/services/{}?insertDefaults=false",
+            req.service_name
+        )))
+        .await?;
+        let service_id = service["ID"]
+            .as_str()
+            .ok_or_else(|| Status::internal("swarm service ID missing"))?;
+        let template = service.pointer("/Spec/TaskTemplate");
+        let filters = serde_json::json!({ "service": [service_id] }).to_string();
+        let response = docker_swarm_json(
+            client
+                .get("http://localhost/v1.45/tasks")
+                .query(&[("filters", filters)]),
+        )
+        .await?;
+        let raw_tasks = response
+            .as_array()
+            .ok_or_else(|| Status::internal("swarm tasks are not an array"))?;
+        let mut manager_tasks = raw_tasks
+            .iter()
+            .map(|raw| {
+                let task: bollard::models::Task = serde_json::from_value(raw.clone())
+                    .map_err(|e| Status::internal(format!("decode swarm task: {e}")))?;
+                Ok((task, task_matches_service_spec(raw, template)))
+            })
+            .collect::<Result<Vec<_>, Status>>()?;
+        // Keep the most recent failure first for rollout diagnostics.
+        manager_tasks.sort_by(|a, b| b.0.created_at.cmp(&a.0.created_at));
+        if !req.include_history.unwrap_or(false) {
+            // Preserve the latest-per-slot view used by Compose dependency waits.
+            let mut slots = std::collections::HashSet::new();
+            manager_tasks.retain(|(task, _)| slots.insert(task.slot.unwrap_or(0)));
         }
-        let tasks = futures::future::join_all(latest_by_slot.into_values().map(|c| async {
-            let container_id = c.id.clone().unwrap_or_default();
-            let state = self
-                .docker
-                .inspect_container(&container_id, None)
-                .await
-                .ok()
-                .and_then(|info| info.state);
-            let running = state.as_ref().and_then(|state| state.status.as_ref())
-                == Some(&bollard::models::ContainerStateStatusEnum::RUNNING);
-            let state_name = state
-                .as_ref()
-                .and_then(|state| state.status.as_ref())
-                .map(ToString::to_string)
-                .unwrap_or_default();
-            let exit_code = state
-                .as_ref()
-                .and_then(|state| state.exit_code)
-                .map(|code| code as i32)
-                .unwrap_or(-1);
-            let health_status = state
-                .as_ref()
-                .and_then(|state| state.health.as_ref())
-                .and_then(|health| health.status.as_ref())
-                .map(|status| match status {
-                    bollard::models::HealthStatusEnum::STARTING => "starting",
-                    bollard::models::HealthStatusEnum::HEALTHY => "healthy",
-                    bollard::models::HealthStatusEnum::UNHEALTHY => "unhealthy",
-                    _ => "none",
-                })
-                .unwrap_or("none")
-                .to_string();
-            let labels = c.labels.unwrap_or_default();
-            SwarmTaskSnapshot {
-                id: labels
-                    .get("com.docker.swarm.task.id")
-                    .cloned()
-                    .unwrap_or_default(),
-                service_name: req.service_name.clone(),
-                container_id: c.id.unwrap_or_default(),
-                slot: labels
-                    .get("com.docker.swarm.task.name")
-                    .and_then(|name| name.split('.').nth(1))
-                    .and_then(|slot| slot.parse::<u32>().ok())
-                    .unwrap_or(0),
-                image: c.image.unwrap_or_default(),
-                desired_state: String::new(),
-                status: c.status.unwrap_or_default(),
-                node_id: labels
-                    .get("com.docker.swarm.node.id")
-                    .cloned()
-                    .unwrap_or_default(),
-                error: if health_status != "healthy" {
-                    state
-                        .as_ref()
-                        .and_then(|state| state.health.as_ref())
-                        .and_then(|health| health.log.as_ref())
-                        .and_then(|logs| logs.last())
-                        .and_then(|log| log.output.as_ref())
-                        .map(|output| output.chars().take(4096).collect())
-                        .unwrap_or_default()
+        let service_name = &req.service_name;
+        let tasks = futures::future::join_all(manager_tasks.into_iter().map(
+            |(task, matches_service_spec)| async move {
+                let status = task.status.as_ref();
+                let container_id = status
+                    .and_then(|status| status.container_status.as_ref())
+                    .and_then(|container| container.container_id.clone())
+                    .unwrap_or_default();
+                let state = if container_id.is_empty() {
+                    None
                 } else {
-                    String::new()
-                },
-                running: Some(running),
-                exit_code: Some(exit_code),
-                health_status: Some(health_status),
-                state: Some(state_name),
-            }
-        }))
+                    self.docker
+                        .inspect_container(&container_id, None)
+                        .await
+                        .ok()
+                        .and_then(|info| info.state)
+                };
+                let running = state.as_ref().and_then(|state| state.status.as_ref())
+                    == Some(&bollard::models::ContainerStateStatusEnum::RUNNING);
+                let health_status = state
+                    .as_ref()
+                    .and_then(|state| state.health.as_ref())
+                    .and_then(|health| health.status.as_ref())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "none".to_string());
+                let health_output = state
+                    .as_ref()
+                    .and_then(|state| state.health.as_ref())
+                    .and_then(|health| health.log.as_ref())
+                    .and_then(|logs| logs.last())
+                    .and_then(|log| log.output.as_deref())
+                    .unwrap_or_default();
+                let task_error = status
+                    .and_then(|status| status.err.as_deref())
+                    .unwrap_or_default();
+                let error = [
+                    task_error,
+                    if health_status == "healthy" {
+                        ""
+                    } else {
+                        health_output
+                    },
+                ]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("; ");
+                let state_name = state
+                    .as_ref()
+                    .and_then(|state| state.status.as_ref())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| {
+                        status
+                            .and_then(|status| status.state.as_ref())
+                            .map(ToString::to_string)
+                            .unwrap_or_default()
+                    });
+                SwarmTaskSnapshot {
+                    id: task.id.clone().unwrap_or_default(),
+                    service_name: service_name.clone(),
+                    container_id,
+                    slot: task.slot.unwrap_or(0) as u32,
+                    image: task
+                        .spec
+                        .as_ref()
+                        .and_then(|spec| spec.container_spec.as_ref())
+                        .and_then(|container| container.image.clone())
+                        .unwrap_or_default(),
+                    desired_state: task
+                        .desired_state
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
+                    status: state_name.clone(),
+                    node_id: task.node_id.clone().unwrap_or_default(),
+                    error: error.chars().take(4096).collect(),
+                    running: Some(running),
+                    exit_code: Some(
+                        state
+                            .as_ref()
+                            .and_then(|state| state.exit_code)
+                            .map(|code| code as i32)
+                            .unwrap_or(-1),
+                    ),
+                    health_status: Some(health_status),
+                    state: Some(state_name),
+                    matches_service_spec: Some(matches_service_spec),
+                }
+            },
+        ))
         .await;
-        Ok(Response::new(ListServiceTasksResponse { tasks }))
+        Ok(Response::new(ListServiceTasksResponse {
+            tasks,
+            update_state: Some(
+                service
+                    .pointer("/UpdateStatus/State")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+            update_message: Some(
+                service
+                    .pointer("/UpdateStatus/Message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+        }))
     }
 
     // ── RestoreDatabase (client-side streaming) ──────────────────────────────

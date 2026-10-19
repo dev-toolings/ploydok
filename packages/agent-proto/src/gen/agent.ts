@@ -882,15 +882,24 @@ export interface SwarmTaskSnapshot {
     | string
     | undefined;
   /** Docker State.Status. */
-  state?: string | undefined;
+  state?:
+    | string
+    | undefined;
+  /** Task.Spec matches the inspected service TaskTemplate. */
+  matchesServiceSpec?: boolean | undefined;
 }
 
 export interface ListServiceTasksRequest {
   serviceName: string;
+  /** Include old tasks for rollout diagnostics. */
+  includeHistory?: boolean | undefined;
 }
 
 export interface ListServiceTasksResponse {
   tasks: SwarmTaskSnapshot[];
+  /** Empty for a fresh service, otherwise Docker UpdateStatus.State. */
+  updateState?: string | undefined;
+  updateMessage?: string | undefined;
 }
 
 /**
@@ -10649,6 +10658,7 @@ function createBaseSwarmTaskSnapshot(): SwarmTaskSnapshot {
     exitCode: undefined,
     healthStatus: undefined,
     state: undefined,
+    matchesServiceSpec: undefined,
   };
 }
 
@@ -10692,6 +10702,9 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
     }
     if (message.state !== undefined) {
       writer.uint32(106).string(message.state);
+    }
+    if (message.matchesServiceSpec !== undefined) {
+      writer.uint32(112).bool(message.matchesServiceSpec);
     }
     return writer;
   },
@@ -10807,6 +10820,14 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
           message.state = reader.string();
           continue;
         }
+        case 14: {
+          if (tag !== 112) {
+            break;
+          }
+
+          message.matchesServiceSpec = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10855,6 +10876,11 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
         ? globalThis.String(object.health_status)
         : undefined,
       state: isSet(object.state) ? globalThis.String(object.state) : undefined,
+      matchesServiceSpec: isSet(object.matchesServiceSpec)
+        ? globalThis.Boolean(object.matchesServiceSpec)
+        : isSet(object.matches_service_spec)
+        ? globalThis.Boolean(object.matches_service_spec)
+        : undefined,
     };
   },
 
@@ -10899,6 +10925,9 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
     if (message.state !== undefined) {
       obj.state = message.state;
     }
+    if (message.matchesServiceSpec !== undefined) {
+      obj.matchesServiceSpec = message.matchesServiceSpec;
+    }
     return obj;
   },
 
@@ -10920,18 +10949,22 @@ export const SwarmTaskSnapshot: MessageFns<SwarmTaskSnapshot> = {
     message.exitCode = object.exitCode ?? undefined;
     message.healthStatus = object.healthStatus ?? undefined;
     message.state = object.state ?? undefined;
+    message.matchesServiceSpec = object.matchesServiceSpec ?? undefined;
     return message;
   },
 };
 
 function createBaseListServiceTasksRequest(): ListServiceTasksRequest {
-  return { serviceName: "" };
+  return { serviceName: "", includeHistory: undefined };
 }
 
 export const ListServiceTasksRequest: MessageFns<ListServiceTasksRequest> = {
   encode(message: ListServiceTasksRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.serviceName !== "") {
       writer.uint32(10).string(message.serviceName);
+    }
+    if (message.includeHistory !== undefined) {
+      writer.uint32(16).bool(message.includeHistory);
     }
     return writer;
   },
@@ -10951,6 +10984,14 @@ export const ListServiceTasksRequest: MessageFns<ListServiceTasksRequest> = {
           message.serviceName = reader.string();
           continue;
         }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.includeHistory = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10967,6 +11008,11 @@ export const ListServiceTasksRequest: MessageFns<ListServiceTasksRequest> = {
         : isSet(object.service_name)
         ? globalThis.String(object.service_name)
         : "",
+      includeHistory: isSet(object.includeHistory)
+        ? globalThis.Boolean(object.includeHistory)
+        : isSet(object.include_history)
+        ? globalThis.Boolean(object.include_history)
+        : undefined,
     };
   },
 
@@ -10974,6 +11020,9 @@ export const ListServiceTasksRequest: MessageFns<ListServiceTasksRequest> = {
     const obj: any = {};
     if (message.serviceName !== "") {
       obj.serviceName = message.serviceName;
+    }
+    if (message.includeHistory !== undefined) {
+      obj.includeHistory = message.includeHistory;
     }
     return obj;
   },
@@ -10984,18 +11033,25 @@ export const ListServiceTasksRequest: MessageFns<ListServiceTasksRequest> = {
   fromPartial(object: DeepPartial<ListServiceTasksRequest>): ListServiceTasksRequest {
     const message = createBaseListServiceTasksRequest();
     message.serviceName = object.serviceName ?? "";
+    message.includeHistory = object.includeHistory ?? undefined;
     return message;
   },
 };
 
 function createBaseListServiceTasksResponse(): ListServiceTasksResponse {
-  return { tasks: [] };
+  return { tasks: [], updateState: undefined, updateMessage: undefined };
 }
 
 export const ListServiceTasksResponse: MessageFns<ListServiceTasksResponse> = {
   encode(message: ListServiceTasksResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     for (const v of message.tasks) {
       SwarmTaskSnapshot.encode(v!, writer.uint32(10).fork()).join();
+    }
+    if (message.updateState !== undefined) {
+      writer.uint32(18).string(message.updateState);
+    }
+    if (message.updateMessage !== undefined) {
+      writer.uint32(26).string(message.updateMessage);
     }
     return writer;
   },
@@ -11015,6 +11071,22 @@ export const ListServiceTasksResponse: MessageFns<ListServiceTasksResponse> = {
           message.tasks.push(SwarmTaskSnapshot.decode(reader, reader.uint32()));
           continue;
         }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.updateState = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.updateMessage = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -11027,6 +11099,16 @@ export const ListServiceTasksResponse: MessageFns<ListServiceTasksResponse> = {
   fromJSON(object: any): ListServiceTasksResponse {
     return {
       tasks: globalThis.Array.isArray(object?.tasks) ? object.tasks.map((e: any) => SwarmTaskSnapshot.fromJSON(e)) : [],
+      updateState: isSet(object.updateState)
+        ? globalThis.String(object.updateState)
+        : isSet(object.update_state)
+        ? globalThis.String(object.update_state)
+        : undefined,
+      updateMessage: isSet(object.updateMessage)
+        ? globalThis.String(object.updateMessage)
+        : isSet(object.update_message)
+        ? globalThis.String(object.update_message)
+        : undefined,
     };
   },
 
@@ -11034,6 +11116,12 @@ export const ListServiceTasksResponse: MessageFns<ListServiceTasksResponse> = {
     const obj: any = {};
     if (message.tasks?.length) {
       obj.tasks = message.tasks.map((e) => SwarmTaskSnapshot.toJSON(e));
+    }
+    if (message.updateState !== undefined) {
+      obj.updateState = message.updateState;
+    }
+    if (message.updateMessage !== undefined) {
+      obj.updateMessage = message.updateMessage;
     }
     return obj;
   },
@@ -11044,6 +11132,8 @@ export const ListServiceTasksResponse: MessageFns<ListServiceTasksResponse> = {
   fromPartial(object: DeepPartial<ListServiceTasksResponse>): ListServiceTasksResponse {
     const message = createBaseListServiceTasksResponse();
     message.tasks = object.tasks?.map((e) => SwarmTaskSnapshot.fromPartial(e)) || [];
+    message.updateState = object.updateState ?? undefined;
+    message.updateMessage = object.updateMessage ?? undefined;
     return message;
   },
 };
