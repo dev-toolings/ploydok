@@ -40,6 +40,7 @@ import * as gitlabConnectionModule from "../gitlab/connection"
 import { decryptSecret } from "../secrets/crypto"
 import { deployQueue } from "../worker/queues"
 import { buildPublicOrigin } from "../domains/app-domain"
+import { eventBus, type NotificationEvent } from "../worker/event-bus"
 
 // ---------------------------------------------------------------------------
 // Test DB helper — in-memory SQLite with all required tables
@@ -64,6 +65,7 @@ afterAll(async () => {
 let nextGitHubInstallationId = 1_000_000
 let gitLabConnectionReady = false
 let rollbackCalls = 0
+let rollbackFailure: Error | null = null
 
 async function grantTestInstallation(
   db: TestDb,
@@ -2060,6 +2062,7 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   mock.module("../worker/runner.js", () => ({
     rollbackApp: async () => {
       rollbackCalls++
+      if (rollbackFailure) throw rollbackFailure
     },
     restartApp: async () => undefined,
     stopApp: async () => undefined,
@@ -2075,13 +2078,30 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
   beforeEach(async () => {
     db = await makeTestDb()
     rollbackCalls = 0
+    rollbackFailure = null
     const user = await createTestUser(db)
     userId = user.id
     const project = await createTestProject(db, userId)
     projectId = project.id
   })
 
-  it.each(["succeeded", "succeeded_with_warning"] as const)("rollback with explicit %s buildId returns 200", async (status) => {
+  /** The response confirms the start; completion arrives on the user channel. */
+  function rollbackEvent(uid: string, appId: string): Promise<NotificationEvent> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        unsubscribe()
+        reject(new Error("rollback did not report completion"))
+      }, 5_000)
+      const unsubscribe = eventBus.subscribe(`user:${uid}`, (event) => {
+        if (event.appId !== appId || !event.data || !("rollback" in event.data)) return
+        clearTimeout(timer)
+        unsubscribe()
+        resolve(event)
+      })
+    })
+  }
+
+  it.each(["succeeded", "succeeded_with_warning"] as const)("rollback with explicit %s buildId is accepted", async (status) => {
     const { id: appId } = await createTestApp(db, {
       userId,
       projectId,
@@ -2096,12 +2116,38 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
       body: JSON.stringify({ buildId }),
     })
 
-    expect(res.status, await res.clone().text()).toBe(200)
-    const body = (await res.json()) as { ok: boolean }
+    expect(res.status, await res.clone().text()).toBe(202)
+    const body = (await res.json()) as { ok: boolean; accepted: boolean }
     expect(body.ok).toBe(true)
+    expect(body.accepted).toBe(true)
+    const finished = await rollbackEvent(userId, appId)
     expect(rollbackCalls).toBe(1)
+    expect(finished.data?.rollback).toBe("completed")
     const [target] = await db.select().from(builds).where(eq(builds.id, buildId))
     expect(target?.status).toBe(status)
+    const leases = await db.select().from(app_deploy_leases).where(eq(app_deploy_leases.app_id, appId))
+    expect(leases).toHaveLength(0)
+  })
+
+  it("accepts the rollback, then reports a runtime failure through the event bus", async () => {
+    const { id: appId } = await createTestApp(db, {
+      userId,
+      projectId,
+      runtimeMode: "docker",
+    })
+    const { id: buildId } = await createTestBuild(db, appId, "succeeded")
+    rollbackFailure = new Error("swarm update rejected")
+
+    const honoApp = buildTestApp(db, fakeUser(userId, `u@t.com`))
+    const res = await honoApp.request(`/apps/${appId}/rollback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ buildId }),
+    })
+
+    expect(res.status, await res.clone().text()).toBe(202)
+    const finished = await rollbackEvent(userId, appId)
+    expect(finished.data).toEqual({ rollback: "failed", error: "swarm update rejected" })
     const leases = await db.select().from(app_deploy_leases).where(eq(app_deploy_leases.app_id, appId))
     expect(leases).toHaveLength(0)
   })
@@ -2174,10 +2220,11 @@ describe.skipIf(skip)("POST /apps/:id/rollback", () => {
       method: "POST",
     })
 
-    // Runner mock succeeds — expect 200
-    expect(res.status, await res.clone().text()).toBe(200)
+    expect(res.status, await res.clone().text()).toBe(202)
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
+    await rollbackEvent(userId, appId)
+    expect(rollbackCalls).toBe(1)
   })
 
   it("rollback with non-existent buildId → 404", async () => {

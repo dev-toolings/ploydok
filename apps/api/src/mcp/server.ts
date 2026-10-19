@@ -502,16 +502,21 @@ export function createPloydokMcpServer(deps: McpServerDeps): McpServer {
     {
       description:
         "Route traffic back to a previous successful build (the previous " +
-        "one when buildId is omitted).",
+        "one when buildId is omitted). Returns once the rollback started.",
       inputSchema: { appId, buildId: z.string().min(1).optional() },
       annotations: destructive,
     },
     ({ appId, buildId }) =>
       run("rollback_app", app(appId), () =>
-        action(appId, {
-          path: `/apps/${enc(appId)}/rollback`,
-          body: buildId ? { buildId } : {},
-        })
+        action(
+          appId,
+          {
+            path: `/apps/${enc(appId)}/rollback`,
+            body: buildId ? { buildId } : {},
+          },
+          "apps:deploy",
+          "Accepted, not finished. Poll get_app until containerId changes and status is running."
+        )
       )
   )
 
