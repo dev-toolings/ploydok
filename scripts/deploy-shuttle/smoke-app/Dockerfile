@@ -2,7 +2,7 @@
 # It reproduces what broke real deploys: a slim image without curl or wget, a
 # Dockerfile ARG without default that must come from a build variable, and a
 # non-root process that writes to /tmp.
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim
 ARG SMOKE_BUILD_TOKEN
 RUN test -n "$SMOKE_BUILD_TOKEN"
 ENV SMOKE_BUILD_TOKEN=$SMOKE_BUILD_TOKEN

@@ -3,7 +3,7 @@
 # Build context must be the monorepo root.
 #   docker build -f apps/web/Dockerfile -t ghcr.io/makfly/ploydok-web:0.0.1 .
 
-FROM oven/bun:1.3-debian AS builder
+FROM oven/bun:1.4.4-debian AS builder
 WORKDIR /app
 
 COPY package.json bun.lock turbo.json tsconfig.base.json ./
@@ -20,7 +20,7 @@ RUN set -eux; \
       -exec sed -i -E "s#/assets/globals-[A-Za-z0-9_-]+\\.css#/assets/${public_css}#g" {} +; \
     chmod -R a+rX apps/web/.output
 
-FROM oven/bun:1.3-debian AS runtime
+FROM oven/bun:1.4.4-debian AS runtime
 WORKDIR /app
 
 RUN apt-get update \

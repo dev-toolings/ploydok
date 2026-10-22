@@ -3,7 +3,7 @@
 # Build context must be the monorepo root.
 #   docker build -f apps/api/Dockerfile -t ghcr.io/makfly/ploydok-api:0.0.1 .
 
-FROM oven/bun:1.3-debian AS dependencies
+FROM oven/bun:1.4.4-debian AS dependencies
 WORKDIR /app
 
 RUN apt-get update \
@@ -48,7 +48,7 @@ RUN apt-get update \
  && tar -xzf /tmp/nixpacks.tar.gz -C /usr/local/bin nixpacks \
  && chmod 0755 /usr/local/bin/nixpacks
 
-FROM oven/bun:1.3-debian AS runtime
+FROM oven/bun:1.4.4-debian AS runtime
 ARG PLOYDOK_BUILD_VERSION=dev
 WORKDIR /app
 
