@@ -59,4 +59,3 @@ infra/caddy/config/
 
 # local git worktrees
 .claude/worktrees/
-config.bat
